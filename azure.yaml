@@ -1,7 +1,7 @@
 # azd manifest. `azd up` provisions from infra/ and deploys both services.
 name: cortex
 metadata:
-  template: cortex-defra-poc@0.1.0
+  template: cortex-defra@1.0.0
 
 infra:
   provider: bicep
@@ -19,8 +19,42 @@ services:
 
 hooks:
   postprovision:
+    windows:
+      shell: pwsh
+      continueOnError: true
+      interactive: false
+      run: |
+        Write-Host ""
+        Write-Host "======================================================================"
+        Write-Host " Cortex provisioned."
+        Write-Host "======================================================================"
+        Write-Host ""
+        Write-Host " Web app: $env:CORTEX_WEB_URL"
+        Write-Host " Vault  : $env:KEYVAULT_NAME"
+        Write-Host ""
+        Write-Host " THREE STEPS REMAIN. None can be automated."
+        Write-Host ""
+        Write-Host " 1. APIM subscription key -> Key Vault"
+        Write-Host "      az keyvault secret set --vault-name $env:KEYVAULT_NAME ``"
+        Write-Host "        --name apim-subscription-key --value '<key>'"
+        Write-Host ""
+        Write-Host " 2. Purview roles, in BOTH planes. Identity: $env:CORTEX_IDENTITY_PRINCIPAL_ID"
+        Write-Host "      Unified Catalog > domain > Roles  : Data Product Owner + Governance Domain Reader"
+        Write-Host "      Data Map > collection > Roles     : Data reader"
+        Write-Host "      Missing the second is the most common cause of an empty marketplace."
+        Write-Host ""
+        Write-Host " 3. Entra sign-in, WITH the groups claim."
+        Write-Host "      Without it everyone appears to be in no groups and sees almost nothing."
+        Write-Host ""
+        Write-Host " Then:  npm run bootstrap"
+        Write-Host ""
     posix:
       shell: sh
       continueOnError: true
       interactive: false
-      run: ./scripts/postprovision.sh
+      run: |
+        echo ""
+        echo " Cortex provisioned. Web app: $CORTEX_WEB_URL"
+        echo " Three manual steps remain — see docs/deploy-windows.md sections 4, 5 and 6."
+        echo " Then: npm run bootstrap"
+        echo ""

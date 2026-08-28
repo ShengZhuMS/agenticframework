@@ -5,7 +5,21 @@
  * banner, service navigation, persona switcher, footer.
  */
 
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { VIS } from '../bff/services/visibility.js';
+
+/**
+ * Prefer the official GOV.UK Design System assets when `npm install` has
+ * vendored them (scripts/build-assets.js). Fall back to the bundled
+ * stylesheet otherwise, so the app always renders — a missing build step
+ * should degrade the typography, never the service.
+ *
+ * Resolved once at module load, not per request.
+ */
+const ASSET_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'assets');
+export const GOVUK_VENDORED = existsSync(path.join(ASSET_ROOT, 'vendor', 'govuk-frontend.min.css'));
 
 export const NAV = [
   ['/marketplace', 'Marketplace', 'marketplace'],
@@ -36,33 +50,28 @@ const CROWN = `<svg class="govuk-header__crown" xmlns="http://www.w3.org/2000/sv
 <path d="M25 30.2c3.5 1.5 7.7-.2 9.1-3.7 1.5-3.6-.2-7.8-3.9-9.2-3.6-1.4-7.6.3-9.1 3.9-1.4 3.5.3 7.5 3.9 9zM9 39.5c3.6 1.5 7.8-.2 9.2-3.7 1.5-3.6-.2-7.8-3.9-9.1-3.6-1.5-7.6.2-9.1 3.8-1.4 3.5.3 7.5 3.8 9zM4.4 57.2c3.5 1.5 7.7-.2 9.1-3.8 1.5-3.6-.2-7.8-3.8-9.1-3.6-1.5-7.7.2-9.1 3.8-1.5 3.6.2 7.6 3.8 9.1zm38.3-21.4c3.5 1.5 7.7-.2 9.1-3.8 1.5-3.6-.2-7.8-3.8-9.1-3.6-1.5-7.7.2-9.1 3.8-1.5 3.6.2 7.6 3.8 9.1zm64.4-5.6c-3.6 1.5-7.8-.2-9.1-3.7-1.5-3.6.2-7.8 3.8-9.2 3.6-1.4 7.7.3 9.2 3.9 1.3 3.5-.4 7.5-3.9 9zm15.9 9.3c-3.6 1.5-7.7-.2-9.1-3.7-1.5-3.6.2-7.8 3.7-9.1 3.6-1.5 7.7.2 9.2 3.8 1.5 3.5-.3 7.5-3.8 9zm4.7 17.7c-3.6 1.5-7.8-.2-9.2-3.8-1.5-3.6.2-7.8 3.9-9.1 3.6-1.5 7.7.2 9.1 3.8 1.4 3.6-.3 7.6-3.8 9.1zM89.3 35.8c-3.6 1.5-7.8-.2-9.2-3.8-1.4-3.6.2-7.8 3.9-9.1 3.6-1.5 7.7.2 9.1 3.8 1.4 3.6-.3 7.6-3.8 9.1zM69.7 17.7l8.9 4.7V9.3l-8.9 2.8c-.2-.3-.5-.6-.9-.9L72.4 0H59.6l3.5 11.2c-.3.3-.6.5-.9.9l-8.8-2.8v13.1l8.8-4.7c.3.3.6.5.9.8l-5 15.4v.1c-.2.8-.4 1.6-.4 2.4 0 4.1 3.1 7.5 7 8.1h.2c.3 0 .7.1 1 .1.4 0 .7 0 1-.1h.2c4-.6 7.1-4 7.1-8.1 0-.8-.1-1.7-.4-2.4V34l-5.1-15.4c.4-.2.7-.5 1-.9zM66 92.8c16.9 0 32.8 1.1 47.1 3.2 4-16.9 8.9-26.7 14-33.5l-9.6-3.4c1 4.9 1.1 7.2 0 10.2-1.5-1.4-3-4.3-4.2-8.7L108.6 76c2.8-2 5-3.2 7.5-3.3-4.4 9.4-10 11.9-13.6 11.2-4.3-.8-6.3-4.6-5.6-7.9 1-4.7 5.7-5.9 8-.5 4.3-8.7-3-11.4-7.6-8.8 7.1-7.2 7.9-13.5 2.1-21.1-8 6.1-8.1 12.3-4.5 20.8-4.7-5.4-12.1-2.5-9.5 6.2 3.4-5.2 7.9-2 7.2 3.1-.6 4.3-6.4 7.8-13.5 7.2-10.3-.9-10.9-8-11.2-13.8 2.5-.5 7.1 1.8 11 7.3L80.2 60c-4.1 4.4-8 5.3-12.3 5.4 1.4-4.4 8-11.6 8-11.6H55.5s6.4 7.2 7.9 11.6c-4.2-.1-8-1-12.3-5.4l1.4 16.4c3.9-5.5 8.5-7.7 10.9-7.3-.3 5.8-.9 12.8-11.1 13.8-7.2.6-12.9-2.9-13.5-7.2-.8-5.1 3.7-8.3 7.1-3.1 2.6-8.7-4.8-11.6-9.4-6.2 3.5-8.5 3.4-14.7-4.5-20.8-5.9 7.6-5.1 13.9 2.1 21.1-4.7-2.6-11.9.1-7.7 8.8 2.3-5.5 7.1-4.2 8.1.5.7 3.3-1.3 7.1-5.7 7.9-3.5.7-9-1.8-13.5-11.2 2.5.1 4.7 1.3 7.5 3.3l-4.7-15.4c-1.2 4.4-2.7 7.2-4.3 8.7-1.1-3-.9-5.3 0-10.2l-9.5 3.4c5 6.9 9.9 16.7 14 33.5 14.8-2.1 30.8-3.2 47.7-3.2z"></path>
 </svg>`;
 
-function personaSwitcher(ctx) {
-  if (!ctx.showPersonaSwitcher) return '';
-  const opts = ctx.personas
-    .map(
-      (p) =>
-        `<option value="${attr(p.id)}"${p.id === ctx.user.id ? ' selected' : ''}>` +
-        `${esc(p.name)} — ${esc(p.role)}</option>`
-    )
-    .join('');
+/**
+ * Who is signed in, and what that means for what they can see.
+ *
+ * Group membership is the whole governance model, so it is shown rather than
+ * hidden: a user who cannot see something needs to be able to work out why,
+ * and "you are in these groups" is the answer to almost every such question.
+ */
+function identityBar(ctx) {
+  if (!ctx.user) return '';
+  const groups = (ctx.user.groups || []).filter((g) => !/^[0-9a-f-]{36}$/i.test(g));
   return `
-<div class="cortex-persona">
-  <div class="govuk-width-container">
-    <form class="cortex-persona__inner" method="get" action="${attr(ctx.path)}">
-      ${Object.entries(ctx.query || {})
-        .filter(([k]) => k !== 'persona')
-        .flatMap(([k, v]) => (Array.isArray(v) ? v : [v]).map(
-          (vv) => `<input type="hidden" name="${attr(k)}" value="${attr(vv)}">`
-        ))
-        .join('')}
-      <span class="cortex-persona__flag">Viewing as</span>
-      <label class="cortex-persona__label" for="persona">Persona</label>
-      <select class="govuk-select" id="persona" name="persona" onchange="this.form.submit()">
-        ${opts}
-      </select>
-      <noscript><button class="govuk-button govuk-button--secondary govuk-!-margin-bottom-0" type="submit">Change</button></noscript>
-      <span class="cortex-persona__meta">${esc(ctx.user.team)} · cleared to ${esc(ctx.user.clearance)}</span>
-    </form>
+<div class="cortex-identity">
+  <div class="govuk-width-container cortex-identity__inner">
+    <span class="cortex-identity__who">
+      Signed in as <strong>${esc(ctx.user.name)}</strong>
+    </span>
+    <span class="cortex-identity__meta">
+      ${esc(ctx.user.team)} · cleared to ${esc(ctx.user.clearance)}
+      ${groups.length ? ` · ${esc(groups.length)} group${groups.length > 1 ? 's' : ''}` : ' · no groups'}
+    </span>
+    <a class="govuk-link cortex-identity__link" href="/profile">What can I see?</a>
+    <a class="govuk-link cortex-identity__link" href="/.auth/logout">Sign out</a>
   </div>
 </div>`;
 }
@@ -96,11 +105,6 @@ export function visMark(state, { withLabel = true } = {}) {
   </span>`;
 }
 
-/** A field value that has no live source yet. Always visibly marked. */
-export function illustrative(value) {
-  return `${esc(value)}<span class="cortex-illus">Illustrative</span>`;
-}
-
 export function layout(ctx, content) {
   const title = ctx.title ? `${ctx.title} — Cortex` : 'Cortex';
   return `<!DOCTYPE html>
@@ -111,9 +115,13 @@ export function layout(ctx, content) {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0c0c">
 <meta name="description" content="Cortex — one place to find what Defra already has, build something with it, and share what you build.">
-<link rel="stylesheet" href="/assets/cortex.css">
+${
+  GOVUK_VENDORED
+    ? '<link rel="stylesheet" href="/assets/vendor/govuk-frontend.min.css">'
+    : ''
+}<link rel="stylesheet" href="/assets/cortex.css">
 </head>
-<body class="govuk-template__body">
+<body class="govuk-template__body${GOVUK_VENDORED ? ' js-enabled govuk-frontend-supported' : ''}">
 <a href="#main-content" class="govuk-skip-link">Skip to main content</a>
 
 <header class="govuk-header" role="banner">
@@ -138,7 +146,7 @@ export function layout(ctx, content) {
 </header>
 
 ${nav(ctx.section)}
-${personaSwitcher(ctx)}
+${identityBar(ctx)}
 
 <div class="govuk-width-container">
   <div class="govuk-phase-banner">

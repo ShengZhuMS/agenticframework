@@ -28,90 +28,6 @@
 import config from '../config.js';
 import { getToken } from './token.js';
 
-/* ------------------------------------------------------------------ seeded */
-
-class SeededFoundry {
-  constructor() {
-    this.name = 'foundry:seeded';
-    this.agents = new Map();
-  }
-
-  async listModels() {
-    return [
-      {
-        id: 'gpt-5-mini',
-        name: 'First-party, small and fast',
-        approved: true,
-        note: 'Approved catalogue. Good default for summarise-and-cite work.'
-      },
-      {
-        id: 'gpt-5',
-        name: 'First-party, general',
-        approved: true,
-        note: 'Approved catalogue. Slower and dearer; use where reasoning matters.'
-      },
-      {
-        id: 'third-party-review',
-        name: 'Third-party model',
-        approved: false,
-        note: 'Needs review before use. Model catalogue approval gate applies.'
-      }
-    ];
-  }
-
-  async createAgent({ name, model, instructions, tools = [] }) {
-    const agent = {
-      name,
-      version: (this.agents.get(name)?.version || 0) + 1,
-      model,
-      instructions,
-      tools,
-      createdAt: new Date().toISOString(),
-      simulated: true
-    };
-    this.agents.set(name, agent);
-    return agent;
-  }
-
-  async getAgent(name) {
-    return this.agents.get(name) || null;
-  }
-
-  async listAgents() {
-    return [...this.agents.values()];
-  }
-
-  async createConversation() {
-    return { id: `conv_seeded_${Date.now()}` };
-  }
-
-  /**
-   * A seeded response that demonstrates the provenance panel honestly:
-   * it names its sources, states freshness, and says what it could not reach.
-   */
-  async respond({ agentName, input }) {
-    const agent = this.agents.get(agentName);
-    const knowledge = (agent?.tools || [])
-      .filter((t) => t.type === 'knowledge')
-      .map((t) => t.name);
-    return {
-      text:
-        `Based on the sources this agent can reach, here is what I can tell you about "${input}".\n\n` +
-        `This is a seeded response — the app is running with DEMO_MODE on, so no ` +
-        `model was called. With the live adapter this answer comes from Foundry, ` +
-        `streamed, with url_citation annotations driving the panel below.`,
-      sources: knowledge.map((k) => ({ name: k, freshness: 'Daily', used: 'Summary statistics only' })),
-      confidence: 'Medium',
-      couldNotReach: ['Permit history lookup — you have not requested access to it yet'],
-      simulated: true
-    };
-  }
-
-  async health() {
-    return { ok: true, mode: 'seeded', model: config.foundry.model, agents: this.agents.size };
-  }
-}
-
 /* -------------------------------------------------------------------- live */
 
 class LiveFoundry {
@@ -139,8 +55,35 @@ class LiveFoundry {
     return res.status === 204 ? null : res.json();
   }
 
+  /**
+   * The approved model catalogue.
+   *
+   * This is a governance list, not a discovery call: it states which models
+   * Defra has approved for use, which is a policy decision rather than
+   * something the platform can be asked. A model present in Foundry but not
+   * here is deliberately not offered.
+   */
   async listModels() {
-    return new SeededFoundry().listModels();
+    return [
+      {
+        id: this.cfg.model,
+        name: 'First-party, small and fast',
+        approved: true,
+        note: 'Approved catalogue. Good default for summarise-and-cite work.'
+      },
+      {
+        id: 'gpt-5',
+        name: 'First-party, general',
+        approved: true,
+        note: 'Approved catalogue. Slower and dearer; use where reasoning matters.'
+      },
+      {
+        id: 'third-party-review',
+        name: 'Third-party model',
+        approved: false,
+        note: 'Needs review before use. The model catalogue approval gate applies.'
+      }
+    ];
   }
 
   /**
@@ -259,9 +202,7 @@ class LiveFoundry {
 }
 
 export function createFoundryAdapter() {
-  return config.adapters.foundry === 'live'
-    ? new LiveFoundry(config.foundry)
-    : new SeededFoundry();
+  return new LiveFoundry(config.foundry);
 }
 
-export { SeededFoundry, LiveFoundry };
+export { LiveFoundry };

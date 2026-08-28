@@ -1,0 +1,292 @@
+[
+  {
+    "id": "water-quality-archive",
+    "name": "Water quality archive",
+    "domain": "water",
+    "description": "Sampling results for rivers, lakes, estuaries and groundwater, by sampling point and determinand. Derived from the sampling schema, its lineage back to WIMS and its Purview classification.",
+    "businessUse": "Sampling is not uniform in space or time. Absence of a result is not evidence of absence of a pollutant.",
+    "updateFrequency": "Daily",
+    "sensitivity": "Official",
+    "licence": "Open Government Licence — covers all staff and contractors",
+    "accessRoute": "Open to all staff",
+    "allowedGroups": null,
+    "limitations": "Sampling is not uniform in space or time. Absence of a result is not evidence of absence of a pollutant.",
+    "minimumAggregation": null,
+    "askable": null,
+    "dependsOn": [
+      "WIMS",
+      "Catchment Data Explorer"
+    ],
+    "location": "Point, OSGB36"
+  },
+  {
+    "id": "hydrology-flow-level",
+    "name": "Hydrology flow and level",
+    "domain": "water",
+    "description": "Fifteen-minute and daily river flow, groundwater level and rainfall from the telemetry network.",
+    "businessUse": "Telemetry gaps during high flow are common; the gauge is often the first thing a flood takes out.",
+    "updateFrequency": "15 minutes",
+    "sensitivity": "Official",
+    "licence": "Open Government Licence — all staff",
+    "accessRoute": "Open to all staff",
+    "allowedGroups": null,
+    "limitations": "Telemetry gaps during high flow are common; the gauge is often the first thing a flood takes out.",
+    "minimumAggregation": null,
+    "askable": null,
+    "dependsOn": [
+      "Hydrology Data Explorer"
+    ],
+    "location": "Point, OSGB36"
+  },
+  {
+    "id": "bathing-water-results",
+    "name": "Bathing water sample results",
+    "domain": "water",
+    "description": "Weekly in-season bacterial sampling at designated bathing waters, with the annual classification.",
+    "businessUse": "Out of season there are no samples. The classification is a four-year rolling calculation, not this week’s water.",
+    "updateFrequency": "Weekly, in season",
+    "sensitivity": "Official",
+    "licence": "Open Government Licence — all staff",
+    "accessRoute": "Open to all staff",
+    "allowedGroups": null,
+    "limitations": "Out of season there are no samples. The classification is a four-year rolling calculation, not this week’s water.",
+    "minimumAggregation": null,
+    "askable": null,
+    "dependsOn": [
+      "WIMS"
+    ],
+    "location": "Point, OSGB36"
+  },
+  {
+    "id": "catchment-land-cover",
+    "name": "Catchment land cover",
+    "domain": "land",
+    "description": "Land cover parcels attributed to water body catchments, used for source apportionment.",
+    "businessUse": "Classification accuracy varies by habitat; upland mosaics are the weakest class.",
+    "updateFrequency": "Annual",
+    "sensitivity": "Official",
+    "licence": "Derived product — internal use only, no onward publication",
+    "accessRoute": "Request to Natural England Evidence",
+    "allowedGroups": [
+      "ne-evidence"
+    ],
+    "limitations": "Classification accuracy varies by habitat; upland mosaics are the weakest class.",
+    "minimumAggregation": null,
+    "askable": null,
+    "dependsOn": [
+      "Living England"
+    ],
+    "location": "Polygon, OSGB36"
+  },
+  {
+    "id": "rural-land-parcels",
+    "name": "Rural land parcels",
+    "domain": "farm",
+    "description": "Registered land parcels with area, feature and eligibility attributes.",
+    "businessUse": "Parcels are identifiable to a land holding. Aggregation rules apply before any onward use.",
+    "updateFrequency": "Daily",
+    "sensitivity": "Official–Sensitive",
+    "licence": "Internal only",
+    "accessRoute": "No route in your current role",
+    "allowedGroups": [
+      "rpa-land-data",
+      "restricted-permits"
+    ],
+    "limitations": "Parcels are identifiable to a land holding. Aggregation rules apply before any onward use.",
+    "minimumAggregation": null,
+    "askable": null,
+    "dependsOn": [
+      "Rural Payments"
+    ],
+    "location": "Polygon, OSGB36"
+  },
+  {
+    "id": "livestock-movements",
+    "name": "Livestock movement records",
+    "domain": "animal",
+    "description": "Movements between holdings, used for tracing in a disease outbreak.",
+    "businessUse": "Registered and reachable, but no consumer has been cleared to call it. Zero use is the honest number, not a gap in telemetry.",
+    "updateFrequency": "Daily",
+    "sensitivity": "Official–Sensitive",
+    "licence": "Internal only",
+    "accessRoute": "No route in your current role",
+    "allowedGroups": [
+      "apha-surveillance",
+      "restricted-permits"
+    ],
+    "limitations": "Registered and reachable, but no consumer has been cleared to call it. Zero use is the honest number, not a gap in telemetry.",
+    "minimumAggregation": null,
+    "askable": null,
+    "dependsOn": [
+      "Livestock Information Service"
+    ],
+    "location": "Point, OSGB36"
+  },
+  {
+    "id": "waste-carrier-registrations",
+    "name": "Waste carrier registrations",
+    "domain": "waste",
+    "description": "Registered carriers, brokers and dealers, with registration status and tier.",
+    "businessUse": "Registration is not a permission to carry any particular waste.",
+    "updateFrequency": "Daily",
+    "sensitivity": "Official",
+    "licence": "Open Government Licence — all staff",
+    "accessRoute": "Open to all staff",
+    "allowedGroups": [
+      "all-staff"
+    ],
+    "limitations": "Registration is not a permission to carry any particular waste.",
+    "minimumAggregation": null,
+    "askable": null,
+    "dependsOn": [
+      "Public Register"
+    ],
+    "location": "—"
+  },
+  {
+    "id": "national-forest-inventory",
+    "name": "National forest inventory",
+    "domain": "land",
+    "description": "Woodland extent, species composition and structure from the national survey programme.",
+    "businessUse": "Minimum mappable woodland is half a hectare; small farm copses are systematically absent.",
+    "updateFrequency": "Annual",
+    "sensitivity": "Official",
+    "licence": "Open Government Licence — all staff",
+    "accessRoute": "Open to all staff",
+    "allowedGroups": null,
+    "limitations": "Minimum mappable woodland is half a hectare; small farm copses are systematically absent.",
+    "minimumAggregation": null,
+    "askable": null,
+    "dependsOn": [
+      "Forestry Commission Inventory"
+    ],
+    "location": "Polygon, OSGB36"
+  },
+  {
+    "id": "marine-catch-returns",
+    "name": "Marine survey catch returns",
+    "domain": "marine",
+    "description": "Species, weight and position from research survey tows.",
+    "businessUse": "Connected through the gateway in June. The clearance decision is with the AI Unit queue.",
+    "updateFrequency": "Per survey",
+    "sensitivity": "Official",
+    "licence": "Under review with commercial",
+    "accessRoute": "Connected, not yet cleared for use",
+    "allowedGroups": null,
+    "limitations": "Connected through the gateway in June. The clearance decision is with the AI Unit queue.",
+    "minimumAggregation": null,
+    "askable": null,
+    "dependsOn": [
+      "Cefas Data Portal"
+    ],
+    "location": "Point, WGS84"
+  },
+  {
+    "id": "flood-risk-model-outputs",
+    "name": "Flood risk model outputs",
+    "domain": "flood",
+    "description": "Modelled depth, extent and likelihood surfaces for fluvial, tidal and surface water sources.",
+    "businessUse": "Model outputs are scenarios, not forecasts. Using them as a prediction of a specific event is the most common misuse.",
+    "updateFrequency": "Per model run",
+    "sensitivity": "Official",
+    "licence": "Internal use; onward sharing needs the model owner’s agreement",
+    "accessRoute": "Request to EA Flood Risk",
+    "allowedGroups": [
+      "ea-flood-risk"
+    ],
+    "limitations": "Model outputs are scenarios, not forecasts. Using them as a prediction of a specific event is the most common misuse.",
+    "minimumAggregation": null,
+    "askable": null,
+    "dependsOn": [
+      "NaFRA"
+    ],
+    "location": "Raster, OSGB36"
+  },
+  {
+    "id": "ammonia-emissions-grid",
+    "name": "Ammonia emissions grid",
+    "domain": "air",
+    "description": "Modelled ammonia emissions on a 1km grid, apportioned by source sector.",
+    "businessUse": "Seven years old. Agricultural practice has changed materially since the base year.",
+    "updateFrequency": "Last updated 2019",
+    "sensitivity": "Official",
+    "owner": "Not claimed",
+    "licence": "Open Government Licence — all staff",
+    "accessRoute": "Open to all staff",
+    "allowedGroups": null,
+    "limitations": "Seven years old. Agricultural practice has changed materially since the base year.",
+    "minimumAggregation": null,
+    "askable": null,
+    "dependsOn": [],
+    "location": "Grid, OSGB36"
+  },
+  {
+    "id": "servicenow-incidents",
+    "name": "Service incidents and tickets",
+    "domain": "corp",
+    "description": "Incidents, requests and service metrics from ServiceNow, by assignment group and resolving agent.",
+    "businessUse": "Individual records identify the agent who resolved a ticket. Nothing below team level leaves the holder.",
+    "updateFrequency": "Live",
+    "sensitivity": "Official",
+    "licence": "Internal only",
+    "accessRoute": "No direct route in your role. Answers available from the holder.",
+    "allowedGroups": null,
+    "limitations": "Individual records identify the agent who resolved a ticket. Nothing below team level leaves the holder.",
+    "minimumAggregation": "Team level. No answer is returned covering fewer than 10 people.",
+    "askable": [
+      "Average tickets per person, by directorate, monthly",
+      "Open P1 incidents by service",
+      "Median time to resolve, by assignment group"
+    ],
+    "dependsOn": [
+      "ServiceNow"
+    ],
+    "location": "—"
+  },
+  {
+    "id": "finance-ledger",
+    "name": "Programme and portfolio spend",
+    "domain": "corp",
+    "description": "Committed and actual spend by programme, portfolio and directorate, from the finance ledger.",
+    "businessUse": "Pre-close figures move. A number taken before the ledger closes will not match the one reported afterwards.",
+    "updateFrequency": "Monthly, on close",
+    "sensitivity": "Official–Sensitive",
+    "licence": "Internal only",
+    "accessRoute": "No direct route in your role. Answers available from the holder.",
+    "allowedGroups": null,
+    "limitations": "Pre-close figures move. A number taken before the ledger closes will not match the one reported afterwards.",
+    "minimumAggregation": "Programme level. Nothing is returned that resolves to an individual contract or a named supplier rate.",
+    "askable": [
+      "Average delivery cost per programme, by directorate",
+      "Burn rate against plan, by portfolio",
+      "Committed versus actual, month on month"
+    ],
+    "dependsOn": [
+      "Finance ledger"
+    ],
+    "location": "—"
+  },
+  {
+    "id": "endpoint-telemetry",
+    "name": "Endpoint performance telemetry",
+    "domain": "corp",
+    "description": "Processor load, memory pressure and device age from the management agent already deployed across the estate.",
+    "businessUse": "This is organisational signal, not individual monitoring. The distinction is enforced by the minimum aggregation below, not by anyone remembering it.",
+    "updateFrequency": "Hourly",
+    "sensitivity": "Official–Sensitive",
+    "licence": "Internal only",
+    "accessRoute": "Aggregate answers only, from the holder.",
+    "allowedGroups": null,
+    "limitations": "This is organisational signal, not individual monitoring. The distinction is enforced by the minimum aggregation below, not by anyone remembering it.",
+    "minimumAggregation": "Team level, minimum 10 devices. A question that would resolve to fewer is refused, not rounded.",
+    "askable": [
+      "Share of devices below specification, by team",
+      "Median processor load during working hours, by portfolio",
+      "Device age profile, by directorate"
+    ],
+    "dependsOn": [
+      "Endpoint management"
+    ],
+    "location": "—"
+  }
+]

@@ -16,7 +16,7 @@ import { esc, attr, layout, visMark } from '../layout.js';
 
 const num = (n) => Number(n || 0).toLocaleString('en-GB');
 
-export function sharePage(ctx, { mine, proposed, requests, neverCalled, submitted }) {
+export function sharePage(ctx, { mine, proposed, requests, neverCalled, submitted, gateway }) {
   const content = `
 ${
   submitted
@@ -80,7 +80,7 @@ ${
                  .map(
                    (e) => `<tr class="govuk-table__row">
                      <td class="govuk-table__cell">
-                       <a class="govuk-link" href="/entry/${attr(e.id)}${ctx.personaQS()}">${esc(e.name)}</a>
+                       <a class="govuk-link" href="/entry/${attr(e.id)}">${esc(e.name)}</a>
                        <span class="cortex-src">${esc(e.cat)} · ${esc(ctx.clusterName(e.cluster))}</span>
                      </td>
                      <td class="govuk-table__cell">${esc(e.fresh)}</td>
@@ -114,11 +114,11 @@ ${
                  .map(
                    (e) => `<tr class="govuk-table__row">
                      <td class="govuk-table__cell">
-                       <a class="govuk-link" href="/entry/${attr(e.id)}${ctx.personaQS()}">${esc(e.name)}</a>
+                       <a class="govuk-link" href="/entry/${attr(e.id)}">${esc(e.name)}</a>
                        <span class="cortex-src">${esc(ctx.clusterName(e.cluster))} · proposed from resource tags</span>
                      </td>
                      <td class="govuk-table__cell" style="text-align:right">
-                       <a class="govuk-link" href="/entry/${attr(e.id)}/claim${ctx.personaQS()}">Confirm it is ours</a>
+                       <a class="govuk-link" href="/entry/${attr(e.id)}/claim">Confirm it is ours</a>
                      </td>
                    </tr>`
                  )
@@ -152,12 +152,12 @@ ${
                      <td class="govuk-table__cell">${esc(r.entryName || r.entryId)}</td>
                      <td class="govuk-table__cell">${esc(r.waiting)}</td>
                      <td class="govuk-table__cell">
-                       <form method="post" action="/share/requests/${attr(r.ref)}${ctx.personaQS()}" style="display:inline">
+                       <form method="post" action="/share/requests/${attr(r.ref)}" style="display:inline">
                          <button class="govuk-link" name="decision" value="approve" type="submit"
                                  style="border:0;background:none;cursor:pointer;padding:0">Approve</button>
                        </form>
                        ·
-                       <form method="post" action="/share/requests/${attr(r.ref)}${ctx.personaQS()}" style="display:inline">
+                       <form method="post" action="/share/requests/${attr(r.ref)}" style="display:inline">
                          <button class="govuk-link" name="decision" value="decline" type="submit"
                                  style="border:0;background:none;cursor:pointer;padding:0">Decline</button>
                        </form>
@@ -186,7 +186,7 @@ ${
              ${neverCalled
                .map(
                  (e) => `<li>
-                   <a class="govuk-link" href="/entry/${attr(e.id)}${ctx.personaQS()}">${esc(e.name)}</a>
+                   <a class="govuk-link" href="/entry/${attr(e.id)}">${esc(e.name)}</a>
                    <span class="cortex-src">${esc(e.owner)}</span>
                  </li>`
                )
@@ -200,7 +200,7 @@ ${
   <div class="govuk-grid-column-one-third">
     <div class="cortex-filters">
       <h2 class="govuk-heading-m">Connect a source</h2>
-      <form method="post" action="/share/connect${ctx.personaQS()}">
+      <form method="post" action="/share/connect">
         <div class="govuk-form-group">
           <label class="govuk-label govuk-label--s" for="system">Source system</label>
           <input class="govuk-input" id="system" name="system" type="text" placeholder="WIMS">
@@ -222,23 +222,26 @@ ${
 
     <div class="cortex-filters">
       <h2 class="govuk-heading-m">The gateway queue</h2>
-      <dl class="govuk-summary-list">
-        <div class="govuk-summary-list__row">
-          <dt class="govuk-summary-list__key">Requests ahead of yours</dt>
-          <dd class="govuk-summary-list__value">17</dd>
-        </div>
-        <div class="govuk-summary-list__row">
-          <dt class="govuk-summary-list__key">Median time to a decision</dt>
-          <dd class="govuk-summary-list__value">11 working days</dd>
-        </div>
-        <div class="govuk-summary-list__row">
-          <dt class="govuk-summary-list__key">Reviewed by</dt>
-          <dd class="govuk-summary-list__value">AI Unit and CCoE</dd>
-        </div>
-      </dl>
+      ${
+        gateway.total
+          ? `<dl class="govuk-summary-list">
+               <div class="govuk-summary-list__row">
+                 <dt class="govuk-summary-list__key">Registrations waiting</dt>
+                 <dd class="govuk-summary-list__value">${esc(gateway.total)}</dd>
+               </div>
+               <div class="govuk-summary-list__row">
+                 <dt class="govuk-summary-list__key">Yours in the queue</dt>
+                 <dd class="govuk-summary-list__value">${esc(gateway.mine)}</dd>
+               </div>
+               <div class="govuk-summary-list__row">
+                 <dt class="govuk-summary-list__key">Reviewed by</dt>
+                 <dd class="govuk-summary-list__value">AI Unit and CCoE</dd>
+               </div>
+             </dl>`
+          : `<p class="govuk-hint">Nothing is waiting for gateway review.</p>`
+      }
       <p class="govuk-body-s govuk-!-margin-bottom-0">
         There is no tiered pattern yet, so every connection gets the same review.
-        <span class="cortex-illus">Illustrative</span>
       </p>
     </div>
   </div>

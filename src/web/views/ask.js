@@ -16,7 +16,7 @@ function sourceList(sources, ctx) {
     .map(
       (s) => `<div class="govuk-summary-list__row">
         <dt class="govuk-summary-list__key">
-          <a class="govuk-link" href="/entry/${attr(s.id)}${ctx.personaQS()}">${esc(s.name)}</a>
+          <a class="govuk-link" href="/entry/${attr(s.id)}">${esc(s.name)}</a>
           <span class="cortex-src">${esc(s.owner)} · ${esc(s.freshness)} · ${esc(s.sensitivity)}</span>
         </dt>
         <dd class="govuk-summary-list__value">${esc(s.used)}</dd>
@@ -40,13 +40,13 @@ function couldNotReachList(items, ctx) {
     .map(
       (c) => `<div class="govuk-summary-list__row">
         <dt class="govuk-summary-list__key">
-          <a class="govuk-link" href="/entry/${attr(c.id)}${ctx.personaQS()}">${esc(c.name)}</a>
+          <a class="govuk-link" href="/entry/${attr(c.id)}">${esc(c.name)}</a>
           <span class="cortex-src">${esc(c.reason)}</span>
         </dt>
         <dd class="govuk-summary-list__value">
           ${visMark(c.state)}
           <p class="govuk-body-s" style="margin:6px 0 0">
-            <a class="govuk-link" href="/entry/${attr(c.id)}${ctx.personaQS()}">${esc(c.next || 'Open')}</a>
+            <a class="govuk-link" href="/entry/${attr(c.id)}">${esc(c.next || 'Open')}</a>
           </p>
         </dd>
       </div>`
@@ -76,7 +76,7 @@ function personRoute(items, ctx) {
         ${a.minAgg ? `<p class="govuk-body-s"><strong>Minimum aggregation:</strong> ${esc(a.minAgg)}</p>` : ''}`
     )
     .join('')}
-  <a class="govuk-button govuk-!-margin-bottom-0" href="/requests${ctx.personaQS()}" role="button">Request an answer</a>
+  <a class="govuk-button govuk-!-margin-bottom-0" href="/requests" role="button">Request an answer</a>
 </div>`;
 }
 
@@ -110,7 +110,7 @@ export function askPage(ctx, { thread, history, threadId }) {
            ${items
              .map(
                (t) =>
-                 `<li><a class="govuk-link" href="/ask?thread=${attr(t.id)}${ctx.personaQS('&')}">${esc(
+                 `<li><a class="govuk-link" href="/ask?thread=${attr(t.id)}">${esc(
                    String(t.title || 'Untitled').slice(0, 60)
                  )}</a></li>`
              )
@@ -131,7 +131,7 @@ export function askPage(ctx, { thread, history, threadId }) {
       ${
         threadId
           ? `<p class="govuk-body-s govuk-!-margin-bottom-0">
-               <a class="govuk-link" href="/ask${ctx.personaQS()}">Start a new question</a>
+               <a class="govuk-link" href="/ask">Start a new question</a>
              </p>`
           : ''
       }
@@ -156,7 +156,7 @@ export function askPage(ctx, { thread, history, threadId }) {
         : ''
     }
 
-    <form method="post" action="/ask${ctx.personaQS()}">
+    <form method="post" action="/ask">
       ${threadId ? `<input type="hidden" name="thread" value="${attr(threadId)}">` : ''}
       <div class="govuk-form-group">
         <label class="govuk-label govuk-label--s" for="q">
@@ -174,11 +174,11 @@ export function askPage(ctx, { thread, history, threadId }) {
       !thread
         ? `<h2 class="govuk-heading-m">Try one of these</h2>
            <ul class="govuk-list govuk-list--spaced">
-             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('Which waste carrier registrations lapsed?')}${ctx.personaQS('&')}">Which waste carrier registrations lapsed?</a></li>
-             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('What water quality data do we hold?')}${ctx.personaQS('&')}">What water quality data do we hold?</a></li>
-             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('Average days sick per employee')}${ctx.personaQS('&')}">Average days sick per employee</a>
+             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('Which waste carrier registrations lapsed?')}">Which waste carrier registrations lapsed?</a></li>
+             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('What water quality data do we hold?')}">What water quality data do we hold?</a></li>
+             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('Average days sick per employee')}">Average days sick per employee</a>
                <span class="cortex-src">Shows the "allowed the answer, not allowed the data" route</span></li>
-             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('Badger population trends')}${ctx.personaQS('&')}">Badger population trends</a>
+             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('Badger population trends')}">Badger population trends</a>
                <span class="cortex-src">Shows the working when nothing is found</span></li>
            </ul>`
         : ''

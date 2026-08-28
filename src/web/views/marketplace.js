@@ -61,7 +61,7 @@ function entryCard(e, ctx) {
     <div class="cortex-entry__head">
       <div style="flex:1 1 440px">
         <h3 class="cortex-entry__title">
-          <a class="govuk-link" href="/entry/${attr(e.id)}${ctx.personaQS()}">${esc(e.name)}</a>
+          <a class="govuk-link" href="/entry/${attr(e.id)}">${esc(e.name)}</a>
         </h3>
         <p class="cortex-entry__meta">
           ${esc(e.cat)} · ${esc(cluster)} · ${esc(e.owner)}${
@@ -90,7 +90,7 @@ function entryCard(e, ctx) {
         ${visMark(e.vis)}
         <p class="cortex-src" style="margin-top:6px">${esc(e.visReason || '')}</p>
         <p class="govuk-body-s" style="margin-top:8px;margin-bottom:0">
-          <a class="govuk-link" href="/entry/${attr(e.id)}${ctx.personaQS()}">${esc(VIS[e.vis]?.next || 'Open')}</a>
+          <a class="govuk-link" href="/entry/${attr(e.id)}">${esc(VIS[e.vis]?.next || 'Open')}</a>
         </p>
       </div>
     </div>
@@ -106,10 +106,9 @@ function mostUsed(byCat, ctx) {
       <div class="cortex-stat" style="flex:1 1 220px">
         <span class="govuk-caption-m" style="font-size:16px">${esc(cat)}</span>
         <p class="govuk-body" style="margin:4px 0 2px">
-          <a class="govuk-link" href="/entry/${attr(e.id)}${ctx.personaQS()}"><strong>${esc(e.name)}</strong></a>
+          <a class="govuk-link" href="/entry/${attr(e.id)}"><strong>${esc(e.name)}</strong></a>
         </p>
-        <span class="cortex-stat__l">${Number(e.calls || 0).toLocaleString('en-GB')} calls
-          <span class="cortex-illus">Illustrative</span></span>
+        <span class="cortex-stat__l">${Number(e.calls || 0).toLocaleString('en-GB')} calls</span>
       </div>`
     )
     .join('');
@@ -138,7 +137,7 @@ export function marketplacePage(
   <div class="govuk-grid-column-one-third">
     <p class="govuk-body" style="text-align:right;margin-top:20px">
       <strong>List</strong> ·
-      <a class="govuk-link" href="/marketplace/map${ctx.personaQS()}">Map</a>
+      <a class="govuk-link" href="/marketplace/map">Map</a>
     </p>
   </div>
 </div>
@@ -149,9 +148,8 @@ export function marketplacePage(
     <span class="cortex-stat__l">entries registered</span>
   </div>
   <div class="cortex-stat">
-    <span class="cortex-stat__n">${esc(coverage.percent)}%</span>
-    <span class="cortex-stat__l">of the estate we believe exists
-      <span class="cortex-illus">Illustrative</span></span>
+    <span class="cortex-stat__n">${esc(Object.keys(coverage.byDomain || {}).length)}</span>
+    <span class="cortex-stat__l">governance domains with something registered in them</span>
   </div>
   <div class="cortex-stat">
     <span class="cortex-stat__n">${esc(cross.count)}</span>
@@ -232,7 +230,7 @@ ${ctx.query?.persona ? `<input type="hidden" name="persona" value="${attr(ctx.qu
       ${
         isFiltered
           ? `<p class="govuk-body-s" style="margin-top:12px;margin-bottom:0">
-               <a class="govuk-link" href="/marketplace${ctx.personaQS()}">Clear the search and filters</a>
+               <a class="govuk-link" href="/marketplace">Clear the search and filters</a>
              </p>`
           : ''
       }
@@ -243,7 +241,6 @@ ${ctx.query?.persona ? `<input type="hidden" name="persona" value="${attr(ctx.qu
     <div class="cortex-results-head">
       <h2 class="govuk-heading-m govuk-!-margin-bottom-0">
         ${esc(entries.length)}${entries.length === total ? '' : ` of ${esc(total)}`} entries
-        <span class="cortex-illus">Count is of the thin slice, not the estate</span>
       </h2>
       <div>
         <label class="govuk-label" style="display:inline;font-size:16px" for="sort">Sort by</label>
@@ -267,8 +264,8 @@ ${ctx.query?.persona ? `<input type="hidden" name="persona" value="${attr(ctx.qu
                has registered it — which is the more common of the two.
              </p>
              <p class="govuk-body govuk-!-margin-bottom-0">
-               <a class="govuk-link" href="/marketplace${ctx.personaQS()}">Clear the filters</a>
-               or <a class="govuk-link" href="/share${ctx.personaQS()}">tell us about something that is missing</a>
+               <a class="govuk-link" href="/marketplace">Clear the filters</a>
+               or <a class="govuk-link" href="/share">tell us about something that is missing</a>
              </p>
            </div>`
     }

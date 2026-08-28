@@ -44,8 +44,7 @@ export function startPage(ctx, { stats, coverage }) {
           .join(' · ')}
       </p>
       <p class="govuk-body-s">
-        That is ${esc(coverage.percent)}% of the estate we believe exists.
-        <span class="cortex-illus">Illustrative</span>
+        Across ${esc(Object.keys(coverage.byDomain || {}).length)} governance domains.
       </p>
     </div>
   </div>
@@ -132,4 +131,108 @@ export function errorPage(ctx, { code, heading, message }) {
   </div>
 </div>`;
   return layout({ ...ctx, title: heading, section: null }, content);
+}
+
+/**
+ * "What can I see?" — the page that explains an empty-looking Marketplace.
+ *
+ * The most common support question in a group-driven access model is "why
+ * can't I see anything?", and the answer is almost always that the groups
+ * claim is missing or the person is in fewer groups than they expect. Showing
+ * it plainly turns a mystery into a self-service answer.
+ */
+export function profilePage(ctx, { counts }) {
+  const u = ctx.user;
+  const realGroups = (u.groups || []).filter((g) => !/^[0-9a-f-]{36}$/i.test(g));
+  const rawIds = (u.groups || []).filter((g) => /^[0-9a-f-]{36}$/i.test(g));
+
+  const content = `
+<div class="govuk-grid-row">
+  <div class="govuk-grid-column-two-thirds">
+    <h1 class="govuk-heading-xl govuk-!-margin-bottom-0">What can I see?</h1>
+    <p class="govuk-body-l">
+      Your access comes from your Microsoft Entra group membership. Nothing in
+      Cortex grants access on its own.
+    </p>
+
+    <dl class="govuk-summary-list">
+      <div class="govuk-summary-list__row">
+        <dt class="govuk-summary-list__key">Signed in as</dt>
+        <dd class="govuk-summary-list__value">${esc(u.name)}${u.email ? `<span class="cortex-src">${esc(u.email)}</span>` : ''}</dd>
+      </div>
+      <div class="govuk-summary-list__row">
+        <dt class="govuk-summary-list__key">Team</dt>
+        <dd class="govuk-summary-list__value">${esc(u.team)}</dd>
+      </div>
+      <div class="govuk-summary-list__row">
+        <dt class="govuk-summary-list__key">Clearance</dt>
+        <dd class="govuk-summary-list__value">${esc(u.clearance)}
+          <span class="cortex-src">From membership of the cleared group, not set here.</span></dd>
+      </div>
+      <div class="govuk-summary-list__row">
+        <dt class="govuk-summary-list__key">Licences you are covered by</dt>
+        <dd class="govuk-summary-list__value">${esc((u.licences || []).join(', ') || 'None')}</dd>
+      </div>
+    </dl>
+
+    <h2 class="govuk-heading-m">Your groups</h2>
+    ${
+      realGroups.length
+        ? `<ul class="govuk-list govuk-list--bullet">
+             ${realGroups.map((g) => `<li>${esc(g)}</li>`).join('')}
+           </ul>`
+        : `<div class="govuk-warning-text">
+             <span class="govuk-warning-text__icon" aria-hidden="true">!</span>
+             <strong class="govuk-warning-text__text">
+               <span class="govuk-skip-link">Warning</span>
+               You appear to be in no named groups. If the Marketplace looks almost
+               empty, this is why.
+             </strong>
+           </div>
+           <p class="govuk-body">
+             Either you are genuinely in no groups, or the sign-in app registration
+             is not emitting a <strong>groups</strong> claim, or the group object ids
+             it emits have not been mapped to names. All three are fixed in
+             configuration, not in Cortex.
+           </p>`
+    }
+    ${
+      rawIds.length
+        ? `<h3 class="govuk-heading-s">Unmapped group ids</h3>
+           <p class="govuk-body-s">
+             Entra sent ${esc(rawIds.length)} group ids with no name mapped to them.
+             Access rules written against names will not match these. Map them with
+             <code>CORTEX_GROUP_NAMES</code>.
+           </p>
+           <ul class="govuk-list govuk-list--bullet">
+             ${rawIds.map((g) => `<li><code style="font-size:15px">${esc(g)}</code></li>`).join('')}
+           </ul>`
+        : ''
+    }
+
+    <h2 class="govuk-heading-m">What that gets you</h2>
+    <table class="govuk-table">
+      <thead>
+        <tr>
+          <th scope="col" class="govuk-table__header">State</th>
+          <th scope="col" class="govuk-table__header govuk-table__header--numeric">Entries</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${Object.entries(counts)
+          .map(
+            ([label, n]) => `<tr class="govuk-table__row">
+              <td class="govuk-table__cell">${esc(label)}</td>
+              <td class="govuk-table__cell govuk-table__cell--numeric">${esc(n)}</td>
+            </tr>`
+          )
+          .join('')}
+      </tbody>
+    </table>
+    <p class="govuk-body">
+      <a class="govuk-link" href="/marketplace">Back to the marketplace</a>
+    </p>
+  </div>
+</div>`;
+  return layout({ ...ctx, title: 'What can I see?', section: null }, content);
 }

@@ -165,6 +165,29 @@ export function attachableFor(entry, user) {
   return { attachable: false, state, reason };
 }
 
+/**
+ * Can this person actually reach the underlying data?
+ *
+ * DIFFERENT FROM visibilityFor. The "answerable by a person" state describes
+ * the REQUESTER's view — you may not have the data, but somebody can answer
+ * from it. That state is returned for everyone, because the data is never
+ * released to anyone through Cortex.
+ *
+ * The holder is whoever genuinely holds it. Answering that needs the same
+ * rules with the askable short-circuit removed, which is what this does.
+ * Using visibilityFor here instead would make every requester their own
+ * holder, and requests would appear to be waiting on the person who raised
+ * them.
+ */
+export function canReachUnderlying(entry, user) {
+  if (!user) return false;
+  if (entry.vis === 'notcleared') return false;
+  if (!clearedFor(entry, user)) return false;
+  if (!licenceCovers(entry, user)) return false;
+  const allowed = allowedGroupsFor(entry);
+  return allowed.some((g) => user.groups.includes(g));
+}
+
 /** Decorate a list of entries with their state for one user. */
 export function decorate(entries, user) {
   return entries.map((e) => {

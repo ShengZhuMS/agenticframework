@@ -67,7 +67,7 @@ ${
              <strong>${esc(entry.name)}</strong> is now in the marketplace, and callable as an MCP server.
            </p>
            <p class="govuk-body govuk-!-margin-bottom-0">
-             <a class="govuk-link" href="/entry/${attr(entry.id)}${ctx.personaQS()}">See its marketplace entry</a>
+             <a class="govuk-link" href="/entry/${attr(entry.id)}">See its marketplace entry</a>
            </p>
          </div>
        </div>`
@@ -96,7 +96,7 @@ ${
       again — nothing is shared until you share it.
     </p>
 
-    <form method="post" action="/agent/${attr(entry.id)}/ask${ctx.personaQS()}">
+    <form method="post" action="/agent/${attr(entry.id)}/ask">
       <div class="govuk-form-group">
         <label class="govuk-label" for="question">Your question</label>
         <input class="govuk-input" id="question" name="question" type="text"
@@ -129,7 +129,7 @@ ${
              ${knowledge
                .map(
                  (k) =>
-                   `<li><a class="govuk-link" href="/entry/${attr(k.id)}${ctx.personaQS()}">${esc(k.name)}</a>
+                   `<li><a class="govuk-link" href="/entry/${attr(k.id)}">${esc(k.name)}</a>
                     <span class="cortex-src">${esc(k.fresh)} · ${esc(k.sens)}</span></li>`
                )
                .join('')}
@@ -178,13 +178,13 @@ ${
                Visible as: <strong>${esc(entry.access)}</strong>
              </p>
              <p class="govuk-body-s govuk-!-margin-bottom-0">
-               <a class="govuk-link" href="/entry/${attr(entry.id)}${ctx.personaQS()}">See it in the marketplace</a>
+               <a class="govuk-link" href="/entry/${attr(entry.id)}">See it in the marketplace</a>
              </p>`
           : `<p class="govuk-body-s">
                Publishing makes this callable by other people, other agents and other
                developers. It becomes an entry in the marketplace like any other.
              </p>
-             <form method="post" action="/agent/${attr(entry.id)}/publish${ctx.personaQS()}">
+             <form method="post" action="/agent/${attr(entry.id)}/publish">
                <div class="govuk-form-group">
                  <fieldset class="govuk-fieldset">
                    <legend class="govuk-fieldset__legend"><strong>Who can call it?</strong></legend>
@@ -212,7 +212,7 @@ ${
       }
     </div>
 
-    <p class="govuk-body-s"><a class="govuk-link" href="/build${ctx.personaQS()}">Build another</a></p>
+    <p class="govuk-body-s"><a class="govuk-link" href="/build">Build another</a></p>
   </div>
 </div>`;
 
@@ -263,11 +263,11 @@ export function publishResultPage(ctx, { entry, steps, mcpUrl, openApiUrl }) {
     <p class="govuk-body-l">
       Every agent anyone builds becomes a part everyone else can build with.
     </p>
-    <a class="govuk-button" href="/marketplace?cat=Agent${ctx.personaQS('&')}" role="button">
+    <a class="govuk-button" href="/marketplace?cat=Agent" role="button">
       See it in the marketplace
     </a>
     <p class="govuk-body">
-      <a class="govuk-link" href="/agent/${attr(entry.id)}${ctx.personaQS()}">Back to the agent</a>
+      <a class="govuk-link" href="/agent/${attr(entry.id)}">Back to the agent</a>
     </p>
   </div>
 </div>`;

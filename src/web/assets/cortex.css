@@ -229,6 +229,18 @@ summary:focus,
 .cortex-nav__item--right { margin-left: auto; }
 .cortex-nav__item--right a { padding-right: 0; }
 
+/* -------------------------------------------------------- identity bar */
+.cortex-identity {
+  background: var(--govuk-light-grey);
+  border-bottom: 1px solid var(--govuk-border);
+  padding: 8px 0;
+  font-size: 16px;
+}
+.cortex-identity__inner { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.cortex-identity__meta { color: var(--govuk-dark-grey); }
+.cortex-identity__link { margin-left: auto; }
+.cortex-identity__link + .cortex-identity__link { margin-left: 0; }
+
 /* ----------------------------------------------------- persona switcher */
 .cortex-persona {
   background: #fff7bf;
@@ -574,19 +586,7 @@ summary:focus,
 }
 
 /* ---- illustrative marker */
-.cortex-illus {
-  display: inline-block;
-  font-size: 13px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  background: var(--govuk-light-grey);
-  color: #383f43;
-  border: 1px solid var(--govuk-mid-grey);
-  padding: 1px 5px;
-  margin-left: 6px;
-  vertical-align: middle;
-  white-space: nowrap;
-}
+
 
 /* ---- big stat boxes */
 .cortex-stats { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 30px; }

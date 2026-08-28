@@ -1,9 +1,8 @@
 /**
  * Purview adapter — governance domains and data products.
  *
- * Two implementations behind one interface:
- *   seeded  — reads seed/entries.json, no network
- *   live    — Unified Catalog API (public preview, no GA version exists)
+ * Live only. Reads the Unified Catalog API (public preview — there is no GA
+ * version). Tests stub at the HTTP boundary rather than swapping this out.
  *
  * VERIFIED API NOTES (August 2026) — do not substitute remembered shapes:
  *   base      https://api.purview-service.microsoft.com   (NOT {account}.purview.azure.com)
@@ -17,8 +16,6 @@
  *   rate      List is only 100 calls / 20s — which is why the Cortex Index exists
  */
 
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 import config from '../config.js';
 import { getToken } from './token.js';
 
@@ -33,45 +30,6 @@ const CLUSTER_DOMAINS = {
   animal: 'Animal and plant health',
   corp: 'Corporate services'
 };
-
-/* ------------------------------------------------------------------ seeded */
-
-class SeededPurview {
-  constructor(seedDir) {
-    this.seedDir = seedDir;
-    this.name = 'purview:seeded';
-  }
-
-  async _entries() {
-    if (!this._cache) {
-      const raw = await readFile(path.join(this.seedDir, 'entries.json'), 'utf8');
-      this._cache = JSON.parse(raw);
-    }
-    return this._cache;
-  }
-
-  async listDataProducts() {
-    const all = await this._entries();
-    return all.filter((e) => e.cat === 'Data');
-  }
-
-  async listDomains() {
-    const raw = await readFile(path.join(this.seedDir, 'clusters.json'), 'utf8');
-    return JSON.parse(raw).map((c) => ({
-      id: c.id,
-      name: c.name,
-      owner: c.owner,
-      count: c.count,
-      status: 'PUBLISHED'
-    }));
-  }
-
-  async health() {
-    const p = await this.listDataProducts();
-    const d = await this.listDomains();
-    return { ok: true, mode: 'seeded', dataProducts: p.length, domains: d.length };
-  }
-}
 
 /* -------------------------------------------------------------------- live */
 
@@ -178,8 +136,26 @@ class LivePurview {
     }));
   }
 
-  /** Map a Purview data product onto the canonical Cortex Entry. */
+  /**
+   * Map a Purview data product onto the canonical Cortex Entry.
+   *
+   * The Unified Catalog has no column for several things the entry standard
+   * requires — licence coverage, minimum aggregation, what a holder can answer.
+   * Those are carried as managed attributes so they live in Purview, governed
+   * alongside everything else, rather than only in this application.
+   */
   _toEntry(p) {
+    const a = p.managedAttributes || {};
+    const attr = (k) => {
+      const v = a[k];
+      if (v === undefined || v === null || v === '') return null;
+      return Array.isArray(v) ? v[0] : String(v);
+    };
+    const list = (k, sep = ',') => {
+      const v = attr(k);
+      return v ? v.split(sep).map((x) => x.trim()).filter(Boolean) : [];
+    };
+
     return {
       id: p.id,
       name: p.name,
@@ -187,23 +163,39 @@ class LivePurview {
       cluster: p.domain,
       desc: p.description,
       businessUse: p.businessUse,
-      owner: (p.contacts?.owner || []).map((c) => c.description).join(', ') || 'Not claimed',
-      ownerState: p.contacts?.owner?.length ? 'confirmed' : 'proposed',
-      fresh: p.updateFrequency || '—',
-      sens: p.sensitivityLabel || 'Official',
-      licence: (p.termsOfUse || []).map((t) => t.name).join(', ') || '—',
+      owner:
+        attr('cortexOwnerTeam') ||
+        (p.contacts?.owner || []).map((c) => c.description).join(', ') ||
+        null,
+      ownerState: attr('cortexOwnerTeam') || p.contacts?.owner?.length ? 'confirmed' : 'proposed',
+      fresh: attr('cortexFreshness') || p.updateFrequency || '—',
+      sens: attr('cortexSensitivity') || p.sensitivityLabel || 'Official',
+      access: attr('cortexAccessRoute') || 'Open to all staff',
+      allowedGroups: list('cortexAllowedGroups'),
+      licence: attr('cortexLicence') || (p.termsOfUse || []).map((t) => t.name).join(', ') || '—',
+      limits: attr('cortexLimitations'),
+      minAgg: attr('cortexMinimumAggregation'),
+      askable: list('cortexAskable', '|'),
+      deps: list('cortexDependsOn'),
+      location: attr('cortexLocation'),
       endorsed: p.endorsed,
       consumers: p.activeSubscriberCount ?? 0,
       audience: p.audience || [],
       status: p.status,
+      // Purview knows nothing about usage. Real figures come from APIM
+      // analytics in the index refresh, and are absent until they do.
+      calls: 0,
+      err: null,
+      lat: null,
+      rag: 'g',
+      flags: [],
       _source: {
         system: 'purview',
         id: p.id,
-        maintainedBy: 'human',
+        maintainedBy: attr('cortexOwnerTeam') ? 'human' : 'agent',
         syncedAt: new Date().toISOString()
       },
-      _endpoints: {},
-      _illustrative: ['calls', 'cpu', 'err', 'lat', 'carbon']
+      _endpoints: {}
     };
   }
 
@@ -215,9 +207,7 @@ class LivePurview {
 }
 
 export function createPurviewAdapter() {
-  return config.adapters.purview === 'live'
-    ? new LivePurview(config.purview)
-    : new SeededPurview(config.seedDir);
+  return new LivePurview(config.purview);
 }
 
-export { CLUSTER_DOMAINS, SeededPurview, LivePurview };
+export { CLUSTER_DOMAINS, LivePurview };

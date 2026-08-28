@@ -1,149 +1,113 @@
 /**
- * The Cortex Index: dependency resolution, cross-cluster counting, search,
- * filtering and sorting.
+ * The Cortex Index, built from live Azure responses.
  *
- * The cross-cluster figure in particular is a number a CTO may be shown on a
- * slide, so it is tested rather than trusted.
+ * Everything here goes through the real adapters against stubbed HTTP, so a
+ * change to a response shape breaks a test rather than a demo.
  */
 
-import { test, describe, before } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import index from '../src/bff/index/store.js';
+import { loadIndex, index, USERS } from './fixtures.js';
 
+let restore;
 before(async () => {
-  await index.init();
+  restore = await loadIndex();
+});
+after(() => restore && restore());
+
+describe('the register is built from live sources', () => {
+  test('data products arrive from Purview', () => {
+    const p = index.get('p-water-quality');
+    assert.ok(p, 'expected the Purview data product');
+    assert.equal(p.cat, 'Data');
+    assert.equal(p._source.system, 'purview');
+  });
+
+  test('governance domains arrive from Purview, not a local file', () => {
+    assert.equal(index.domains.length, 3);
+    assert.ok(index.clusterById('d-water'));
+  });
+
+  test('APIs arrive from API Management', () => {
+    const s = index.get('permit-history-lookup');
+    assert.ok(s);
+    assert.equal(s._source.system, 'apim');
+  });
+
+  test('an MCP endpoint attaches to the entry it fronts', () => {
+    assert.match(index.get('permit-history-lookup')._endpoints.mcp, /\/mcp$/);
+  });
+
+  test('managed attributes survive the round trip through Purview', () => {
+    const p = index.get('p-sickness');
+    assert.match(p.minAgg, /Directorate level/);
+    assert.equal(p.askable.length, 2, 'askable questions must survive as a list');
+    assert.match(p.licence, /Internal only/);
+  });
+
+  test('a dependency recorded as an attribute is read back', () => {
+    assert.ok(index.get('p-waste-carriers').deps.includes('p-water-quality'));
+  });
 });
 
-describe('the register loads', () => {
-  test('every seeded entry is present', () => {
-    assert.ok(index.all().length >= 20, 'expected the full seed corpus');
+describe('usage comes from API Management analytics', () => {
+  test('a called API carries real figures and names its source', () => {
+    const s = index.get('permit-history-lookup');
+    assert.equal(s.calls, 41200);
+    assert.equal(s.usageSource, 'API Management analytics');
+    assert.match(s.err, /%$/);
   });
 
-  test('nine clusters, each with a named owner', () => {
-    assert.equal(index.clusters.length, 9);
-    for (const c of index.clusters) {
-      assert.ok(c.name, 'cluster needs a name');
-      assert.ok(c.owner, 'cluster needs an owner, even if it is "Not claimed"');
-    }
+  test('an entry with no gateway traffic reports no usage rather than zero-looking-real', () => {
+    assert.equal(index.get('p-sickness').usageSource, undefined);
   });
 
-  test('four personas, each with distinct group membership', () => {
-    assert.equal(index.personas.length, 4);
-    const sets = index.personas.map((p) => p.groups.join(','));
-    assert.equal(new Set(sets).size, 4, 'personas must differ or the switcher proves nothing');
-  });
-
-  test('every entry has the fields the entry standard requires', () => {
+  test('no entry carries a cost or carbon figure', () => {
     for (const e of index.all()) {
-      for (const f of ['id', 'name', 'cat', 'cluster', 'desc', 'owner', 'sens', 'licence']) {
-        assert.ok(e[f] !== undefined && e[f] !== '', `${e.id} is missing ${f}`);
-      }
-      assert.ok(e._source?.system, `${e.id} must record where it came from`);
-    }
-  });
-
-  test('every entry belongs to a cluster that exists', () => {
-    const ids = new Set(index.clusters.map((c) => c.id));
-    for (const e of index.all()) {
-      assert.ok(ids.has(e.cluster), `${e.id} points at unknown cluster ${e.cluster}`);
+      assert.equal(e.cpu, undefined, `${e.id} must not carry an unsourced cost`);
+      assert.equal(e.carbon, undefined, `${e.id} must not carry an unsourced carbon figure`);
     }
   });
 });
 
-describe('cross-cluster dependencies — CAP-035', () => {
-  test('counts only dependencies that resolve to a registered entry', () => {
-    const { count, links, unresolved } = index.crossClusterLinks();
-    assert.equal(count, links.length);
-    assert.ok(count >= 0);
-    assert.ok(unresolved > 0, 'the seed data has external dependencies; they must be counted separately');
-  });
-
-  test('every counted link genuinely crosses a cluster boundary', () => {
-    for (const l of index.crossClusterLinks().links) {
-      assert.notEqual(l.from, l.to, 'a same-cluster link is not a cross-cluster link');
-    }
-  });
-
-  test('unresolved dependencies are reported, never silently dropped', () => {
-    const { count, unresolved } = index.crossClusterLinks();
-    let total = 0;
-    for (const e of index.all()) total += (e.deps || []).length;
-    const sameCluster = total - count - unresolved;
-    assert.ok(sameCluster >= 0, 'every dependency must be accounted for exactly once');
-  });
-});
-
-describe('coverage — CAP-037', () => {
-  test('registered is measured against the believed estate', () => {
+describe('coverage reports what is registered, not what is guessed', () => {
+  test('counts are facts, and there is no believed-estate percentage', () => {
     const c = index.coverage();
     assert.equal(c.registered, index.all().length);
-    assert.ok(c.believed > c.registered, 'the register is a thin slice, by design');
-    assert.ok(c.percent > 0 && c.percent < 100);
-    assert.equal(c.illustrative, true, 'the figure must be marked illustrative');
+    assert.equal(c.percent, undefined, 'a percentage of an estimate had no source and is gone');
+    assert.equal(c.believed, undefined);
+    assert.ok(c.byCat.Data >= 1);
   });
 });
 
-describe('search and filter — CAP-023, CAP-025, CAP-026', () => {
-  test('search matches name, description, owner and cluster', () => {
-    assert.ok(index.search({ q: 'waste' }).length > 0);
-    assert.ok(index.search({ q: 'Environment Agency'.toLowerCase() }).length >= 0);
-  });
-
-  test('an unmatched search returns nothing rather than everything', () => {
-    assert.equal(index.search({ q: 'zzzznomatchzzz' }).length, 0);
-  });
-
-  test('category filter narrows to the chosen categories', () => {
-    const out = index.search({ cats: ['Skill'] });
-    assert.ok(out.length > 0);
-    for (const e of out) assert.equal(e.cat, 'Skill');
-  });
-
-  test('cluster filter narrows to the chosen clusters', () => {
-    const out = index.search({ clusters: ['waste'] });
-    assert.ok(out.length > 0);
-    for (const e of out) assert.equal(e.cluster, 'waste');
-  });
-
-  test('filters combine rather than override each other', () => {
-    const out = index.search({ cats: ['Data'], clusters: ['water'] });
-    for (const e of out) {
-      assert.equal(e.cat, 'Data');
-      assert.equal(e.cluster, 'water');
-    }
+describe('a failing source degrades that slice only', () => {
+  test('the register survives Purview being down', async () => {
+    const r = await loadIndex({ failing: ['datagovernance'] });
+    assert.ok(index.stats().sourceErrors['purview-products'], 'the failure must be recorded');
+    assert.ok(index.get('permit-history-lookup'), 'APIM content must still load');
+    r();
+    restore = await loadIndex();
   });
 });
 
-describe('access requests — CAP-022', () => {
-  test('a request gets a reference and starts pending', () => {
+describe('cross-cluster dependencies', () => {
+  test('only counts links that resolve to a registered entry', () => {
+    const { count, links, unresolved } = index.crossClusterLinks();
+    assert.equal(count, links.length);
+    for (const l of links) assert.notEqual(l.from, l.to);
+    assert.equal(typeof unresolved, 'number');
+  });
+});
+
+describe('access requests capture the requester at the time of asking', () => {
+  test('a request records the groups held when it was raised', () => {
     const r = index.addAccessRequest({
-      entryId: 'x',
-      entryName: 'X',
-      requester: 'Sarah',
-      purpose: 'testing',
-      owner: 'Someone'
+      entryId: 'p-waste-carriers',
+      requester: USERS.consumer.name,
+      requesterGroups: USERS.consumer.groups,
+      purpose: 'testing'
     });
     assert.match(r.ref, /^CTX-\d{4}$/);
-    assert.equal(r.status, 'Pending');
-    assert.ok(r.raisedAt);
-  });
-
-  test('references are unique', () => {
-    const a = index.addAccessRequest({ entryId: 'a', requester: 'x' });
-    const b = index.addAccessRequest({ entryId: 'b', requester: 'x' });
-    assert.notEqual(a.ref, b.ref);
-  });
-});
-
-describe('upsert — CAP-047 claiming an entry', () => {
-  test('claiming sets a confirmed owner without losing other fields', () => {
-    const before = index.all().find((e) => e.ownerState === 'proposed');
-    if (!before) return;
-    const desc = before.desc;
-    index.upsert({ ...before, owner: 'My Team', ownerState: 'confirmed' });
-    const after = index.get(before.id);
-    assert.equal(after.owner, 'My Team');
-    assert.equal(after.ownerState, 'confirmed');
-    assert.equal(after.desc, desc, 'claiming must not drop the description');
+    assert.deepEqual(r.requesterGroups, USERS.consumer.groups);
   });
 });

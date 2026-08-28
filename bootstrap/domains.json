@@ -1,0 +1,56 @@
+[
+  {
+    "id": "water",
+    "name": "Water",
+    "owner": "EA Water Quality",
+    "description": "Defra governance domain for water."
+  },
+  {
+    "id": "flood",
+    "name": "Flood and coastal",
+    "owner": "EA Flood Risk",
+    "description": "Defra governance domain for flood and coastal."
+  },
+  {
+    "id": "marine",
+    "name": "Marine and fisheries",
+    "owner": "Cefas Data",
+    "description": "Defra governance domain for marine and fisheries."
+  },
+  {
+    "id": "waste",
+    "name": "Waste and resources",
+    "owner": "EA Waste Regulation",
+    "description": "Defra governance domain for waste and resources."
+  },
+  {
+    "id": "air",
+    "name": "Air quality",
+    "owner": "Not claimed",
+    "description": "Defra governance domain for air quality."
+  },
+  {
+    "id": "land",
+    "name": "Land and biodiversity",
+    "owner": "Natural England Evidence",
+    "description": "Defra governance domain for land and biodiversity."
+  },
+  {
+    "id": "farm",
+    "name": "Farming and countryside",
+    "owner": "RPA Land Data",
+    "description": "Defra governance domain for farming and countryside."
+  },
+  {
+    "id": "animal",
+    "name": "Animal and plant health",
+    "owner": "APHA Surveillance Intelligence",
+    "description": "Defra governance domain for animal and plant health."
+  },
+  {
+    "id": "corp",
+    "name": "Corporate services",
+    "owner": "DDTS Performance",
+    "description": "Defra governance domain for corporate services."
+  }
+]

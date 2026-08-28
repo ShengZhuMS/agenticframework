@@ -17,11 +17,11 @@ import { fileURLToPath } from 'node:url';
 
 import config, { hydrateConfig, missingRequired } from './config.js';
 import index from './index/store.js';
-import { decorate, visibilityFor } from './services/visibility.js';
+import { decorate, visibilityFor, VIS, VIS_ORDER } from './services/visibility.js';
 
 import { marketplacePage } from '../web/views/marketplace.js';
 import { entryPage, entryNotFoundPage } from '../web/views/entry.js';
-import { startPage, placeholderPage, helpPage, errorPage } from '../web/views/pages.js';
+import { startPage, placeholderPage, helpPage, errorPage, profilePage } from '../web/views/pages.js';
 import {
   buildLandingPage,
   buildFormPage,
@@ -31,8 +31,10 @@ import { agentPage, publishResultPage } from '../web/views/agent.js';
 import { askPage } from '../web/views/ask.js';
 import { mapPage } from '../web/views/map.js';
 import { sharePage } from '../web/views/share.js';
-import { requestsPage } from '../web/views/requests.js';
+import { requestsPage, requestDetailPage } from '../web/views/requests.js';
 import { ask, threadsFor, getThread } from './services/ask.js';
+import { userFromRequest, authConfigured } from './services/identity.js';
+import * as reqs from './services/requests.js';
 import {
   knowledgeOptions,
   toolOptions,
@@ -112,50 +114,48 @@ function multi(searchParams, key) {
 }
 
 /**
- * Resolve the effective user.
+ * Resolve the signed-in user.
  *
- * With Entra sign-in the identity comes from the Container Apps auth headers.
- * The persona override then swaps the *effective* user for visibility
- * computation only — a demo device, always visibly flagged, never a
- * privilege escalation.
+ * Container Apps built-in authentication terminates sign-in before the request
+ * reaches this process and injects the result as headers. Returns null when
+ * nobody is signed in, which the caller turns into a redirect.
+ *
+ * ALLOW_UNAUTHENTICATED exists only for running locally against real Azure
+ * back ends, where there is no platform auth in front of the app. It is never
+ * set in a deployed environment and the startup log says so loudly if it is.
  */
-function resolveUser(req, url) {
-  const personaId = url.searchParams.get('persona');
-  const fromPersona = personaId ? index.personaById(personaId) : null;
-  if (fromPersona) return fromPersona;
+function resolveUser(req) {
+  const user = userFromRequest(req, { groupNames: config.entra.groupNames });
+  if (user) return user;
 
-  const principal = req.headers['x-ms-client-principal-name'];
-  if (principal && !config.demoMode) {
-    const matched = index.personas.find((p) => p.email === principal);
-    if (matched) return matched;
+  if (config.entra.allowUnauthenticated) {
     return {
-      id: 'signed-in',
-      name: principal,
-      role: 'Signed in',
-      team: 'Defra',
-      groups: ['all-staff'],
-      clearance: 'Official',
-      licences: ['ogl'],
-      cleared: false
+      id: 'local-dev',
+      name: config.entra.localUser || 'Local development',
+      email: config.entra.localUser || null,
+      groups: config.entra.localGroups,
+      roles: [],
+      clearance: config.entra.localGroups.includes('cortex-official-sensitive')
+        ? 'Official–Sensitive'
+        : 'Official',
+      licences: ['ogl', 'internal'],
+      team: 'Local development',
+      unauthenticated: true
     };
   }
-  return index.personas[0];
+  return null;
 }
 
-function baseCtx(req, url) {
-  const user = resolveUser(req, url);
+function baseCtx(req, url, user) {
   const query = {};
   for (const k of new Set([...url.searchParams.keys()])) {
     const vals = url.searchParams.getAll(k);
     query[k] = vals.length > 1 ? vals : vals[0];
   }
   const byName = new Map(index.all().map((e) => [e.name.toLowerCase(), e]));
-  const personaId = url.searchParams.get('persona');
   return {
     user,
-    personas: index.personas,
     clusters: index.clusters,
-    showPersonaSwitcher: config.personaSwitcher,
     path: url.pathname,
     query,
     lastRefresh: index.lastRefresh
@@ -168,13 +168,7 @@ function baseCtx(req, url) {
      * the first two to a link and leave the third as plain text — an
      * unresolvable dependency is honest information, not a broken link.
      */
-    findByName: (n) => index.get(String(n)) || byName.get(String(n).toLowerCase()) || null,
-    /**
-     * Carry the persona across every internal link, so switching to another
-     * pair of eyes survives navigation. Without this the switcher resets on
-     * the first click and the demo falls apart.
-     */
-    personaQS: (sep = '?') => (personaId ? `${sep}persona=${encodeURIComponent(personaId)}` : '')
+    findByName: (n) => index.get(String(n)) || byName.get(String(n).toLowerCase()) || null
   };
 }
 
@@ -203,11 +197,11 @@ async function handle(req, res) {
 
   /* ---- health, for the deployment guide's four checks ---- */
   if (pathname === '/api/health') {
+    const st = index.stats();
     return json(res, 200, {
-      ok: true,
-      demoMode: config.demoMode,
-      adapters: config.adapters,
-      ...index.stats()
+      ok: Object.keys(st.sourceErrors || {}).length === 0,
+      live: true,
+      ...st
     });
   }
   if (pathname === '/api/health/purview') {
@@ -232,7 +226,6 @@ async function handle(req, res) {
       configured: Boolean(config.keyVault.name),
       vault: config.keyVault.name || null,
       hydrated: config.keyVault.hydrated,
-      demoMode: config.demoMode,
       missingRequired: missing,
       fromKeyVault: config.keyVault.report.filter((r) => r.source === 'keyvault').length,
       fromEnvironment: config.keyVault.report.filter((r) => r.source === 'environment').length,
@@ -243,7 +236,9 @@ async function handle(req, res) {
 
   /* ---- JSON API over the index ---- */
   if (pathname === '/api/entries') {
-    const ctx = baseCtx(req, url);
+    const apiUser = resolveUser(req);
+    if (!apiUser) return json(res, 401, { error: 'Sign in required' });
+    const ctx = baseCtx(req, url, apiUser);
     const found = index.search(
       {
         q: url.searchParams.get('q') || '',
@@ -270,12 +265,13 @@ async function handle(req, res) {
   /* ---- entry actions: request, claim, correction, watch ---- */
   const actionMatch = pathname.match(/^\/entry\/([^/]+)\/(request|claim|correction|watch)$/);
   if (actionMatch && req.method === 'POST') {
-    const ctx = baseCtx(req, url);
+    const actor = resolveUser(req);
+    if (!actor) return redirect(res, '/.auth/login/aad');
+    const ctx = baseCtx(req, url, actor);
     const [, entryId, action] = actionMatch;
     const entry = index.get(entryId);
     if (!entry) return send(res, 404, entryNotFoundPage(ctx, { id: entryId }));
     const form = parseForm(await readBody(req));
-    const persona = ctx.personaQS('&');
 
     // CAP-022 — request access to an entry
     if (action === 'request') {
@@ -283,39 +279,43 @@ async function handle(req, res) {
         entryId: entry.id,
         entryName: entry.name,
         requester: ctx.user.name,
+        requesterEmail: ctx.user.email,
+        requesterGroups: ctx.user.groups,
         purpose: form.purpose || '',
         cadence: form.cadence || 'once',
         owner: entry.owner
       });
-      return redirect(res, `/entry/${entry.id}?requested=${record.ref}${persona}`);
+      return redirect(res, `/entry/${entry.id}?requested=${record.ref}`);
     }
 
     // CAP-047 — claim an entry whose owner was proposed and never confirmed
     if (action === 'claim') {
       index.upsert({ ...entry, owner: ctx.user.team, ownerState: 'confirmed' });
-      return redirect(res, `/entry/${entry.id}?claimed=1${persona}`);
+      return redirect(res, `/entry/${entry.id}?claimed=1`);
     }
 
     // CAP-048 — corrections go to the owner, not to Cortex
     if (action === 'correction') {
       console.log(`[correction] ${entry.id} by ${ctx.user.name}: ${form.correction || ''}`);
-      return redirect(res, `/entry/${entry.id}?corrected=1${persona}`);
+      return redirect(res, `/entry/${entry.id}?corrected=1`);
     }
 
     // CAP-020 — watch an entry for change
     if (action === 'watch') {
-      return redirect(res, `/entry/${entry.id}?watching=1${persona}`);
+      return redirect(res, `/entry/${entry.id}?watching=1`);
     }
   }
 
   // A GET on /claim, so the link in the entry standard table works without JS.
   const claimGet = pathname.match(/^\/entry\/([^/]+)\/claim$/);
   if (claimGet && req.method === 'GET') {
-    const ctx = baseCtx(req, url);
+    const actor = resolveUser(req);
+    if (!actor) return redirect(res, '/.auth/login/aad');
+    const ctx = baseCtx(req, url, actor);
     const entry = index.get(claimGet[1]);
     if (!entry) return send(res, 404, entryNotFoundPage(ctx, { id: claimGet[1] }));
     index.upsert({ ...entry, owner: ctx.user.team, ownerState: 'confirmed' });
-    return redirect(res, `/entry/${entry.id}?claimed=1${ctx.personaQS('&')}`);
+    return redirect(res, `/entry/${entry.id}?claimed=1`);
   }
 
   /* ============================== the invocation shim — GLUE 2, step 1 ====
@@ -366,8 +366,24 @@ async function handle(req, res) {
     return json(res, 200, openApiFor(entry, base));
   }
 
+  /* ================================================== sign-in required ====
+   * Every page below this line needs an identity. Group membership IS the
+   * governance model, so an anonymous visitor has no membership, every entry
+   * resolves to "not available", and the page would be actively misleading
+   * rather than merely empty. Better to send them to sign in.
+   */
+  const user = resolveUser(req);
+  if (!user) {
+    if (!authConfigured(req)) {
+      // The platform is not terminating sign-in in front of this process,
+      // so redirecting to /.auth/login would loop. Say what is wrong instead.
+      return send(res, 500, signInNotConfiguredPage());
+    }
+    return redirect(res, `/.auth/login/aad?post_login_redirect_uri=${encodeURIComponent(req.url)}`);
+  }
+
   /* ---- pages ---- */
-  const ctx = baseCtx(req, url);
+  const ctx = baseCtx(req, url, user);
 
   /* ========================== WP11 and WP12 — test and publish an agent === */
 
@@ -417,7 +433,7 @@ async function handle(req, res) {
         question: form.question
       });
     }
-    return redirect(res, `/agent/${entry.id}${ctx.personaQS()}`);
+    return redirect(res, `/agent/${entry.id}`);
   }
 
   const publishMatch = pathname.match(/^\/agent\/([^/]+)\/publish$/);
@@ -454,6 +470,15 @@ async function handle(req, res) {
 
   if (pathname === '/' || pathname === '/start') {
     return send(res, 200, startPage(ctx, { stats: index.stats(), coverage: index.coverage() }));
+  }
+
+  if (pathname === '/profile') {
+    const all = decorate(index.all(), ctx.user);
+    const counts = {};
+    for (const v of VIS_ORDER) {
+      counts[VIS[v].label] = all.filter((e) => e.vis === v).length;
+    }
+    return send(res, 200, profilePage(ctx, { counts }));
   }
 
   if (pathname === '/marketplace') {
@@ -591,7 +616,7 @@ async function handle(req, res) {
     }
 
     const { entry } = await createAgent(result.definition, ctx.user);
-    return redirect(res, `/agent/${entry.id}?created=1${ctx.personaQS('&')}`);
+    return redirect(res, `/agent/${entry.id}?created=1`);
   }
 
   /* ==================================================== WP13 — ask =========*/
@@ -599,10 +624,10 @@ async function handle(req, res) {
   if (pathname === '/ask' && req.method === 'POST') {
     const form = parseForm(await readBody(req));
     if (!String(form.q || '').trim()) {
-      return redirect(res, `/ask${form.thread ? `?thread=${form.thread}` : ''}${ctx.personaQS(form.thread ? '&' : '?')}`);
+      return redirect(res, `/ask${form.thread ? `?thread=${form.thread}` : ''}`);
     }
     const r = await ask(form.q, ctx.user, { threadId: form.thread });
-    return redirect(res, `/ask?thread=${r.threadId}${ctx.personaQS('&')}`);
+    return redirect(res, `/ask?thread=${r.threadId}`);
   }
 
   if (pathname === '/ask') {
@@ -614,7 +639,7 @@ async function handle(req, res) {
     const q = url.searchParams.get('q');
     if (q) {
       const r = await ask(q, ctx.user, { threadId: tid });
-      return redirect(res, `/ask?thread=${r.threadId}${ctx.personaQS('&')}`);
+      return redirect(res, `/ask?thread=${r.threadId}`);
     }
     return send(res, 200, askPage(ctx, { thread, history, threadId: thread?.id }));
   }
@@ -664,18 +689,27 @@ async function handle(req, res) {
         proposed,
         requests,
         neverCalled: mine.filter((e) => !e.calls),
-        submitted: url.searchParams.get('submitted')
+        submitted: url.searchParams.get('submitted'),
+        gateway: {
+          total: index.gatewayRequests.filter((g) => g.status === 'Pending').length,
+          mine: index.gatewayRequests.filter(
+            (g) => g.status === 'Pending' && g.requester === ctx.user.name
+          ).length
+        }
       })
     );
   }
 
   if (pathname === '/share/connect' && req.method === 'POST') {
     const form = parseForm(await readBody(req));
-    const ref = `GW-${String(index.accessRequests.length + 1).padStart(4, '0')}`;
-    console.log(
-      `[gateway] registration requested: ${form.system}/${form.object} by ${ctx.user.name}`
-    );
-    return redirect(res, `/share?submitted=${ref}${ctx.personaQS('&')}`);
+    const record = index.addGatewayRequest({
+      system: form.system || '',
+      object: form.object || '',
+      team: form.team || ctx.user.team,
+      requester: ctx.user.name,
+      requesterEmail: ctx.user.email
+    });
+    return redirect(res, `/share?submitted=${record.ref}`);
   }
 
   const decisionMatch = pathname.match(/^\/share\/requests\/([^/]+)$/);
@@ -688,23 +722,113 @@ async function handle(req, res) {
       r.decidedAt = new Date().toISOString();
       // Approving grants the requester's groups access to the entry.
       if (r.status === 'Approved') {
+        // Grant the groups the requester actually held when they asked.
+        // Captured at request time so an approval cannot silently widen if
+        // their membership changed in between.
         const entry = index.get(r.entryId);
-        const requester = index.personas.find((p) => p.name === r.requester);
-        if (entry && requester) {
+        if (entry && r.requesterGroups?.length) {
           index.upsert({
             ...entry,
-            allowedGroups: [...new Set([...(entry.allowedGroups || []), ...requester.groups])]
+            allowedGroups: [...new Set([...(entry.allowedGroups || []), ...r.requesterGroups])]
           });
         }
       }
     }
-    return redirect(res, `/share${ctx.personaQS()}`);
+    return redirect(res, `/share`);
   }
 
   /* ================================================ WP17 — requests ========*/
 
+  /* ============================================ Requests — the lifecycle == */
+
   if (pathname === '/requests') {
-    return send(res, 200, requestsPage(ctx, { view: url.searchParams.get('view') || 'problem' }));
+    const view = url.searchParams.get('view') || 'mine';
+    const question = url.searchParams.get('q') || '';
+    return send(
+      res,
+      200,
+      requestsPage(ctx, {
+        view,
+        question,
+        mine: reqs.raisedBy(ctx.user),
+        waiting: reqs.waitingOn(ctx.user),
+        holders: question ? reqs.proposeHolders(question) : null
+      })
+    );
+  }
+
+  if (pathname === '/requests/new' && req.method === 'POST') {
+    const form = parseForm(await readBody(req));
+    const question = String(form.question || '').trim();
+    if (!question) return redirect(res, '/requests?view=new');
+
+    // Propose holders on the first submit so the requester picks one, rather
+    // than needing to know the org chart.
+    if (!form.holderEntryId && reqs.proposeHolders(question).length) {
+      return redirect(res, `/requests?view=new&q=${encodeURIComponent(question)}`);
+    }
+    const r = reqs.raise({
+      question,
+      purpose: form.purpose || '',
+      cadence: form.cadence || 'once',
+      requester: ctx.user,
+      holderEntryId: form.holderEntryId || null
+    });
+    return redirect(res, `/requests/${r.ref}`);
+  }
+
+  const reqDetail = pathname.match(/^\/requests\/([A-Z]+-\d+)$/);
+  if (reqDetail) {
+    const r = reqs.get(reqDetail[1]);
+    if (!r) return send(res, 404, errorPage(ctx, notFound()));
+    const isHolder = reqs.waitingOn(ctx.user).some((x) => x.ref === r.ref);
+    return send(res, 200, requestDetailPage(ctx, { request: r, isHolder }));
+  }
+
+  const reqAction = pathname.match(/^\/requests\/([A-Z]+-\d+)\/(draft|release|decline)$/);
+  if (reqAction && req.method === 'POST') {
+    const [, ref, action] = reqAction;
+    const r = reqs.get(ref);
+    if (!r) return send(res, 404, errorPage(ctx, notFound()));
+
+    // The control: only somebody who can actually reach the data may act.
+    if (!reqs.waitingOn(ctx.user).some((x) => x.ref === ref)) {
+      return send(
+        res,
+        403,
+        errorPage(ctx, {
+          code: 403,
+          heading: 'This request is not yours to answer',
+          message: 'Only somebody who can reach the data behind it can draft or release an answer.'
+        })
+      );
+    }
+
+    const form = action === 'draft' ? {} : parseForm(await readBody(req));
+    try {
+      if (action === 'draft') await reqs.draft(ref, ctx.user);
+      else if (action === 'release') {
+        reqs.release(ref, ctx.user, {
+          answer: form.answer,
+          caveat: form.caveat,
+          approveMethod: form.approveMethod === 'yes'
+        });
+      } else {
+        reqs.decline(ref, ctx.user, { reason: form.reason || 'No reason given', offered: form.offered });
+      }
+    } catch (err) {
+      console.error('[requests]', err);
+      return send(
+        res,
+        500,
+        errorPage(ctx, {
+          code: 500,
+          heading: 'That could not be completed',
+          message: 'Nothing was changed. Try again in a moment.'
+        })
+      );
+    }
+    return redirect(res, `/requests/${ref}`);
   }
 
   if (pathname === '/automate') {
@@ -734,6 +858,30 @@ async function handle(req, res) {
   }
 
   return send(res, 404, errorPage(ctx, notFound()));
+}
+
+/**
+ * Shown when the app is reachable but nothing is terminating sign-in in front
+ * of it. Redirecting to /.auth/login would loop forever, so say what is wrong
+ * and how to fix it — this is the most likely first-deployment failure.
+ */
+function signInNotConfiguredPage() {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<title>Sign-in is not configured — Cortex</title>
+<link rel="stylesheet" href="/assets/cortex.css"></head>
+<body><div class="govuk-width-container"><main class="govuk-main-wrapper">
+<h1 class="govuk-heading-xl">Sign-in is not configured</h1>
+<p class="govuk-body-l">Cortex is running, but Microsoft Entra sign-in is not switched on in front of it.</p>
+<p class="govuk-body">Group membership decides what every person can see, so Cortex will not serve pages to an unidentified visitor.</p>
+<h2 class="govuk-heading-m">To fix it</h2>
+<ol class="govuk-list govuk-list--number govuk-list--spaced">
+  <li>Enable authentication on the container app and set the unauthenticated action to <strong>Return HTTP 302</strong>.</li>
+  <li>Add a <strong>groups</strong> claim to the app registration under Token configuration. Without it, everyone appears to be in no groups and sees almost nothing.</li>
+  <li>Restart the app.</li>
+</ol>
+<p class="govuk-body">For local development against real Azure back ends, set <code>ALLOW_UNAUTHENTICATED=true</code> and <code>LOCAL_DEV_GROUPS</code>. Never set those in a deployed environment.</p>
+<p class="govuk-body">Full steps are in <strong>docs/deploy-windows.md</strong>, section 5.</p>
+</main></div></body></html>`;
 }
 
 function notFound() {
@@ -795,7 +943,7 @@ export async function start() {
             send(
               res,
               500,
-              errorPage(baseCtx(req, url2), {
+              errorPage(baseCtx(req, url2, null), {
                 code: 500,
                 heading: 'Sorry, there is a problem with the service',
                 message: 'Try again in a moment. If it keeps happening, tell the Cortex team.'
@@ -818,9 +966,11 @@ export async function start() {
   server.listen(config.port, async () => {
     const s = index.stats();
     console.log(`Cortex listening on http://localhost:${config.port}`);
-    console.log(
-      `  demo mode: ${config.demoMode} · adapters: ${JSON.stringify(config.adapters)}`
-    );
+    console.log('  mode: live — Purview, API Management and Foundry');
+    if (config.entra.allowUnauthenticated) {
+      console.warn('  WARNING: ALLOW_UNAUTHENTICATED is on. Every page renders as a fixed');
+      console.warn('  local identity. This must never be set in a deployed environment.');
+    }
     console.log(`  register: ${s.entries} entries across ${s.clusters} clusters`);
     reportConfigSource();
     await prewarm();
@@ -837,10 +987,6 @@ export async function start() {
  * Only non-sensitive values are printed. Keys are reported as resolved or not.
  */
 function reportConfigSource() {
-  if (config.demoMode) {
-    console.log('  config: demo mode — seeded data, no Key Vault call made');
-    return;
-  }
   if (!config.keyVault.name) {
     console.log('  config: environment variables (no KEYVAULT_NAME set)');
   } else {
@@ -854,7 +1000,7 @@ function reportConfigSource() {
   const missing = missingRequired();
   if (missing.length) {
     console.warn(`  MISSING REQUIRED CONFIG: ${missing.join(', ')}`);
-    console.warn('  Live adapters will fail until these are onboarded. Seeded data still serves.');
+    console.warn('  Cortex cannot reach those services until they are onboarded.');
   }
 }
 
@@ -868,10 +1014,6 @@ function reportConfigSource() {
  * is down must not stop the app serving seeded data.
  */
 async function prewarm() {
-  if (config.demoMode) {
-    console.log('  pre-warm: skipped, demo mode uses no external calls');
-    return;
-  }
   const checks = [
     ['purview', () => index.purview.health()],
     ['apim', () => index.apim.health()],

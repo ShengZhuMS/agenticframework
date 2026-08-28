@@ -2,17 +2,22 @@
   "name": "cortex",
   "version": "0.1.0",
   "private": true,
-  "description": "Cortex — a front door to Microsoft Purview, API Management and Foundry, for Defra",
+  "description": "Cortex \u2014 a front door to Microsoft Purview, API Management and Foundry, for Defra",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/bff/server.js",
     "dev": "node --watch src/bff/server.js",
     "test": "node --test test/*.test.js",
-    "seed:purview": "node scripts/load-purview.js",
-    "demo:reset": "node scripts/demo-reset.js",
-    "mcp": "node src/purview-mcp/server.js"
+    "mcp": "node src/purview-mcp/server.js",
+    "build:assets": "node scripts/build-assets.js",
+    "prepare": "node scripts/build-assets.js",
+    "bootstrap": "node scripts/bootstrap.js"
   },
-  "dependencies": {},
+  "dependencies": {
+    "govuk-frontend": "^5.7.1"
+  },
   "devDependencies": {}
 }

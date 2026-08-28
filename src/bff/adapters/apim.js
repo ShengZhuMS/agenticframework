@@ -17,78 +17,11 @@
  *   Not supported in APIM workspaces. Consumption tier not supported.
  */
 
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 import config from '../config.js';
 import { getToken } from './token.js';
 
 const ARM = 'https://management.azure.com';
 const ARM_SCOPE = 'https://management.azure.com/.default';
-
-/* ------------------------------------------------------------------ seeded */
-
-class SeededApim {
-  constructor(seedDir) {
-    this.seedDir = seedDir;
-    this.name = 'apim:seeded';
-  }
-
-  async _entries() {
-    if (!this._cache) {
-      const raw = await readFile(path.join(this.seedDir, 'entries.json'), 'utf8');
-      this._cache = JSON.parse(raw);
-    }
-    return this._cache;
-  }
-
-  async listMcpServers() {
-    const all = await this._entries();
-    return all
-      .filter((e) => e._endpoints?.mcp)
-      .map((e) => ({
-        id: e.id,
-        name: e.name,
-        displayName: e.name,
-        description: e.desc,
-        path: `${e.id}-mcp`,
-        url: e._endpoints.mcp,
-        type: 'mcp',
-        tools: (e.tools || [{ name: e.id.replace(/-/g, '_'), description: e.desc }]),
-        cat: e.cat
-      }));
-  }
-
-  async listApis() {
-    const all = await this._entries();
-    return all.filter((e) => e.cat === 'Skill' || e.cat === 'App');
-  }
-
-  /** In seeded mode publishing is recorded in the index, not in Azure. */
-  async importOpenApi({ id, displayName, description, path }) {
-    return { id, displayName, description, path, simulated: true };
-  }
-
-  async createMcpServer({ id, displayName, description }) {
-    return {
-      id,
-      displayName,
-      description,
-      path: id,
-      url: `https://apim-cortex.azure-api.net/${id}/mcp`,
-      type: 'mcp',
-      simulated: true
-    };
-  }
-
-  async addTool(mcpServerId, { toolId, displayName, description }) {
-    return { id: toolId, displayName, description, mcpServerId, simulated: true };
-  }
-
-  async health() {
-    const s = await this.listMcpServers();
-    return { ok: true, mode: 'seeded', mcpServers: s.length };
-  }
-}
 
 /* -------------------------------------------------------------------- live */
 
@@ -256,6 +189,52 @@ class LiveApim {
     });
   }
 
+  /**
+   * Real usage from the gateway, over the last 90 days.
+   *
+   * This is the APIM Reports API — byApi aggregates every call the gateway has
+   * actually served. It is the only genuine source for calls, error rate and
+   * latency, which is why those are the only usage figures Cortex shows.
+   *
+   * Deliberately NOT reported: cost per use and carbon. APIM knows neither,
+   * and a number nobody can defend is worse than no number at all.
+   *
+   * Returns a map keyed by API id so the index can decorate entries in one
+   * pass. Failure returns an empty map — usage is decoration, and losing it
+   * must never blank the Marketplace.
+   */
+  async usageByApi({ days = 90 } = {}) {
+    const from = new Date(Date.now() - days * 86400000).toISOString().slice(0, 19);
+    const to = new Date().toISOString().slice(0, 19);
+    const filter = `timestamp ge datetime'${from}' and timestamp le datetime'${to}'`;
+
+    const url = new URL(`${this.base}/reports/byApi`);
+    url.searchParams.set('api-version', this.cfg.analyticsApiVersion);
+    url.searchParams.set('$filter', filter);
+
+    const token = await getToken(ARM_SCOPE);
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`APIM analytics failed ${res.status}`);
+    const json = await res.json();
+
+    const out = {};
+    for (const r of json.value || []) {
+      // name is the API id; apiId is the full ARM resource id.
+      const id = r.apiId ? String(r.apiId).split('/').pop() : r.name;
+      if (!id) continue;
+      const calls = Number(r.callCountTotal || 0);
+      const failed = Number(r.callCountFailed || 0) + Number(r.callCountBlocked || 0);
+      out[id] = {
+        calls,
+        consumers: Number(r.callCountSuccess ? r.subscriptionCount || 0 : 0) || undefined,
+        errorRate: calls ? `${((failed / calls) * 100).toFixed(1)}%` : '0.0%',
+        latencyMs: r.apiTimeAvg != null ? Math.round(Number(r.apiTimeAvg) * 1000) : null,
+        rag: calls === 0 ? 'g' : failed / calls > 0.05 ? 'r' : failed / calls > 0.01 ? 'a' : 'g'
+      };
+    }
+    return out;
+  }
+
   async _waitForProvisioning(id, attempts = 30) {
     for (let i = 0; i < attempts; i++) {
       const cur = await this._fetch(`/apis/${id}`).catch(() => null);
@@ -274,9 +253,7 @@ class LiveApim {
 }
 
 export function createApimAdapter() {
-  return config.adapters.apim === 'live'
-    ? new LiveApim(config.apim)
-    : new SeededApim(config.seedDir);
+  return new LiveApim(config.apim);
 }
 
-export { SeededApim, LiveApim };
+export { LiveApim };

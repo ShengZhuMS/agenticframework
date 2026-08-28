@@ -6,17 +6,16 @@
  * fragile, and the Unified Catalog List operation is capped at 100 calls per
  * 20 seconds — a handful of concurrent users would exhaust it.
  *
- * So: a background refresh populates this index, and every read path is
- * served from it. Writes go direct to the live system and then optimistically
- * upsert here, so a user sees their own change immediately. That is what
- * makes the publish step of the demo feel instant.
+ * So: a background refresh populates this index from the live APIs, and every
+ * read path is served from it. Writes go direct to the live system and then
+ * optimistically upsert here, so a user sees their own change immediately.
  *
- * Serving from the index also means a back end going down degrades to stale
- * data rather than an error page.
+ * EVERYTHING IN HERE CAME FROM AZURE. There is no seeded data and no local
+ * fallback corpus: if the register is empty it is because nothing is
+ * registered, and the Marketplace says so rather than showing something that
+ * looks real and is not.
  */
 
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 import config from '../config.js';
 import { createPurviewAdapter } from '../adapters/purview.js';
 import { createApimAdapter } from '../adapters/apim.js';
@@ -25,11 +24,12 @@ import { createFoundryAdapter } from '../adapters/foundry.js';
 class CortexIndex {
   constructor() {
     this.entries = new Map();
-    this.clusters = [];
-    this.personas = [];
+    this.domains = [];
     this.accessRequests = [];
+    this.gatewayRequests = [];
     this.lastRefresh = null;
     this.lastError = null;
+    this.sourceErrors = {};
     this.refreshing = false;
 
     this.purview = createPurviewAdapter();
@@ -38,17 +38,14 @@ class CortexIndex {
   }
 
   async init() {
-    const dir = config.seedDir;
-    this.clusters = JSON.parse(await readFile(path.join(dir, 'clusters.json'), 'utf8'));
-    this.personas = JSON.parse(await readFile(path.join(dir, 'personas.json'), 'utf8'));
-
-    // The seed corpus is the baseline register. Live refresh merges over it
-    // rather than replacing it, so the Marketplace is never empty.
-    const seeded = JSON.parse(await readFile(path.join(dir, 'entries.json'), 'utf8'));
-    for (const e of seeded) this.entries.set(e.id, this.normalise(e));
-
     await this.refresh();
-    if (config.index.refreshMinutes > 0 && !config.demoMode) {
+
+    if (config.index.warnIfEmpty && this.entries.size === 0) {
+      console.warn('  register is EMPTY — nothing is registered in Purview, APIM or Foundry yet.');
+      console.warn('  Run `npm run bootstrap` to create the Defra governance domains and data products.');
+    }
+
+    if (config.index.refreshMinutes > 0) {
       this.timer = setInterval(
         () => this.refresh().catch(() => {}),
         config.index.refreshMinutes * 60_000
@@ -59,38 +56,81 @@ class CortexIndex {
   }
 
   /**
-   * Rebuild from every source. Each source is independently fault-tolerant:
-   * one failing back end degrades that slice to seeded data and records the
-   * error, rather than taking the page down.
+   * Rebuild from every source.
+   *
+   * Each source is independently fault-tolerant: one failing back end leaves
+   * that slice as it was and records the error, rather than emptying the
+   * register or taking the page down. A partial register is honest — it is
+   * labelled on screen — where a blank one would be misleading.
    */
   async refresh() {
-    if (this.refreshing) return;
+    if (this.refreshing) return { entries: this.entries.size, errors: [] };
     this.refreshing = true;
     const errors = [];
 
     const settle = async (label, fn) => {
       try {
-        return await fn();
+        const out = await fn();
+        delete this.sourceErrors[label];
+        return out;
       } catch (err) {
         errors.push(`${label}: ${err.message}`);
+        this.sourceErrors[label] = err.message;
         return null;
       }
     };
 
-    const [products, mcpServers, agents] = await Promise.all([
-      settle('purview', () => this.purview.listDataProducts()),
-      settle('apim', () => this.apim.listMcpServers()),
-      settle('foundry', () => this.foundry.listAgents())
+    const [domains, products, mcpServers, apis, agents] = await Promise.all([
+      settle('purview-domains', () => this.purview.listDomains()),
+      settle('purview-products', () => this.purview.listDataProducts()),
+      settle('apim-mcp', () => this.apim.listMcpServers()),
+      settle('apim-apis', () => this.apim.listApis()),
+      settle('foundry-agents', () => this.foundry.listAgents())
     ]);
 
-    if (products) for (const p of products) this.upsert(p);
+    if (domains) this.domains = domains;
 
+    if (products) {
+      for (const p of products) this.upsert(this.normalise(p));
+    }
+
+    // Skills and apps registered as APIs in API Management.
+    if (apis) {
+      for (const a of apis) {
+        if (!a?.id) continue;
+        this.upsert(
+          this.normalise({
+            id: a.id,
+            name: a.name || a.id,
+            cat: 'Skill',
+            cluster: a.cluster || domainOf(a),
+            desc: a.description || 'An API registered in API Management.',
+            owner: a.owner || 'Not claimed',
+            fresh: 'Live',
+            sens: 'Official',
+            access: 'Open to all staff',
+            allowedGroups: ['all-staff'],
+            licence: 'Internal only',
+            _source: {
+              system: 'apim',
+              id: a.id,
+              maintainedBy: 'agent',
+              syncedAt: new Date().toISOString()
+            },
+            _endpoints: {}
+          })
+        );
+      }
+    }
+
+    // MCP endpoints attach to whatever entry they front.
     if (mcpServers) {
       for (const s of mcpServers) {
-        const existing = this.entries.get(s.id);
-        if (existing) {
-          existing._endpoints = { ...existing._endpoints, mcp: s.url || existing._endpoints?.mcp };
-          existing.tools = s.tools || existing.tools;
+        const backing = s.id.replace(/-mcp$/, '');
+        const target = this.entries.get(s.id) || this.entries.get(backing);
+        if (target) {
+          target._endpoints = { ...target._endpoints, mcp: s.url };
+          target.tools = s.tools || target.tools;
         }
       }
     }
@@ -105,19 +145,40 @@ class CortexIndex {
           id,
           name: a.name,
           cat: 'Agent',
-          cluster: existing?.cluster || 'corp',
+          cluster: existing?.cluster || (this.domains[0]?.id ?? 'unassigned'),
           desc: existing?.desc || a.instructions?.slice(0, 200) || 'An agent built in Cortex.',
           owner: existing?.owner || 'Built in Cortex',
           ownerState: 'confirmed',
           fresh: 'Live',
           sens: existing?.sens || 'Official',
-          access: existing?.access || 'Open to all staff',
-          vis: existing?.vis || 'available',
+          access: existing?.access || 'Open to the team that built it',
+          allowedGroups: existing?.allowedGroups || [],
           licence: existing?.licence || 'Internal only',
-          _source: { system: 'foundry', id: a.name, maintainedBy: 'human', syncedAt: new Date().toISOString() },
-          _endpoints: existing?._endpoints || {},
-          _illustrative: ['calls', 'consumers', 'cpu', 'err', 'lat', 'carbon']
+          _source: {
+            system: 'foundry',
+            id: a.name,
+            maintainedBy: 'human',
+            syncedAt: new Date().toISOString()
+          },
+          _endpoints: existing?._endpoints || {}
         });
+      }
+    }
+
+    // Real usage from the gateway. Decoration only — a failure here must never
+    // affect what the register contains.
+    const usage = await settle('apim-analytics', () => this.apim.usageByApi());
+    if (usage) {
+      for (const entry of this.entries.values()) {
+        const u = usage[entry.id] || usage[`${entry.id}-api`] || usage[`${entry.id}-mcp`];
+        if (u) {
+          entry.calls = u.calls;
+          if (u.consumers !== undefined) entry.consumers = u.consumers;
+          entry.err = u.errorRate;
+          entry.lat = u.latencyMs != null ? `${u.latencyMs}ms` : null;
+          entry.rag = u.rag;
+          entry.usageSource = 'API Management analytics';
+        }
       }
     }
 
@@ -128,20 +189,18 @@ class CortexIndex {
   }
 
   /**
-   * Fill in what an entry does not state for itself.
+   * Fill in what a record does not state for itself.
    *
-   * Where an entry names no owner, the owning team of its cluster is used.
-   * That is a derivation, not a fact somebody confirmed, so ownerState is
-   * marked 'proposed' and the entry standard shows it as such. An owner
-   * nobody has confirmed and an owner somebody has confirmed must never look
-   * the same on screen — the whole point of the provenance column is that a
-   * reader can tell them apart.
+   * Where no owner is named, the owning team of its governance domain is used.
+   * That is a derivation, not a fact somebody confirmed, so ownerState becomes
+   * 'proposed' and the entry standard shows it as such. An owner nobody has
+   * confirmed and an owner somebody has confirmed must never look the same.
    */
   normalise(entry) {
     const e = { ...entry };
     if (!e.owner) {
-      const cluster = this.clusters.find((c) => c.id === e.cluster);
-      e.owner = cluster?.owner || 'Not claimed';
+      const domain = this.domains.find((d) => d.id === e.cluster);
+      e.owner = domain?.owner || 'Not claimed';
       e.ownerState = e.ownerState === 'confirmed' ? 'confirmed' : 'proposed';
       e._ownerDerived = true;
     }
@@ -149,7 +208,6 @@ class CortexIndex {
     return e;
   }
 
-  /** Merge a record in, preserving seeded fields the live source does not carry. */
   upsert(entry) {
     const existing = this.entries.get(entry.id);
     const merged = existing ? { ...existing, ...prune(entry) } : this.normalise(entry);
@@ -165,22 +223,17 @@ class CortexIndex {
     return this.entries.get(id) || null;
   }
 
+  /** Governance domains, from Purview. Named 'clusters' in the interface copy. */
+  get clusters() {
+    return this.domains;
+  }
+
   clusterById(id) {
-    return this.clusters.find((c) => c.id === id) || null;
+    return this.domains.find((c) => c.id === id) || null;
   }
 
-  personaById(id) {
-    return this.personas.find((p) => p.id === id) || null;
-  }
-
-  /**
-   * Search and filter. This mirrors the shape of the Purview
-   * dataProducts/query call, so swapping the seeded path for the live one
-   * does not change the caller.
-   */
   search({ q, cats, clusters, visStates, sort = 'name' } = {}, user = null) {
     let out = this.all();
-
     if (q) {
       const needle = q.toLowerCase();
       out = out.filter((e) =>
@@ -207,14 +260,14 @@ class CortexIndex {
   /**
    * Cross-cluster dependency count — the honest test of joining up.
    *
-   * Dependencies are recorded as an entry id, an entry name, or an external
-   * system not in the register. Only the first two can be counted; an
-   * external dependency is real but unmeasurable, so it is reported
-   * separately rather than silently dropped.
+   * Only dependencies that resolve to a registered entry can be counted. One
+   * that points at an unregistered system is real but unmeasurable, so it is
+   * reported separately rather than silently dropped.
    */
   crossClusterLinks() {
     const byName = new Map(this.all().map((e) => [e.name.toLowerCase(), e]));
-    const resolve = (d) => this.entries.get(String(d)) || byName.get(String(d).toLowerCase()) || null;
+    const resolve = (d) =>
+      this.entries.get(String(d)) || byName.get(String(d).toLowerCase()) || null;
 
     let count = 0;
     let unresolved = 0;
@@ -235,15 +288,35 @@ class CortexIndex {
     return { count, links, unresolved };
   }
 
+  /**
+   * What is registered, by category and domain.
+   *
+   * Deliberately NOT a percentage of a "believed estate". That figure had no
+   * source — it was an estimate nobody could produce evidence for — so it is
+   * gone. What is registered is a fact; what exists unregistered is unknown,
+   * and saying so is more useful than a number that invites a question nobody
+   * can answer.
+   */
   coverage() {
-    const registered = this.entries.size;
-    const believed = this.clusters.reduce((a, c) => a + c.count, 0);
-    return {
-      registered,
-      believed,
-      percent: believed ? Math.round((registered / believed) * 1000) / 10 : 0,
-      illustrative: true
+    const byCat = {};
+    const byDomain = {};
+    for (const e of this.all()) {
+      byCat[e.cat] = (byCat[e.cat] || 0) + 1;
+      byDomain[e.cluster] = (byDomain[e.cluster] || 0) + 1;
+    }
+    return { registered: this.entries.size, byCat, byDomain };
+  }
+
+  /** A request to register a source through the gateway. */
+  addGatewayRequest(req) {
+    const record = {
+      ref: `GW-${String(this.gatewayRequests.length + 1).padStart(4, '0')}`,
+      status: 'Pending',
+      raisedAt: new Date().toISOString(),
+      ...req
     };
+    this.gatewayRequests.push(record);
+    return record;
   }
 
   addAccessRequest(req) {
@@ -263,11 +336,16 @@ class CortexIndex {
     return {
       entries: this.entries.size,
       byCat,
-      clusters: this.clusters.length,
+      domains: this.domains.length,
       lastRefresh: this.lastRefresh,
-      lastError: this.lastError
+      lastError: this.lastError,
+      sourceErrors: this.sourceErrors
     };
   }
+}
+
+function domainOf(a) {
+  return a.domain || a.cluster || 'unassigned';
 }
 
 function prune(obj) {

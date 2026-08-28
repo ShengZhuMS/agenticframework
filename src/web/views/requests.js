@@ -1,248 +1,437 @@
 /**
- * Requests — the walkthrough (WP17).
+ * Requests — the working lifecycle.
  *
- * This is deliberately NOT a working implementation. It is the four screens
- * of the deck's worked example, clickable, presented honestly as what the
- * investment buys.
- *
- * The reasoning: Requests carries the strongest narrative in the whole source
- * — seven handoffs to produce one number, collapsed to one — and it is also
- * the most expensive thing in the backlog to build properly, because it needs
- * a request lifecycle, a method registry, versioned approvals, a recurrence
- * engine and a release workflow. Showing the destination costs a day.
- * Building it costs a quarter. So: show the destination, and say so.
+ * CAP-052  Raise a request
+ * CAP-053  State what I need in my own words rather than filling a form
+ * CAP-054  Say what it is for, so the holder can judge what to release
+ * CAP-055  Have a holder proposed for me rather than knowing the org chart
+ * CAP-056  Say whether I need it once or on a cadence
+ * CAP-061  Track my requests and see where each one is
+ * CAP-063  See the released answer with its method and boundary
+ * CAP-069  See requests waiting on me
+ * CAP-070  See a candidate answer prepared inside my own permissions
+ * CAP-071  Check the method before the answer
+ * CAP-073  Add a caveat that travels with the answer
+ * CAP-074  Release an answer to one requester
+ * CAP-076  Release and approve the method so it recurs
+ * CAP-079  Decline with a reason
  */
 
 import { esc, attr, layout } from '../layout.js';
+import { STATUS } from '../../bff/services/requests.js';
 
-const AS_IS = [
-  ['Manager asks', 'Tells the management information team.'],
-  ['Request goes out', 'By email, spreadsheet or form.'],
-  ['Responder digs', 'Logs in, runs a report, finds the data.'],
-  ['Responder replies', 'The answer comes back by email.'],
-  ['Paste and collate', 'Into a spreadsheet with all the others.'],
-  ['Feeds a dashboard', 'The spreadsheet is connected to Power BI.'],
-  ['Manager reads', 'Looks at the dashboard.']
-];
+const when = (iso) =>
+  new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
 
-const TO_BE = [
-  ['Manager asks', 'Tells the management information team.'],
-  ['The team checks', 'What can we already reach ourselves?'],
-  ['Request goes to Cortex', 'The ask is made once, in one place.'],
-  [
-    'Responder agent drafts first',
-    'Before the responder opens the form, their agent has read the request, drafted an answer from the data it can reach, and recorded the method.'
-  ],
-  ['Responder releases', 'Reviews the method and the answer, then releases it.'],
-  ['Dashboard updates', 'The response feeds the dashboard.']
-];
-
-function steps(list, { highlight } = {}) {
-  return `<ol class="govuk-list" style="counter-reset:s">
-    ${list
-      .map(
-        ([t, d], i) => `<li style="display:flex;gap:15px;padding:12px 0;border-bottom:1px solid #b1b4b6${
-          highlight === i ? ';background:#fff7bf;padding-left:10px' : ''
-        }">
-          <span style="font-size:28px;font-weight:700;color:#505a5f;min-width:44px">${String(i + 1).padStart(2, '0')}</span>
-          <span>
-            <strong>${esc(t)}</strong>
-            <span class="cortex-src">${esc(d)}</span>
-          </span>
-        </li>`
-      )
-      .join('')}
-  </ol>`;
+function tag(status) {
+  const s = STATUS[status] || STATUS.raised;
+  return `<strong class="govuk-tag govuk-tag--${attr(s.tone)}">${esc(s.label)}</strong>`;
 }
 
-export function requestsPage(ctx, { view }) {
-  const nav = `
-<nav aria-label="Walkthrough" style="margin-bottom:25px;border-bottom:1px solid #b1b4b6">
-  <ul class="cortex-nav__list">
-    ${[
-      ['problem', 'The problem'],
-      ['as-is', 'How it works today'],
-      ['to-be', 'What Cortex changes'],
-      ['safe', 'Why this is safe'],
-      ['better', 'Even better if']
-    ]
-      .map(
-        ([id, label]) =>
-          `<li class="cortex-nav__item">
-            <a href="/requests?view=${attr(id)}${ctx.personaQS('&')}"${view === id ? ' aria-current="page"' : ''}>${esc(label)}</a>
-          </li>`
-      )
-      .join('')}
-  </ul>
-</nav>`;
+function tabs(active) {
+  const items = [
+    ['mine', 'My requests'],
+    ['waiting', 'Waiting on me'],
+    ['new', 'Ask for something']
+  ];
+  return `<nav class="cortex-nav" aria-label="Requests" style="margin-bottom:25px">
+    <ul class="cortex-nav__list">
+      ${items
+        .map(
+          ([id, label]) =>
+            `<li class="cortex-nav__item"><a href="/requests?view=${attr(id)}"${
+              active === id ? ' aria-current="page"' : ''
+            }>${esc(label)}</a></li>`
+        )
+        .join('')}
+    </ul>
+  </nav>`;
+}
 
-  const views = {
-    problem: `
-      <h2 class="govuk-heading-l">Allowed the answer. Not allowed the data.</h2>
-      <p class="govuk-body-l">
-        The entitlement and the access do not match, and an agent inherits the access.
-      </p>
-      ${steps([
-        ['The ask', 'A manager wants average days sick per employee.'],
-        ['The entitlement', 'They are allowed to have that answer.'],
-        ['The data', 'They are not allowed the individual sickness records behind it.'],
-        ['The agent', 'Their AI inherits their access rights, so it cannot reach the records either.']
-      ])}
-      <h3 class="govuk-heading-m">Two failures</h3>
-      <div class="govuk-grid-row">
-        <div class="govuk-grid-column-one-half" style="width:50%;padding:0 15px">
-          <h4 class="govuk-heading-s">No answer</h4>
-          <p class="govuk-body">Their AI cannot give them a number they are entitled to have.</p>
+/* --------------------------------------------------------------- raise */
+
+function newRequestForm(ctx, { question, holders }) {
+  return `
+<h2 class="govuk-heading-m">Ask for something you cannot reach yourself</h2>
+<form method="post" action="/requests/new">
+  <div class="govuk-form-group">
+    <label class="govuk-label govuk-label--s" for="question">What do you need to know?</label>
+    <div class="govuk-hint">
+      Ask it the way you would ask a colleague. You do not need to know who holds it.
+    </div>
+    <input class="govuk-input" id="question" name="question" type="text"
+           value="${attr(question || '')}"
+           placeholder="Average days sick per employee, by directorate">
+  </div>
+  ${
+    holders && holders.length
+      ? `<div class="govuk-form-group">
+           <fieldset class="govuk-fieldset">
+             <legend class="govuk-fieldset__legend"><strong>Who should answer this?</strong></legend>
+             <div class="govuk-hint" style="font-size:16px">
+               Proposed from what each team holds, so you do not have to know the org chart.
+             </div>
+             <div class="govuk-radios govuk-radios--small">
+               ${holders
+                 .map(
+                   (h, i) => `<div class="govuk-radios__item">
+                     <input class="govuk-radios__input" id="h-${attr(h.entryId)}" name="holderEntryId"
+                            type="radio" value="${attr(h.entryId)}"${i === 0 ? ' checked' : ''}>
+                     <label class="govuk-radios__label" for="h-${attr(h.entryId)}">
+                       ${esc(h.owner)}
+                       <span class="cortex-src">
+                         Holds ${esc(h.entryName)}${h.minAgg ? ` · answers grouped to ${esc(h.minAgg)}` : ''}
+                       </span>
+                     </label>
+                   </div>`
+                 )
+                 .join('')}
+             </div>
+           </fieldset>
+         </div>`
+      : question
+        ? `<div class="govuk-inset-text">
+             <p class="govuk-body govuk-!-margin-bottom-0">
+               Nothing registered can answer that, and no holder was proposed. Submitting
+               it still records the request — an unanswerable question is useful
+               information about a gap in the register.
+             </p>
+           </div>`
+        : ''
+  }
+  <div class="govuk-form-group">
+    <label class="govuk-label govuk-label--s" for="purpose">What is it for?</label>
+    <div class="govuk-hint">The holder uses this to judge what they can release.</div>
+    <textarea class="govuk-textarea" id="purpose" name="purpose" rows="3"></textarea>
+  </div>
+  <div class="govuk-form-group">
+    <fieldset class="govuk-fieldset">
+      <legend class="govuk-fieldset__legend"><strong>How often do you need it?</strong></legend>
+      <div class="govuk-radios govuk-radios--small">
+        <div class="govuk-radios__item">
+          <input class="govuk-radios__input" id="c-once" name="cadence" type="radio" value="once" checked>
+          <label class="govuk-radios__label" for="c-once">Once</label>
         </div>
-        <div class="govuk-grid-column-one-half" style="width:50%;padding:0 15px">
-          <h4 class="govuk-heading-s">No quality assurance</h4>
-          <p class="govuk-body">
-            Even with access, the requestor is not expert enough in the data to check
-            how the number was reached.
+        <div class="govuk-radios__item">
+          <input class="govuk-radios__input" id="c-month" name="cadence" type="radio" value="monthly">
+          <label class="govuk-radios__label" for="c-month">Every month
+            <span class="cortex-src">If the holder approves the method, it issues without them.</span>
+          </label>
+        </div>
+      </div>
+    </fieldset>
+  </div>
+  <button class="govuk-button" type="submit">Send the request</button>
+</form>
+
+${
+  !question
+    ? `<div class="govuk-inset-text">
+         <h3 class="govuk-heading-s">Why this exists</h3>
+         <p class="govuk-body">
+           You are often entitled to an answer without being entitled to the data
+           behind it. Your agent inherits your access, so it cannot reach the records
+           either — and today that means an email, a spreadsheet and a week.
+         </p>
+         <p class="govuk-body govuk-!-margin-bottom-0">
+           Here, the holder's agent drafts an answer from data <em>they</em> can reach,
+           records how it did it, and a person reviews and releases it. Nobody sees
+           anything they could not see before.
+         </p>
+       </div>`
+    : ''
+}`;
+}
+
+/* ---------------------------------------------------------- my requests */
+
+function myRequests(ctx, { mine }) {
+  if (!mine.length) {
+    return `<h2 class="govuk-heading-m">My requests</h2>
+      <p class="govuk-hint">You have not asked for anything yet.</p>
+      <a class="govuk-button" href="/requests?view=new" role="button">Ask for something</a>`;
+  }
+  return `<h2 class="govuk-heading-m">My requests</h2>
+    ${mine
+      .map(
+        (r) => `<div class="cortex-entry">
+      <div class="cortex-entry__head">
+        <div style="flex:1 1 440px">
+          <h3 class="cortex-entry__title">
+            <a class="govuk-link" href="/requests/${attr(r.ref)}">${esc(r.question)}</a>
+          </h3>
+          <p class="cortex-entry__meta">
+            ${esc(r.ref)} · to ${esc(r.holder)} · raised ${esc(when(r.raisedAt))}
+          </p>
+          ${
+            r.status === 'released'
+              ? `<p class="cortex-entry__desc">${esc(String(r.released.answer).slice(0, 200))}</p>`
+              : ''
+          }
+        </div>
+        <div style="flex:0 0 200px">${tag(r.status)}</div>
+      </div>
+    </div>`
+      )
+      .join('')}`;
+}
+
+/* --------------------------------------------------------- waiting on me */
+
+function waitingOnMe(ctx, { waiting }) {
+  if (!waiting.length) {
+    return `<h2 class="govuk-heading-m">Waiting on me</h2>
+      <p class="govuk-hint">Nobody is waiting on you.</p>`;
+  }
+  return `<h2 class="govuk-heading-m">Waiting on me</h2>
+    <p class="govuk-body">
+      You can reach the data behind these. Cortex has drafted what it could, inside
+      your access — review the method before the answer.
+    </p>
+    ${waiting
+      .map(
+        (r) => `<div class="cortex-entry">
+      <div class="cortex-entry__head">
+        <div style="flex:1 1 440px">
+          <h3 class="cortex-entry__title">
+            <a class="govuk-link" href="/requests/${attr(r.ref)}">${esc(r.question)}</a>
+          </h3>
+          <p class="cortex-entry__meta">
+            ${esc(r.ref)} · from ${esc(r.requester)} · ${esc(when(r.raisedAt))}
+          </p>
+          <p class="cortex-entry__desc"><strong>For:</strong> ${esc(r.purpose || 'No purpose given')}</p>
+        </div>
+        <div style="flex:0 0 200px">
+          ${tag(r.status)}
+          <p class="govuk-body-s" style="margin-top:8px">
+            <a class="govuk-link" href="/requests/${attr(r.ref)}">
+              ${r.status === 'drafted' ? 'Review the draft' : 'Open it'}
+            </a>
           </p>
         </div>
       </div>
-      <div class="govuk-inset-text">
-        <p class="govuk-body govuk-!-margin-bottom-0">
-          You can see this state in the marketplace today. Any entry marked
-          <strong>Answerable by a person</strong> is exactly this problem, rendered as
-          a visibility state rather than a dead end.
-        </p>
-      </div>
-      <a class="govuk-button govuk-button--secondary" href="/marketplace?vis=person${ctx.personaQS('&')}" role="button">
-        Show me those entries
-      </a>`,
+    </div>`
+      )
+      .join('')}`;
+}
 
-    'as-is': `
-      <h2 class="govuk-heading-l">Seven handoffs to produce one number</h2>
-      <p class="govuk-body-l">This is today.</p>
-      ${steps(AS_IS)}
-      <h3 class="govuk-heading-m">What this costs</h3>
-      <ul class="govuk-list govuk-list--bullet govuk-list--spaced">
-        <li><strong>A veneer of digitisation.</strong> There is a dashboard, but the pipeline behind it is email.</li>
-        <li><strong>A high cost to change.</strong> Every new question restarts the whole chain.</li>
-        <li><strong>Many failure modes.</strong> Seven handoffs are seven places for a number to go wrong silently.</li>
-      </ul>`,
-
-    'to-be': `
-      <h2 class="govuk-heading-l">The same request, answered before it is opened</h2>
-      <p class="govuk-body-l">
-        Nothing about who holds the data changes. One step moves.
-      </p>
-      ${steps(TO_BE, { highlight: 3 })}
-      <div class="govuk-inset-text">
-        <p class="govuk-body">
-          <strong>One step.</strong> The work happens before the responder opens the
-          request — and the method comes with the answer.
-        </p>
-        <p class="govuk-body govuk-!-margin-bottom-0">
-          The responder still holds the data. The responder still runs the query.
-          The responder still decides. What changes is that they are reviewing a
-          draft rather than starting from a blank form.
-        </p>
-      </div>`,
-
-    safe: `
-      <h2 class="govuk-heading-l">None of the controls move. Only the drafting does.</h2>
-      ${steps([
-        [
-          'Access management unchanged',
-          'Nobody sees data they could not see before. The responder still holds it and still runs the query.'
-        ],
-        [
-          'Quality is approved',
-          'The method is recorded with the answer, and reviewed before anything is released.'
-        ],
-        [
-          'Appropriateness is managed',
-          'A person still decides whether this answer should be given at all.'
-        ]
-      ])}
-      <p class="govuk-body-l">
-        The answer is released by the person who was always accountable for it.
-      </p>`,
-
-    better: `
-      <h2 class="govuk-heading-l">Each answer makes the next one cheaper</h2>
-      <p class="govuk-body-l">The same request, asked twice, should not cost twice.</p>
-      ${steps([
-        ['Repeat it', 'The requestor sets the request to repeat, and it is issued automatically.'],
-        ['Approve the method', 'The responder approves the method for a period. Answers then go out without them.'],
-        [
-          'Answer once, serve many',
-          'Set a response to be available on request across the organisation. The next person asking already has it.'
-        ],
-        ['Owners see demand', 'Data owners can see what is being asked of them, and publish a live version instead.']
-      ])}
-      <blockquote style="border-left:5px solid #00703c;padding-left:20px;margin:25px 0">
-        <p class="govuk-body-l" style="margin-bottom:8px">
-          "If we published live sick days by directorate, prorated for contracted
-          hours, that would prevent 80% of your requests. Would you like me to build
-          it for you?"
-        </p>
-        <p class="govuk-body-s">Cortex, to a data owner. Illustrative, not measured.</p>
-      </blockquote>
-      <h3 class="govuk-heading-m">The virtuous cycle</h3>
-      <p class="govuk-body">
-        Remove the friction, and requests increase because asking now works. Owners
-        see what is wanted and publish a live version. Manual collection shrinks and
-        published data grows.
-      </p>`
-  };
+export function requestsPage(ctx, { view, mine, waiting, holders, question }) {
+  const body =
+    view === 'new'
+      ? newRequestForm(ctx, { question, holders })
+      : view === 'waiting'
+        ? waitingOnMe(ctx, { waiting })
+        : myRequests(ctx, { mine });
 
   const content = `
 <div class="govuk-grid-row">
   <div class="govuk-grid-column-two-thirds">
     <h1 class="govuk-heading-xl govuk-!-margin-bottom-0">Requests</h1>
     <p class="govuk-body-l">
-      Where "allowed the answer, not allowed the data" gets resolved.
+      For when you are allowed the answer but not the data behind it.
     </p>
   </div>
 </div>
 
-<div class="govuk-inset-text">
-  <p class="govuk-body">
-    <strong>This is a walkthrough, not a working section.</strong> Requests is the
-    strongest case in the whole proposal and the most expensive part to build
-    properly — it needs a request lifecycle, a method registry, versioned approvals,
-    a recurrence engine and a release workflow.
-  </p>
-  <p class="govuk-body govuk-!-margin-bottom-0">
-    Everything else you have seen in Cortex is real and running. This is what the
-    next phase buys.
-  </p>
-</div>
-
-${nav}
+${tabs(view)}
 
 <div class="govuk-grid-row">
-  <div class="govuk-grid-column-two-thirds">
-    ${views[view] || views.problem}
-  </div>
-</div>
-
-<hr class="govuk-section-break govuk-section-break--visible govuk-section-break--l">
-
-<div class="govuk-grid-row">
-  <div class="govuk-grid-column-two-thirds">
-    <h2 class="govuk-heading-m">The same shape, everywhere</h2>
-    <p class="govuk-body">
-      Build it once for management information and the pattern then serves any
-      request where the answer is allowed and the data is not.
-    </p>
-    <ul class="govuk-list govuk-list--bullet">
-      <li>Freedom of information</li>
-      <li>Prime Minister's questions</li>
-      <li>Spend Review 27</li>
-      <li>Outcome reporting</li>
-      <li>Financial requests</li>
-    </ul>
-    <p class="govuk-body">
-      Each of these is a request, a responder who holds the data, and an answer that
-      has to survive being checked.
-    </p>
+  <div class="govuk-grid-column-two-thirds">${body}</div>
+  <div class="govuk-grid-column-one-third">
+    <div class="cortex-filters">
+      <h2 class="govuk-heading-m">How this works</h2>
+      <ol class="govuk-list govuk-list--number govuk-list--spaced" style="font-size:16px">
+        <li>You ask, once, in one place.</li>
+        <li>Cortex proposes who holds the data.</li>
+        <li><strong>Their agent drafts an answer from data they can reach</strong>, and records the method.</li>
+        <li>They review the method and the answer, then release it.</li>
+      </ol>
+      <hr class="govuk-section-break govuk-section-break--visible govuk-section-break--m">
+      <p class="govuk-body-s govuk-!-margin-bottom-0">
+        None of the controls move. Nobody sees data they could not see before, and
+        a person still decides whether the answer should be given at all.
+      </p>
+    </div>
   </div>
 </div>`;
 
   return layout({ ...ctx, title: 'Requests', section: 'requests' }, content);
+}
+
+/* --------------------------------------------------------- one request */
+
+export function requestDetailPage(ctx, { request: r, isHolder }) {
+  const content = `
+<div class="govuk-grid-row">
+  <div class="govuk-grid-column-two-thirds">
+    <span class="govuk-caption-l">${esc(r.ref)} · raised ${esc(when(r.raisedAt))}</span>
+    <h1 class="govuk-heading-l govuk-!-margin-bottom-0">${esc(r.question)}</h1>
+    <p class="govuk-body">${tag(r.status)}</p>
+
+    <dl class="govuk-summary-list">
+      <div class="govuk-summary-list__row">
+        <dt class="govuk-summary-list__key">Asked by</dt>
+        <dd class="govuk-summary-list__value">${esc(r.requester)}</dd>
+      </div>
+      <div class="govuk-summary-list__row">
+        <dt class="govuk-summary-list__key">What for</dt>
+        <dd class="govuk-summary-list__value">${esc(r.purpose || 'Not stated')}</dd>
+      </div>
+      <div class="govuk-summary-list__row">
+        <dt class="govuk-summary-list__key">Held by</dt>
+        <dd class="govuk-summary-list__value">${esc(r.holder)}
+          ${r.holderEntryName ? `<span class="cortex-src">${esc(r.holderEntryName)}</span>` : ''}</dd>
+      </div>
+      ${
+        r.minAgg
+          ? `<div class="govuk-summary-list__row">
+               <dt class="govuk-summary-list__key">Minimum aggregation</dt>
+               <dd class="govuk-summary-list__value">${esc(r.minAgg)}
+                 <span class="cortex-src">Enforced on any answer, not a caveat to remember.</span></dd>
+             </div>`
+          : ''
+      }
+      <div class="govuk-summary-list__row">
+        <dt class="govuk-summary-list__key">Cadence</dt>
+        <dd class="govuk-summary-list__value">${esc(r.cadence)}</dd>
+      </div>
+    </dl>
+
+    ${
+      r.status === 'released'
+        ? `<h2 class="govuk-heading-m">The answer</h2>
+           <div style="border-left:5px solid #00703c;padding-left:15px;margin-bottom:20px">
+             <p class="govuk-body" style="white-space:pre-wrap">${esc(r.released.answer)}</p>
+           </div>
+           ${
+             r.released.caveat
+               ? `<div class="govuk-warning-text">
+                    <span class="govuk-warning-text__icon" aria-hidden="true">!</span>
+                    <strong class="govuk-warning-text__text">
+                      <span class="govuk-skip-link">Warning</span>${esc(r.released.caveat)}
+                    </strong>
+                  </div>`
+               : ''
+           }
+           <h3 class="govuk-heading-s">How it was worked out</h3>
+           <pre style="white-space:pre-wrap;font-family:inherit;font-size:16px;background:#f3f2f1;padding:15px">${esc(
+             r.released.method || 'No method recorded.'
+           )}</pre>
+           <p class="govuk-hint">
+             Released by ${esc(r.released.releasedBy)} on ${esc(when(r.released.releasedAt))}.
+             The method travels with the answer, so it can be checked.
+           </p>`
+        : ''
+    }
+
+    ${
+      r.status === 'declined'
+        ? `<h2 class="govuk-heading-m">Declined</h2>
+           <p class="govuk-body">${esc(r.declined.reason)}</p>
+           ${r.declined.offered ? `<p class="govuk-body"><strong>Offered instead:</strong> ${esc(r.declined.offered)}</p>` : ''}`
+        : ''
+    }
+
+    ${
+      isHolder && r.status !== 'released' && r.status !== 'declined'
+        ? holderPanel(r)
+        : ''
+    }
+
+    <h2 class="govuk-heading-m">History</h2>
+    <ol class="govuk-list">
+      ${r.history
+        .map(
+          (h) => `<li style="padding:8px 0;border-bottom:1px solid #b1b4b6">
+            <strong>${esc(h.what)}</strong>
+            <span class="cortex-src">${esc(h.by)} · ${esc(when(h.at))}</span>
+          </li>`
+        )
+        .join('')}
+    </ol>
+
+    <p class="govuk-body"><a class="govuk-link" href="/requests">Back to requests</a></p>
+  </div>
+</div>`;
+
+  return layout({ ...ctx, title: r.ref, section: 'requests' }, content);
+}
+
+/** What the holder sees: the method first, then the answer, then release. */
+function holderPanel(r) {
+  if (r.status === 'raised') {
+    return `
+<div class="govuk-inset-text">
+  <h2 class="govuk-heading-m">Draft it</h2>
+  <p class="govuk-body">
+    Cortex will read what <strong>you</strong> can reach — never what the requester
+    can reach — draft an answer, and record the method it used.
+  </p>
+  <form method="post" action="/requests/${attr(r.ref)}/draft">
+    <button class="govuk-button govuk-!-margin-bottom-0" type="submit">Draft an answer</button>
+  </form>
+</div>`;
+  }
+
+  return `
+<h2 class="govuk-heading-m">Check the method first</h2>
+<pre style="white-space:pre-wrap;font-family:inherit;font-size:16px;background:#f3f2f1;padding:15px">${esc(
+    r.draft?.method || 'No method recorded.'
+  )}</pre>
+
+<h2 class="govuk-heading-m">The drafted answer</h2>
+${
+  r.draft?.text
+    ? ''
+    : `<div class="govuk-warning-text">
+         <span class="govuk-warning-text__icon" aria-hidden="true">!</span>
+         <strong class="govuk-warning-text__text">
+           <span class="govuk-skip-link">Warning</span>
+           Nothing could be drafted${r.draftError ? ` — ${esc(r.draftError)}` : ''}. Write the answer yourself below.
+         </strong>
+       </div>`
+}
+
+<form method="post" action="/requests/${attr(r.ref)}/release">
+  <div class="govuk-form-group">
+    <label class="govuk-label govuk-label--s" for="answer">Answer</label>
+    <div class="govuk-hint">Edit it. What you release is what the requester sees.</div>
+    <textarea class="govuk-textarea" id="answer" name="answer" rows="6">${esc(r.draft?.text || '')}</textarea>
+  </div>
+  <div class="govuk-form-group">
+    <label class="govuk-label govuk-label--s" for="caveat">Add a caveat</label>
+    <div class="govuk-hint">Travels with the answer wherever it goes. Optional.</div>
+    <input class="govuk-input" id="caveat" name="caveat" type="text">
+  </div>
+  <div class="govuk-form-group">
+    <div class="govuk-checkboxes govuk-checkboxes--small">
+      <div class="govuk-checkboxes__item">
+        <input class="govuk-checkboxes__input" id="approve" name="approveMethod" type="checkbox" value="yes">
+        <label class="govuk-checkboxes__label" for="approve">
+          Approve this method
+          <span class="cortex-src">
+            The same question then answers without you. You can retire it at any time.
+          </span>
+        </label>
+      </div>
+    </div>
+  </div>
+  <button class="govuk-button" type="submit">Release it</button>
+</form>
+
+<details style="margin-bottom:20px">
+  <summary class="govuk-link" style="cursor:pointer">Decline instead</summary>
+  <form method="post" action="/requests/${attr(r.ref)}/decline" style="margin-top:15px">
+    <div class="govuk-form-group">
+      <label class="govuk-label govuk-label--s" for="reason">Why?</label>
+      <input class="govuk-input" id="reason" name="reason" type="text">
+    </div>
+    <div class="govuk-form-group">
+      <label class="govuk-label govuk-label--s" for="offered">Offer something instead</label>
+      <div class="govuk-hint" style="font-size:16px">Optional.</div>
+      <input class="govuk-input" id="offered" name="offered" type="text">
+    </div>
+    <button class="govuk-button govuk-button--warning" type="submit">Decline</button>
+  </form>
+</details>`;
 }

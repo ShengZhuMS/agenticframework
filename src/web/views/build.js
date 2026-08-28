@@ -72,7 +72,7 @@ export function buildLandingPage(ctx, { agentCount, myAgents }) {
     <p class="govuk-body-l">
       Assemble an assistant from parts that are already approved. You do not write code.
     </p>
-    <a class="govuk-button" href="/build/new${ctx.personaQS()}" role="button">Start building</a>
+    <a class="govuk-button" href="/build/new" role="button">Start building</a>
 
     ${
       myAgents.length
@@ -82,7 +82,7 @@ export function buildLandingPage(ctx, { agentCount, myAgents }) {
                .map(
                  (a) => `<div class="govuk-summary-list__row">
                    <dt class="govuk-summary-list__key">
-                     <a class="govuk-link" href="/agent/${attr(a.id)}${ctx.personaQS()}">${esc(a.name)}</a>
+                     <a class="govuk-link" href="/agent/${attr(a.id)}">${esc(a.name)}</a>
                    </dt>
                    <dd class="govuk-summary-list__value">
                      ${
@@ -103,19 +103,16 @@ export function buildLandingPage(ctx, { agentCount, myAgents }) {
     <div class="cortex-filters">
       <h2 class="govuk-heading-m">Search before you build</h2>
       <p class="govuk-body">
-        Roughly <strong>2,500</strong> agents already exist across Defra.
-        <span class="cortex-illus">Illustrative</span>
+        <strong>${esc(agentCount)}</strong> agents are registered here.
       </p>
       <p class="govuk-body-s">
-        Most have never been examined by anyone outside the team that built them.
-        Yours may already exist.
+        Search before you build. An agent that already exists has already been
+        through its assurance gates; yours has not.
       </p>
-      <a class="govuk-button govuk-button--secondary" href="/marketplace?cat=Agent${ctx.personaQS('&')}" role="button">
+      <a class="govuk-button govuk-button--secondary" href="/marketplace?cat=Agent" role="button">
         Search agents first
       </a>
-      <p class="govuk-body-s govuk-!-margin-bottom-0">
-        ${esc(agentCount)} are registered here.
-      </p>
+
     </div>
   </div>
 </div>`;
@@ -147,7 +144,7 @@ export function buildFormPage(ctx, { models, knowledge, tools, form = {}, errors
             : `<span class="cortex-src"><strong>${esc(VIS[e.vis]?.label || '')}</strong> — ${esc(e.reason)}
                  ${
                    e.vis === 'request'
-                     ? `<br><a class="govuk-link" href="/entry/${attr(e.id)}${ctx.personaQS()}">Request access to it</a>`
+                     ? `<br><a class="govuk-link" href="/entry/${attr(e.id)}">Request access to it</a>`
                      : ''
                  }
                </span>`
@@ -169,7 +166,7 @@ ${errorSummary(errors)}
   </div>
 </div>
 
-<form method="post" action="/build/create${ctx.personaQS()}">
+<form method="post" action="/build/create">
 <div class="govuk-grid-row">
   <div class="govuk-grid-column-two-thirds">
 
@@ -315,7 +312,7 @@ ${errorSummary(errors)}
         them once it is created — before sharing rather than after somebody asks.
       </p>
       <p class="govuk-body-s govuk-!-margin-bottom-0">
-        <a class="govuk-link" href="/build/assurance${ctx.personaQS()}">What are the seven gates?</a>
+        <a class="govuk-link" href="/build/assurance">What are the seven gates?</a>
       </p>
     </div>
   </div>

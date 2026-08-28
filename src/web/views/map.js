@@ -68,7 +68,7 @@ export function mapPage(ctx, { clusters, links, cross, coverage, counts, unclust
   </div>
   <div class="govuk-grid-column-one-third">
     <p class="govuk-body" style="text-align:right;margin-top:20px">
-      <a class="govuk-link" href="/marketplace${ctx.personaQS()}">List</a> ·
+      <a class="govuk-link" href="/marketplace">List</a> ·
       <strong>Map</strong>
     </p>
   </div>
@@ -80,9 +80,8 @@ export function mapPage(ctx, { clusters, links, cross, coverage, counts, unclust
     <span class="cortex-stat__l">entries across ${esc(clusters.length)} clusters</span>
   </div>
   <div class="cortex-stat">
-    <span class="cortex-stat__n">${esc(coverage.percent)}%</span>
-    <span class="cortex-stat__l">of the ${esc(coverage.believed)} we believe exist
-      <span class="cortex-illus">Illustrative</span></span>
+    <span class="cortex-stat__n">${esc(cross.unresolved)}</span>
+    <span class="cortex-stat__l">dependencies pointing at systems that are not registered</span>
   </div>
   <div class="cortex-stat">
     <span class="cortex-stat__n">${esc(cross.count)}</span>
@@ -93,8 +92,8 @@ export function mapPage(ctx, { clusters, links, cross, coverage, counts, unclust
 ${svg}
 
 <p class="govuk-hint">
-  Positions are illustrative, not geographic. Circle size reflects how much each
-  cluster is believed to contain, not how much is registered.
+  Positions are arranged for legibility, not geography. Circle size reflects how
+  much is registered in each domain.
 </p>
 
 <div class="govuk-inset-text">
@@ -114,7 +113,6 @@ ${svg}
       <th scope="col" class="govuk-table__header">Cluster</th>
       <th scope="col" class="govuk-table__header">Owner</th>
       <th scope="col" class="govuk-table__header govuk-table__header--numeric">Registered</th>
-      <th scope="col" class="govuk-table__header govuk-table__header--numeric">Believed</th>
       <th scope="col" class="govuk-table__header">Depends on</th>
     </tr>
   </thead>
@@ -126,13 +124,12 @@ ${svg}
         const name = (id) => clusters.find((x) => x.id === id)?.name || id;
         return `<tr class="govuk-table__row">
           <td class="govuk-table__cell">
-            <a class="govuk-link" href="/marketplace?cluster=${attr(c.id)}${ctx.personaQS('&')}">${esc(c.name)}</a>
+            <a class="govuk-link" href="/marketplace?cluster=${attr(c.id)}">${esc(c.name)}</a>
           </td>
           <td class="govuk-table__cell">
             ${esc(c.owner)}${c.owner === 'Not claimed' ? ' <strong class="govuk-tag govuk-tag--orange">Unclaimed</strong>' : ''}
           </td>
           <td class="govuk-table__cell govuk-table__cell--numeric">${esc(counts[c.id] || 0)}</td>
-          <td class="govuk-table__cell govuk-table__cell--numeric">${esc(c.count)}</td>
           <td class="govuk-table__cell">
             ${out.length ? esc(out.map(name).join(', ')) : '<span class="govuk-hint" style="display:inline">None recorded</span>'}
             ${inn.length ? `<span class="cortex-src">Depended on by: ${esc(inn.map(name).join(', '))}</span>` : ''}
@@ -150,18 +147,18 @@ ${
        <ul class="govuk-list govuk-list--bullet">
          ${unclustered
            .map(
-             (e) => `<li><a class="govuk-link" href="/entry/${attr(e.id)}${ctx.personaQS()}">${esc(e.name)}</a></li>`
+             (e) => `<li><a class="govuk-link" href="/entry/${attr(e.id)}">${esc(e.name)}</a></li>`
            )
            .join('')}
        </ul>`
     : ''
 }
 
-<h2 class="govuk-heading-m">Coverage by category</h2>
+<h2 class="govuk-heading-m">What is registered, by category</h2>
 <p class="govuk-hint">
-  The believed estate is an estimate built from resource tags, gateway registrations
-  and platform inventories. It is not a count of things somebody has seen, and it is
-  marked illustrative for that reason.
+  This is a count of what is registered, not an estimate of what exists. How much
+  of the estate remains unregistered is genuinely unknown, and saying so is more
+  useful than a percentage nobody can produce evidence for.
 </p>
 <table class="govuk-table">
   <thead>
@@ -175,7 +172,7 @@ ${
       .map(
         ([cat, n]) => `<tr class="govuk-table__row">
           <td class="govuk-table__cell">
-            <a class="govuk-link" href="/marketplace?cat=${attr(cat)}${ctx.personaQS('&')}">${esc(cat)}</a>
+            <a class="govuk-link" href="/marketplace?cat=${attr(cat)}">${esc(cat)}</a>
           </td>
           <td class="govuk-table__cell govuk-table__cell--numeric">${esc(n)}</td>
         </tr>`

@@ -70,7 +70,7 @@ export function entryPage(ctx, { entry: e, cluster, requested }) {
         .map((d) => {
           const t = ctx.findByName(d);
           return t
-            ? `<a class="govuk-link" href="/entry/${attr(t.id)}${ctx.personaQS()}">${esc(t.name)}</a>`
+            ? `<a class="govuk-link" href="/entry/${attr(t.id)}">${esc(t.name)}</a>`
             : esc(d);
         })
         .join(', ')
@@ -82,8 +82,8 @@ export function entryPage(ctx, { entry: e, cluster, requested }) {
   let actions = '';
   if (e.vis === 'available') {
     actions = `
-      <a class="govuk-button" href="/build?knowledge=${attr(e.id)}${ctx.personaQS('&')}" role="button">Build an agent with it</a>
-      <a class="govuk-button govuk-button--secondary" href="/ask?entry=${attr(e.id)}${ctx.personaQS('&')}" role="button">Use it in a question</a>`;
+      <a class="govuk-button" href="/build?knowledge=${attr(e.id)}" role="button">Build an agent with it</a>
+      <a class="govuk-button govuk-button--secondary" href="/ask?entry=${attr(e.id)}" role="button">Use it in a question</a>`;
   } else if (e.vis === 'request') {
     actions = requested
       ? `<div class="govuk-panel">
@@ -91,7 +91,7 @@ export function entryPage(ctx, { entry: e, cluster, requested }) {
            <div class="govuk-panel__body">Your reference<br><strong>${esc(requested)}</strong></div>
          </div>
          <p class="govuk-body-s">It is with ${esc(e.owner)}. Track it under Requests.</p>`
-      : `<form method="post" action="/entry/${attr(e.id)}/request${ctx.personaQS()}">
+      : `<form method="post" action="/entry/${attr(e.id)}/request">
            <div class="govuk-form-group">
              <label class="govuk-label govuk-label--s" for="purpose">What do you need it for?</label>
              <div class="govuk-hint" style="font-size:16px">${esc(e.owner)} uses this to judge what to release. Write plainly.</div>
@@ -117,7 +117,7 @@ export function entryPage(ctx, { entry: e, cluster, requested }) {
   } else if (e.vis === 'person') {
     actions = `
       <p class="govuk-body-s">You cannot have the data. ${esc(e.owner)} can answer from it, without the data leaving their access.</p>
-      <a class="govuk-button" href="/requests${ctx.personaQS()}" role="button">Request an answer</a>`;
+      <a class="govuk-button" href="/requests" role="button">Request an answer</a>`;
   } else {
     actions = `<p class="govuk-body"><strong>${esc(VIS[e.vis]?.next)}</strong></p>
       ${
@@ -201,24 +201,29 @@ ${
     }
 
     <h2 class="govuk-heading-m">Use over the last 90 days</h2>
-    <div class="cortex-stats">
-      <div class="cortex-stat">
-        <span class="cortex-stat__n">${esc(num(e.calls))}</span>
-        <span class="cortex-stat__l">calls, from ${esc(e.consumers || 0)} distinct consumers
-          <span class="cortex-illus">Illustrative</span></span>
-      </div>
-      <div class="cortex-stat">
-        <span class="cortex-stat__n">${esc(e.cpu || '—')}</span>
-        <span class="cortex-stat__l">per use. Absolute spend is deliberately not shown.
-          <span class="cortex-illus">Illustrative</span></span>
-      </div>
-      <div class="cortex-stat">
-        <span class="cortex-stat__n">${esc(e.err || '—')}</span>
-        <span class="cortex-stat__l">errors · ${esc(e.lat || '—')} median latency ·
-          <strong class="govuk-tag govuk-tag--${attr(ragTone)}">${esc(ragLabel)}</strong>
-          <span class="cortex-illus">Illustrative</span></span>
-      </div>
-    </div>
+    ${
+      e.usageSource
+        ? `<div class="cortex-stats">
+             <div class="cortex-stat">
+               <span class="cortex-stat__n">${esc(num(e.calls))}</span>
+               <span class="cortex-stat__l">calls${e.consumers ? `, from ${esc(e.consumers)} distinct consumers` : ''}</span>
+             </div>
+             <div class="cortex-stat">
+               <span class="cortex-stat__n">${esc(e.err || '—')}</span>
+               <span class="cortex-stat__l">error rate</span>
+             </div>
+             <div class="cortex-stat">
+               <span class="cortex-stat__n">${esc(e.lat || '—')}</span>
+               <span class="cortex-stat__l">median latency ·
+                 <strong class="govuk-tag govuk-tag--${attr(ragTone)}">${esc(ragLabel)}</strong></span>
+             </div>
+           </div>
+           <p class="govuk-hint">Measured by ${esc(e.usageSource)}.</p>`
+        : `<p class="govuk-hint">
+             No usage recorded. This entry is either not called through the gateway,
+             or has not been called in the last 90 days.
+           </p>`
+    }
 
     <h2 class="govuk-heading-m">The entry standard</h2>
     <p class="govuk-hint">
@@ -235,7 +240,7 @@ ${
           ? `${esc(e.owner)}
              <strong class="govuk-tag govuk-tag--orange" style="margin-left:8px">Proposed, never confirmed</strong>
              <p class="govuk-body-s" style="margin:8px 0 0">
-               <a class="govuk-link" href="/entry/${attr(e.id)}/claim${ctx.personaQS()}">Claim this entry</a>
+               <a class="govuk-link" href="/entry/${attr(e.id)}/claim">Claim this entry</a>
              </p>`
           : esc(e.owner),
         e._ownerDerived
@@ -249,10 +254,8 @@ ${
       ${row('Access route', esc(e.access), 'Derived from the permissions model', 'agent')}
       ${row('Visibility state', `${esc(VIS[e.vis]?.label)}<span class="cortex-src">${esc(e.visReason || '')}</span>`, 'Derived', 'agent')}
       ${row('Licence model', esc(String(e.licence || '').split('—')[0].trim()), 'Commercial record', 'a human, then agent')}
-      ${row('Usage', `${esc(num(e.calls))} calls, ${esc(e.consumers || 0)} consumers`, 'Gateway telemetry', 'agent')}
-      ${row('Cost per use', esc(e.cpu || '—'), 'Gateway telemetry and cost data', 'agent')}
-      ${row('Health', `${esc(e.err || '—')} errors, ${esc(e.lat || '—')}`, 'Monitoring', 'agent')}
-      ${row('Carbon, estimated', esc(e.carbon || '—'), 'Proxied from consumption', 'agent')}
+      ${e.usageSource ? row('Usage', `${esc(num(e.calls))} calls`, 'API Management analytics', 'agent') : ''}
+      ${e.usageSource ? row('Health', `${esc(e.err)} errors, ${esc(e.lat || '—')}`, 'API Management analytics', 'agent') : ''}
       ${row('Location', esc(e.location || '—'), 'Source', 'agent')}
       ${e.minAgg ? row('Minimum aggregation', esc(e.minAgg), 'Property of the source', 'enforcement, not a caveat') : ''}
       ${
@@ -281,7 +284,7 @@ ${
     </dl>
 
     <h2 class="govuk-heading-m">Something wrong with this entry?</h2>
-    <form method="post" action="/entry/${attr(e.id)}/correction${ctx.personaQS()}">
+    <form method="post" action="/entry/${attr(e.id)}/correction">
       <div class="govuk-form-group">
         <label class="govuk-label" for="correction">What is wrong?</label>
         <div class="govuk-hint" style="font-size:16px">
@@ -306,7 +309,7 @@ ${
       <hr class="govuk-section-break govuk-section-break--visible govuk-section-break--m">
       ${actions}
       <hr class="govuk-section-break govuk-section-break--visible govuk-section-break--m">
-      <form method="post" action="/entry/${attr(e.id)}/watch${ctx.personaQS()}">
+      <form method="post" action="/entry/${attr(e.id)}/watch">
         <button class="govuk-button govuk-button--secondary govuk-!-margin-bottom-0" type="submit">Watch this entry</button>
       </form>
       <p class="govuk-body-s" style="margin-top:10px">
@@ -315,10 +318,10 @@ ${
     </div>
 
     <p class="govuk-body-s">
-      <a class="govuk-link" href="/marketplace${ctx.personaQS()}">Back to the marketplace</a>
+      <a class="govuk-link" href="/marketplace">Back to the marketplace</a>
     </p>
     <p class="govuk-body-s">
-      <a class="govuk-link" href="/marketplace?cluster=${attr(e.cluster)}${ctx.personaQS('&')}">
+      <a class="govuk-link" href="/marketplace?cluster=${attr(e.cluster)}">
         Everything in ${esc(cluster?.name || e.cluster)}
       </a>
     </p>
@@ -342,8 +345,8 @@ export function entryNotFoundPage(ctx, { id }) {
       registered it — which is the more common of the two, and the more useful
       thing to know.
     </p>
-    <a class="govuk-button" href="/share${ctx.personaQS()}" role="button">Tell us about something that is missing</a>
-    <p class="govuk-body"><a class="govuk-link" href="/marketplace${ctx.personaQS()}">Search the marketplace</a></p>
+    <a class="govuk-button" href="/share" role="button">Tell us about something that is missing</a>
+    <p class="govuk-body"><a class="govuk-link" href="/marketplace">Search the marketplace</a></p>
   </div>
 </div>`;
   return layout({ ...ctx, title: 'Entry not registered', section: 'marketplace' }, content);
