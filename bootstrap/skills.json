@@ -1,0 +1,60 @@
+[
+  {
+    "id": "permit-history-lookup",
+    "name": "Permit history lookup",
+    "cat": "Skill",
+    "domain": "waste",
+    "description": "Returns the permit, its variations and its compliance history for a site reference.",
+    "allowedGroups": [
+      "waste-crime",
+      "ea-waste-regulation"
+    ]
+  },
+  {
+    "id": "catchment-summariser",
+    "name": "Catchment summariser",
+    "cat": "Skill",
+    "domain": "water",
+    "description": "Assembles a plain-English picture of a catchment from quality, flow, permit and incident sources.",
+    "allowedGroups": [
+      "analysts",
+      "agent-builders",
+      "ea-water-quality"
+    ]
+  },
+  {
+    "id": "address-matching",
+    "name": "Address and premises matching",
+    "cat": "Skill",
+    "domain": "farm",
+    "description": "Matches free-text addresses to a canonical premises identifier.",
+    "allowedGroups": [
+      "rpa-land-data"
+    ]
+  },
+  {
+    "id": "catchment-data-explorer",
+    "name": "Catchment Data Explorer",
+    "cat": "App",
+    "domain": "water",
+    "description": "Public-facing browser for water body classification, reasons for not achieving good status, and measures.",
+    "allowedGroups": null
+  },
+  {
+    "id": "magic-map",
+    "name": "MAGIC map browser",
+    "cat": "App",
+    "domain": "land",
+    "description": "Map browser for statutory designations, agri-environment schemes and habitat inventories.",
+    "allowedGroups": null
+  },
+  {
+    "id": "air-quality-dashboard",
+    "name": "Air quality dashboard",
+    "cat": "App",
+    "domain": "air",
+    "description": "Monitoring site readings, exceedance counts and trend by pollutant.",
+    "owner": "Not claimed",
+    "allowedGroups": null
+  }
+]

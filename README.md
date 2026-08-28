@@ -2,152 +2,88 @@
 
 A front door to Microsoft Purview, Azure API Management and Microsoft Foundry, built for Defra.
 
-**Status: Phase 1 and Phase 2 complete.** WP0–WP17, less the parts explicitly deferred.
-
-Every section in the navigation now does something real, except Requests — which is a deliberate, clearly-labelled walkthrough of what the next phase buys, and Automate, which is out of scope by the backlog's own rules.
+**Everything is live.** There is no demo mode, no sample data and no offline path. Every screen reads Purview, API Management and Foundry through their real APIs. Publish an agent and it is genuinely registered in API Management; delete a data product in the Purview portal and it disappears from the Marketplace on the next refresh.
 
 ---
 
-## Run it
+## Deploy it
 
-```bash
-node src/bff/server.js
+```powershell
+.\scripts\Deploy-Cortex.ps1
 ```
 
-Then open http://localhost:3000
+Or in VS Code: **Ctrl+Shift+P → Tasks: Run Task → Cortex: Deploy to Azure**.
 
-There is no install step. Cortex runs on Node built-ins alone — no npm dependencies at runtime. That keeps the container image tiny and cold start near-instant, which matters because cold start is the top demo risk.
+Three steps cannot be automated — the APIM key, Entra sign-in with the **groups claim**, and the Purview roles in **both** planes. All three are in **`docs/deploy-windows.md`**, and the app will not work correctly until they are done.
 
-```bash
-npm test        # 100 tests: visibility, register, assurance gates, build, publish and ask
+## Run it locally
+
+```powershell
+.\scripts\Start-Local.ps1 -Groups all-staff,waste-crime,analysts
+```
+
+Local means *your machine, real Azure*. There is no offline mode. Anything you publish is published for real.
+
+```powershell
+npm test                       # 127 tests, no Azure needed
+node scripts/bootstrap.js --dry-run   # validate content, no Azure needed
 ```
 
 ---
 
-## What works today
+## What it does
 
 | | |
 |---|---|
-| **GOV.UK Defra shell** | Crown, masthead, alpha phase banner, six-section nav, skip link, footer, WCAG 2.2 AA focus states |
-| **Persona switcher** | Four personas. The same page renders four different sets of visibility states. |
-| **Marketplace** | 23 entries, 9 clusters. Search, category filter, cluster filter, visibility filter, sort. |
-| **Visibility engine** | Six states, computed by a pure function, 18 unit tests |
-| **Entry page** | Full entry standard — 17 fields, each showing its source and who maintains it. Limitations, followable lineage, licence and who it covers, use/cost/health, minimum aggregation, release record, askable panel |
-| **Entry actions** | Request access, claim an unowned entry, report a correction, watch for change |
-| **Quality flags** | Shown on cards and entries, and filterable |
-| **Cortex Index** | Merged register over Purview, APIM and Foundry, fault-tolerant per source |
-| **Adapters** | Seeded and live implementations for all four integrations |
-| **Build an agent** | Model catalogue, instructions, knowledge checklist with unavailable items greyed out and explained, permitted actions |
-| **Assurance gates** | Seven gates, computed from what the agent reads and does — change the selection and the table changes |
-| **Test it** | Live answer with a provenance panel: sources, freshness, confidence, and what it could not reach |
-| **Publish (Glue 2)** | Generates OpenAPI, imports it into APIM, creates an MCP server over it, adds tools, writes the endpoint back to the register |
-| **Purview MCP server (Glue 1)** | `npm run mcp` — catalogue metadata as MCP tools, because Foundry has no Purview knowledge source |
-| **Ask a question** | Answers with a provenance panel — sources, freshness, confidence, and what it could not reach, computed from the visibility engine |
-| **Map** | The estate as nine clusters with cross-cluster dependencies, plus a full text alternative |
-| **Share your data** | What your team shares, the gateway registration form, the access-request queue, and why there is no file picker |
-| **Requests** | A five-screen walkthrough of the sick-days narrative, labelled as the investment ask |
-| **Health endpoints** | `/api/health` and one per back end, with pre-warm at startup |
+| **Marketplace** | Data products from Purview, APIs and MCP servers from API Management, agents from Foundry — merged into one register with search, filters and the six visibility states |
+| **Entry standard** | Every mandatory field, each showing its source and who maintains it. Limitations, lineage, licence and who it covers, minimum aggregation |
+| **Map** | The estate by governance domain, with cross-domain dependencies and a full text alternative |
+| **Build an agent** | Approved model catalogue, knowledge checklist with unavailable items greyed out and explained, permitted actions, seven computed assurance gates |
+| **Publish** | Generates OpenAPI, imports it into APIM, creates an MCP server over it, writes the endpoint back to the register |
+| **Ask** | Answers with a provenance panel: sources, freshness, confidence, and what it could not reach |
+| **Requests** | A working lifecycle — the holder's agent drafts inside *their* permissions, a person reviews the method and releases |
+| **Share your data** | Gateway registration, ownership confirmation, the access-request queue |
 
-## The golden path
+## The governance model
 
-```
-Marketplace -> entry -> Build -> attach only what you can see -> gates
-           -> test it live -> publish as MCP -> back in the Marketplace
-```
+**Microsoft Entra group membership decides everything.** There are no personas and no anonymous browsing. Clearance and licence entitlement are derived from groups, so they live in Entra where they can be governed and revoked — not in this application.
 
-Every agent anyone builds becomes a part everyone else can build with. That is the whole argument.
+Two consequences worth knowing:
 
-## Try this first
+1. **The groups claim is mandatory.** Without it every user appears to be in no groups, almost every entry correctly resolves to "not available", and the Marketplace looks broken for reasons that are not obvious. `/profile` diagnoses exactly this.
+2. **An agent can never reach further than the person who built it.** The greyed-out checkbox is a courtesy; the server-side refusal on submit is the control, and it is tested.
 
-Open `/marketplace`, then change the persona in the yellow bar. Seven of the 23 entries change state depending on who is looking. That is the governance story: access is *shown*, not asserted.
+## No number without a source
 
-| Entry | Analyst | Owner | Builder | Consumer |
-|---|---|---|---|---|
-| Permit history lookup | Available | Available | Needs request | Needs request |
-| Catchment summariser | Available | Needs request | Available | Needs request |
-| Livestock movements | Sensitivity | Available | Sensitivity | Sensitivity |
-| Address matching | Licence | Available | Licence | Licence |
+Usage, error rate and latency come from the API Management Reports API. **Cost per use, carbon and "believed estate" coverage were removed** rather than labelled illustrative — a figure nobody can defend is worse than an absent one, because it invites a question that cannot be answered. An entry with no gateway traffic says so rather than showing a zero.
 
 ---
 
 ## Layout
 
 ```
-infra/            Bicep. `azd up` provisions everything.
+infra/            Bicep. Key Vault, APIM, Purview, Foundry, Container Apps.
+scripts/          Deploy-Cortex.ps1, Start-Local.ps1, Test-Cortex.ps1, bootstrap.js
+bootstrap/        Defra content — INPUT to a script, not runtime data
 src/bff/          Backend for frontend. All Azure credentials live here.
-  adapters/       purview, apim, foundry, token — each seeded + live
-  index/          the Cortex Index (merged register)
-  services/       visibility engine
-src/web/          GOV.UK templates and CSS
-seed/             23 entries, 9 clusters, 4 personas
-test/             visibility engine tests
+  adapters/       purview, apim, foundry, keyvault, token
+  services/       visibility, assurance, agents, publish, ask, requests, identity
+src/web/          Server-rendered GOV.UK pages
+src/purview-mcp/  Glue 1 — the Purview MCP server
+test/             127 tests, stubbed at the HTTP boundary
+.vscode/          Tasks, launch configs, extension recommendations
 ```
-
-## Configuration
-
-Everything is off by default and switched on one integration at a time.
-
-| Variable | Default | Notes |
-|---|---|---|
-| `DEMO_MODE` | `true` | Pins every adapter to seeded data. No external calls. |
-| `ADAPTER_PURVIEW` | `seeded` | `live` uses the Unified Catalog API |
-| `ADAPTER_APIM` | `seeded` | `live` lists MCP servers from APIM |
-| `ADAPTER_FOUNDRY` | `seeded` | `live` creates and runs real agents |
-
-## Two things this deliberately does not do
-
-**The stylesheet is hand-written GOV.UK, not the npm package.** The class names are the real `govuk-*` names, so `npm install govuk-frontend` and swapping the import is mechanical. Done this way so the app has zero runtime dependencies.
-
-**Purview governance roles cannot be assigned from Bicep.** They are data-plane roles assigned in the Purview portal, and tenant-level role groups do not accept service principals at all. See section 4 of the deployment guide — both the catalogue plane *and* the Data Map plane are required, and missing the second one is the most common way this setup fails.
-
----
 
 ## The two pieces of custom glue
 
-Microsoft does not ship either of these, and Cortex is mostly the fact that they exist.
+Microsoft ships neither, and Cortex is largely the fact that they exist.
 
-**Glue 1 — `src/purview-mcp/`.** There is no official Purview MCP server, and no Purview tool or knowledge source inside Foundry agents. Purview relates to Foundry only as governance *over* agents, never as a source *for* them. This exposes the catalogue as MCP tools so an agent can actually reach it. It serves catalogue metadata only — never the underlying data — which is what keeps the access-control story clean.
+**Glue 1 — `src/purview-mcp/`.** There is no official Purview MCP server and no Purview knowledge source inside Foundry agents. This exposes the catalogue as MCP tools so an agent can reach it. Catalogue metadata only, never the underlying data.
 
-**Glue 2 — `src/bff/services/publish.js`.** There is no documented way to expose a Foundry agent as an MCP server; Foundry's own registration path produces HTTP or A2A in APIM instead. So Cortex generates an OpenAPI document for the agent, imports it into APIM as a REST API, creates an MCP server over it, and writes the endpoint back to the register. Only the ~100-line shim is bespoke; the rest is documented APIM management API.
+**Glue 2 — `src/bff/services/publish.js`.** There is no documented way to expose a Foundry agent as an MCP server; Foundry's own path produces HTTP or A2A in APIM. So Cortex generates OpenAPI, imports it, projects an MCP server over it, and writes the endpoint back.
 
-## Going live
+## Front end
 
-Each adapter switches independently, so you can prove one integration at a time.
+Server-rendered GOV.UK Design System. `npm install` vendors the official `govuk-frontend` package into `src/web/assets/vendor/`; if that has not run, the app falls back to a bundled stylesheet using the same class names, so a missing build step degrades typography rather than the service.
 
-```bash
-DEMO_MODE=false ADAPTER_APIM=live ADAPTER_FOUNDRY=live ADAPTER_PURVIEW=live \
-FOUNDRY_PROJECT_ENDPOINT=https://<res>.services.ai.azure.com/api/projects/cortex \
-APIM_SERVICE_NAME=apim-cortex AZURE_SUBSCRIPTION_ID=... AZURE_RESOURCE_GROUP=... \
-PUBLIC_BASE_URL=https://<your-app>.azurecontainerapps.io \
-PURVIEW_MCP_URL=https://<mcp-app>.azurecontainerapps.io/mcp \
-npm start
-```
-
-For Foundry to call an APIM MCP server it needs a project connection carrying the subscription key:
-
-```bash
-azd ai connection create cortex-apim --kind remote-tool \
-  --target <mcp-url> --auth-type custom-keys \
-  --custom-key "Ocp-Apim-Subscription-Key=<key>"
-```
-
-Then set `FOUNDRY_MCP_CONNECTION` to its id.
-
----
-
-## Hardening
-
-- **Pre-warm at startup.** Every back end is called once at boot, so nobody pays cold-start latency during a demo.
-- **Per-source fault tolerance.** A back end that fails degrades that slice to seeded data and records the error. Verified: with Purview *and* APIM both throwing, all 23 entries still serve.
-- **No raw errors.** Failures log in full and render as a GOV.UK error page. No stack traces, no internal paths.
-- **Accessibility.** Every page: one `h1`, skip link, `lang`, `main` landmark, all form controls labelled, all six visibility states carry a shape *and* a text label. The map has a full table alternative. Zero `<script>` tags — the whole app works with JavaScript off.
-- **Security headers** on every response, and every interpolation escaped.
-
-## What is deliberately not built
-
-| | |
-|---|---|
-| **Requests, working** | The strongest narrative and the most expensive thing in the backlog — it needs a request lifecycle, a method registry, versioned approvals, a recurrence engine and a release workflow. Shipped as a walkthrough instead. |
-| **Automate** | Out of scope by the backlog's own rules: agents may read, summarise and cite this phase, never write. |
-| **Reference data, standards conformance** | The backlog records that the owning roles *do not exist*. Building on a dependency the client has flagged as absent would be a mistake. |
-| **Real cost and carbon** | Shown, clearly marked illustrative, exactly as the mockup does. Wiring Cost Management for a PoC buys nothing. |
+Zero `<script>` tags. The whole application works with JavaScript disabled.

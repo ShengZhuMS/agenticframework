@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName":     { "value": "${AZURE_ENV_NAME}" },
+    "location":            { "value": "${AZURE_LOCATION}" },
+    "apimSku":             { "value": "${APIM_SKU=Developer}" },
+    "apimPublisherEmail":  { "value": "${APIM_PUBLISHER_EMAIL}" },
+    "apimPublisherName":   { "value": "${APIM_PUBLISHER_NAME=Defra Cortex PoC}" },
+    "modelName":           { "value": "${FOUNDRY_MODEL=gpt-5-mini}" },
+    "modelCapacity":       { "value": "${FOUNDRY_MODEL_CAPACITY=30}" },
+    "useExistingApim":     { "value": "${USE_EXISTING_APIM=false}" },
+    "existingApimName":    { "value": "${EXISTING_APIM_NAME=}" },
+    "useExistingPurview":  { "value": "${USE_EXISTING_PURVIEW=false}" },
+    "existingPurviewName": { "value": "${EXISTING_PURVIEW_NAME=}" },
+    "demoMode":            { "value": "${DEMO_MODE=true}" }
+  }
+}
