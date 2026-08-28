@@ -1,0 +1,84 @@
+[
+  {
+    "id": "analyst",
+    "name": "Sarah Okonjo",
+    "role": "Data analyst",
+    "team": "Waste Crime observatory",
+    "userClass": "Data analysts",
+    "email": "sarah.okonjo@defra.gov.uk",
+    "groups": [
+      "all-staff",
+      "waste-crime",
+      "analysts"
+    ],
+    "clearance": "Official",
+    "licences": [
+      "ogl",
+      "internal"
+    ],
+    "cleared": true,
+    "description": "The persona for the golden path. Needs lineage, definitions and the working behind an answer."
+  },
+  {
+    "id": "owner",
+    "name": "Michael Brennan",
+    "role": "Data owner",
+    "team": "EA Waste Regulation",
+    "userClass": "Data owners",
+    "email": "michael.brennan@environment-agency.gov.uk",
+    "groups": [
+      "all-staff",
+      "waste-crime",
+      "data-owners",
+      "ea-waste-regulation",
+      "restricted-permits",
+      "rpa-land-data",
+      "apha-surveillance",
+      "incident-duty"
+    ],
+    "clearance": "Official-Sensitive",
+    "licences": [
+      "ogl",
+      "internal",
+      "commercial"
+    ],
+    "cleared": true,
+    "description": "Accountable for an entry: its owner field, its access requests. Sees more than anyone else."
+  },
+  {
+    "id": "builder",
+    "name": "Priya Raman",
+    "role": "Agent builder",
+    "team": "DDTS Digital Delivery",
+    "userClass": "Agent builders",
+    "email": "priya.raman@defra.gov.uk",
+    "groups": [
+      "all-staff",
+      "agent-builders"
+    ],
+    "clearance": "Official",
+    "licences": [
+      "ogl",
+      "internal"
+    ],
+    "cleared": true,
+    "description": "Assembles agents from approved parts without writing code."
+  },
+  {
+    "id": "consumer",
+    "name": "David Whitfield",
+    "role": "Decision maker",
+    "team": "COO Management Information",
+    "userClass": "Decision makers and data consumers",
+    "email": "david.whitfield@defra.gov.uk",
+    "groups": [
+      "all-staff"
+    ],
+    "clearance": "Official",
+    "licences": [
+      "ogl"
+    ],
+    "cleared": false,
+    "description": "The only large population. Asks questions and reads answers; does not write queries. Sees the least \u2014 which is the point."
+  }
+]

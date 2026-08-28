@@ -1,0 +1,92 @@
+[
+  {
+    "id": "water",
+    "n": "01",
+    "name": "Water",
+    "owner": "EA Water Quality",
+    "count": 214,
+    "x": 260,
+    "y": 200,
+    "r": 100
+  },
+  {
+    "id": "flood",
+    "n": "02",
+    "name": "Flood and coastal",
+    "owner": "EA Flood Risk",
+    "count": 96,
+    "x": 508,
+    "y": 118,
+    "r": 74
+  },
+  {
+    "id": "marine",
+    "n": "03",
+    "name": "Marine and fisheries",
+    "owner": "Cefas Data",
+    "count": 81,
+    "x": 730,
+    "y": 186,
+    "r": 80
+  },
+  {
+    "id": "waste",
+    "n": "04",
+    "name": "Waste and resources",
+    "owner": "EA Waste Regulation",
+    "count": 63,
+    "x": 964,
+    "y": 142,
+    "r": 68
+  },
+  {
+    "id": "air",
+    "n": "05",
+    "name": "Air quality",
+    "owner": "Not claimed",
+    "count": 38,
+    "x": 142,
+    "y": 432,
+    "r": 66
+  },
+  {
+    "id": "land",
+    "n": "06",
+    "name": "Land and biodiversity",
+    "owner": "Natural England Evidence",
+    "count": 187,
+    "x": 382,
+    "y": 430,
+    "r": 98
+  },
+  {
+    "id": "farm",
+    "n": "07",
+    "name": "Farming and countryside",
+    "owner": "RPA Land Data",
+    "count": 142,
+    "x": 652,
+    "y": 422,
+    "r": 88
+  },
+  {
+    "id": "animal",
+    "n": "08",
+    "name": "Animal and plant health",
+    "owner": "APHA Surveillance Intelligence",
+    "count": 74,
+    "x": 902,
+    "y": 400,
+    "r": 74
+  },
+  {
+    "id": "corp",
+    "n": "09",
+    "name": "Corporate services",
+    "owner": "DDTS Performance",
+    "count": 57,
+    "x": 508,
+    "y": 576,
+    "r": 58
+  }
+]
