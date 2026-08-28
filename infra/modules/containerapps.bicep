@@ -22,7 +22,6 @@ param logAnalyticsCustomerId string
 @secure()
 param logAnalyticsKey string
 
-param demoMode bool
 
 // Placeholder image until `azd deploy` pushes the real one.
 var bootstrapImage = 'mcr.microsoft.com/k8se/quickstart:latest'
@@ -87,18 +86,11 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
             // one is always the one nobody remembers to update.
             { name: 'PORT', value: '3000' }
             { name: 'NODE_ENV', value: 'production' }
-            { name: 'DEMO_MODE', value: string(demoMode) }
             { name: 'AZURE_CLIENT_ID', value: identityClientId }
             { name: 'KEYVAULT_NAME', value: keyVaultName }
             // Pinned api-versions are code-level constants, not configuration.
             { name: 'APIM_API_VERSION', value: '2025-09-01-preview' }
             { name: 'PURVIEW_API_VERSION', value: '2026-03-20-preview' }
-            // Adapters default to seeded and are switched to live one at a
-            // time as each integration is proven. A failing back end then
-            // degrades one slice, never the whole page.
-            { name: 'ADAPTER_PURVIEW', value: demoMode ? 'seeded' : 'live' }
-            { name: 'ADAPTER_APIM', value: demoMode ? 'seeded' : 'live' }
-            { name: 'ADAPTER_FOUNDRY', value: demoMode ? 'seeded' : 'live' }
           ]
           probes: [
             {
@@ -164,7 +156,6 @@ resource mcp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_CLIENT_ID', value: identityClientId }
             { name: 'KEYVAULT_NAME', value: keyVaultName }
             { name: 'PURVIEW_API_VERSION', value: '2026-03-20-preview' }
-            { name: 'ADAPTER_PURVIEW', value: demoMode ? 'seeded' : 'live' }
           ]
         }
       ]

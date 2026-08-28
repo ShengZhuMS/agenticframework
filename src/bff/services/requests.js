@@ -25,7 +25,10 @@
 import index from '../index/store.js';
 import { visibilityFor, canReachUnderlying } from './visibility.js';
 
-/** In-memory store. Cosmos is wired in the index; requests follow when needed. */
+/**
+ * In-memory store. Requests, methods and threads do not survive a restart —
+ * this is the first item on the next-work list in docs/HANDOVER.md.
+ */
 const requests = new Map();
 const methods = new Map();
 let seq = 0;
