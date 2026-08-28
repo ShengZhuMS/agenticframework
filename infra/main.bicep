@@ -50,6 +50,9 @@ param existingPurviewResourceGroup string = ''
 @description('Pin every adapter to seeded data. Recommended true for the first demo.')
 param demoMode bool = true
 
+@description('Write the endpoints and identifiers provisioning knows into Key Vault. Needs "Key Vault Secrets Officer" on the vault for whoever runs the deployment. Set false to onboard every value by hand.')
+param seedKeyVault bool = true
+
 param tags object = {
   'azd-env-name': environmentName
   project: 'cortex'
@@ -148,10 +151,23 @@ module cosmos 'modules/cosmos.bicep' = {
   }
 }
 
+module keyvault 'modules/keyvault.bicep' = {
+  name: 'keyvault'
+  scope: rg
+  params: {
+    // Vault names are globally unique, 3-24 chars, letters/digits/hyphens.
+    name: take('kv-${replace(prefix, '-', '')}${uniq}', 24)
+    location: location
+    tags: tags
+    principalId: identity.outputs.principalId
+  }
+}
+
 module containerApps 'modules/containerapps.bicep' = {
   name: 'containerapps'
   scope: rg
   params: {
+    keyVaultName: keyvault.outputs.name
     environmentName: 'cae-${prefix}'
     webAppName: 'cortex-web'
     mcpAppName: 'cortex-purview-mcp'
@@ -162,21 +178,43 @@ module containerApps 'modules/containerapps.bicep' = {
     identityClientId: identity.outputs.clientId
     logAnalyticsCustomerId: monitoring.outputs.customerId
     logAnalyticsKey: monitoring.outputs.primarySharedKey
-    appInsightsConnectionString: monitoring.outputs.connectionString
     demoMode: demoMode
-    foundryProjectEndpoint: foundry.outputs.projectEndpoint
-    foundryModel: modelName
-    apimServiceName: useExistingApim ? existingApimName : apim.outputs.name
-    apimGatewayUrl: useExistingApim ? '' : apim.outputs.gatewayUrl
-    purviewEndpoint: 'https://api.purview-service.microsoft.com'
-    subscriptionId: subscription().subscriptionId
-    resourceGroupName: rgName
-    cosmosEndpoint: cosmos.outputs.endpoint
+  }
+}
+
+// Seed the vault with everything provisioning knows. Runs after container
+// apps because two of the values are its outputs.
+//
+// The APIM subscription key and the Entra client secret are NOT here — they
+// are not known to the template, and a credential written through a
+// deployment is readable in the deployment history afterwards. Those two are
+// onboarded by hand. See the deployment guide.
+module keyvaultSecrets 'modules/keyvault-secrets.bicep' = if (seedKeyVault) {
+  name: 'keyvault-secrets'
+  scope: rg
+  params: {
+    keyVaultName: keyvault.outputs.name
+    values: {
+      'azure-subscription-id': subscription().subscriptionId
+      'azure-resource-group': rgName
+      'apim-service-name': useExistingApim ? existingApimName : apim.outputs.name
+      'apim-gateway-url': useExistingApim ? '' : apim.outputs.gatewayUrl
+      'foundry-project-endpoint': foundry.outputs.projectEndpoint
+      'foundry-model': modelName
+      'purview-endpoint': 'https://api.purview-service.microsoft.com'
+      'purview-mcp-url': '${containerApps.outputs.mcpUrl}/mcp'
+      'public-base-url': containerApps.outputs.webUrl
+      'cosmos-endpoint': cosmos.outputs.endpoint
+      'appinsights-connection-string': monitoring.outputs.connectionString
+      'entra-tenant-id': subscription().tenantId
+    }
   }
 }
 
 output AZURE_RESOURCE_GROUP string = rgName
 output AZURE_LOCATION string = location
+output KEYVAULT_NAME string = keyvault.outputs.name
+output KEYVAULT_URI string = keyvault.outputs.uri
 output CORTEX_WEB_URL string = containerApps.outputs.webUrl
 output CORTEX_MCP_URL string = containerApps.outputs.mcpUrl
 output CORTEX_IDENTITY_PRINCIPAL_ID string = identity.outputs.principalId

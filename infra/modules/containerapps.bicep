@@ -11,6 +11,9 @@ param mcpAppName string
 param location string
 param tags object
 
+@description('Key Vault holding endpoints and keys. The app reads it at startup with its managed identity.')
+param keyVaultName string
+
 param registryLoginServer string
 param identityId string
 param identityClientId string
@@ -18,17 +21,8 @@ param identityClientId string
 param logAnalyticsCustomerId string
 @secure()
 param logAnalyticsKey string
-param appInsightsConnectionString string
 
 param demoMode bool
-param foundryProjectEndpoint string
-param foundryModel string
-param apimServiceName string
-param apimGatewayUrl string
-param purviewEndpoint string
-param subscriptionId string
-param resourceGroupName string
-param cosmosEndpoint string
 
 // Placeholder image until `azd deploy` pushes the real one.
 var bootstrapImage = 'mcr.microsoft.com/k8se/quickstart:latest'
@@ -83,21 +77,22 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
             memory: '1.0Gi'
           }
           env: [
+            // Endpoints and keys come from Key Vault, read at startup with the
+            // managed identity. Only the vault name and the switches that decide
+            // HOW the app runs are passed as environment variables.
+            //
+            // The values below are seeded into the vault by the post-provision
+            // hook. They are deliberately NOT duplicated here: two sources for
+            // one value means one of them is eventually wrong, and the wrong
+            // one is always the one nobody remembers to update.
             { name: 'PORT', value: '3000' }
             { name: 'NODE_ENV', value: 'production' }
             { name: 'DEMO_MODE', value: string(demoMode) }
             { name: 'AZURE_CLIENT_ID', value: identityClientId }
-            { name: 'AZURE_SUBSCRIPTION_ID', value: subscriptionId }
-            { name: 'AZURE_RESOURCE_GROUP', value: resourceGroupName }
-            { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
-            { name: 'FOUNDRY_MODEL', value: foundryModel }
-            { name: 'APIM_SERVICE_NAME', value: apimServiceName }
-            { name: 'APIM_GATEWAY_URL', value: apimGatewayUrl }
+            { name: 'KEYVAULT_NAME', value: keyVaultName }
+            // Pinned api-versions are code-level constants, not configuration.
             { name: 'APIM_API_VERSION', value: '2025-09-01-preview' }
-            { name: 'PURVIEW_ENDPOINT', value: purviewEndpoint }
             { name: 'PURVIEW_API_VERSION', value: '2026-03-20-preview' }
-            { name: 'COSMOS_ENDPOINT', value: cosmosEndpoint }
-            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
             // Adapters default to seeded and are switched to live one at a
             // time as each integration is proven. A failing back end then
             // degrades one slice, never the whole page.
@@ -164,11 +159,12 @@ resource mcp 'Microsoft.App/containerApps@2024-03-01' = {
             memory: '0.5Gi'
           }
           env: [
+            // This runs as its own container app and reads the vault itself.
             { name: 'PORT', value: '3000' }
             { name: 'AZURE_CLIENT_ID', value: identityClientId }
-            { name: 'PURVIEW_ENDPOINT', value: purviewEndpoint }
+            { name: 'KEYVAULT_NAME', value: keyVaultName }
             { name: 'PURVIEW_API_VERSION', value: '2026-03-20-preview' }
-            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
+            { name: 'ADAPTER_PURVIEW', value: demoMode ? 'seeded' : 'live' }
           ]
         }
       ]

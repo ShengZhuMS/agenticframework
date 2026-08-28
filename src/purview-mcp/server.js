@@ -24,9 +24,15 @@
  */
 
 import http from 'node:http';
+import { hydrateConfig } from '../bff/config.js';
 import { createPurviewAdapter } from '../bff/adapters/purview.js';
 
 const PORT = Number(process.env.PORT || 3000);
+
+// This runs as its own container app, so it reads Key Vault itself rather
+// than inheriting anything from the web app.
+await hydrateConfig();
+
 const purview = createPurviewAdapter();
 
 const PROTOCOL_VERSION = '2025-06-18';

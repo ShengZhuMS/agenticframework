@@ -19,7 +19,7 @@ Then open http://localhost:3000
 There is no install step. Cortex runs on Node built-ins alone — no npm dependencies at runtime. That keeps the container image tiny and cold start near-instant, which matters because cold start is the top demo risk.
 
 ```bash
-npm test        # 100 tests: visibility, register, assurance gates, build, publish and ask
+npm test        # 124 tests: visibility, register, gates, build, publish, ask and Key Vault
 ```
 
 ---
@@ -46,7 +46,8 @@ npm test        # 100 tests: visibility, register, assurance gates, build, publi
 | **Map** | The estate as nine clusters with cross-cluster dependencies, plus a full text alternative |
 | **Share your data** | What your team shares, the gateway registration form, the access-request queue, and why there is no file picker |
 | **Requests** | A five-screen walkthrough of the sick-days narrative, labelled as the investment ask |
-| **Health endpoints** | `/api/health` and one per back end, with pre-warm at startup |
+| **Key Vault** | Endpoints and keys read at startup, environment fallback, bounded timeouts, no credential ever exposed by the health endpoint |
+| **Health endpoints** | `/api/health`, one per back end, plus `/api/health/keyvault`, with pre-warm at startup |
 
 ## The golden path
 
@@ -109,6 +110,23 @@ Microsoft does not ship either of these, and Cortex is mostly the fact that they
 **Glue 1 — `src/purview-mcp/`.** There is no official Purview MCP server, and no Purview tool or knowledge source inside Foundry agents. Purview relates to Foundry only as governance *over* agents, never as a source *for* them. This exposes the catalogue as MCP tools so an agent can actually reach it. It serves catalogue metadata only — never the underlying data — which is what keeps the access-control story clean.
 
 **Glue 2 — `src/bff/services/publish.js`.** There is no documented way to expose a Foundry agent as an MCP server; Foundry's own registration path produces HTTP or A2A in APIM instead. So Cortex generates an OpenAPI document for the agent, imports it into APIM as a REST API, creates an MCP server over it, and writes the endpoint back to the register. Only the ~100-line shim is bespoke; the rest is documented APIM management API.
+
+## Configuration and Key Vault
+
+Endpoints and keys come from **Azure Key Vault**, read at startup with the app's managed identity. Environment variables remain the fallback for local development.
+
+```bash
+DEMO_MODE=false KEYVAULT_NAME=kv-cortexpoc-a1b2c3 npm start
+```
+
+- **Key Vault wins, environment is the safety net.** Onboarding a value always takes effect; a stale environment variable can never silently override it.
+- **A vault that is down does not stop the app.** It falls back, logs what is missing, and serves. Bounded by `KEYVAULT_TIMEOUT_MS` (5s per secret) and `KEYVAULT_BUDGET_MS` (15s total), because `fetch()` has no default timeout and a container that hangs at startup never passes its readiness probe.
+- **Demo mode makes no vault call at all.**
+- `GET /api/health/keyvault` shows what resolved and from where. Sensitive values are never included — only whether they are present.
+
+Bicep creates the vault and writes the 12 values provisioning knows. You onboard the rest — realistically just `apim-subscription-key`.
+
+**Full list: `docs/keyvault.md`.**
 
 ## Going live
 

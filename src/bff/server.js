@@ -15,7 +15,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import config from './config.js';
+import config, { hydrateConfig, missingRequired } from './config.js';
 import index from './index/store.js';
 import { decorate, visibilityFor } from './services/visibility.js';
 
@@ -218,6 +218,27 @@ async function handle(req, res) {
   }
   if (pathname === '/api/health/foundry') {
     return json(res, 200, await index.foundry.health().catch((e) => ({ ok: false, error: e.message })));
+  }
+
+  /**
+   * Key Vault health. Shows which secrets resolved and from where, and the
+   * value of non-sensitive entries only — seeing a wrong endpoint URL is the
+   * whole point of this page; seeing an APIM key never is.
+   */
+  if (pathname === '/api/health/keyvault') {
+    const missing = missingRequired();
+    return json(res, 200, {
+      ok: config.keyVault.hydrated && missing.length === 0,
+      configured: Boolean(config.keyVault.name),
+      vault: config.keyVault.name || null,
+      hydrated: config.keyVault.hydrated,
+      demoMode: config.demoMode,
+      missingRequired: missing,
+      fromKeyVault: config.keyVault.report.filter((r) => r.source === 'keyvault').length,
+      fromEnvironment: config.keyVault.report.filter((r) => r.source === 'environment').length,
+      secrets: config.keyVault.report,
+      errors: config.keyVault.errors
+    });
   }
 
   /* ---- JSON API over the index ---- */
@@ -756,6 +777,9 @@ function sortEntries(entries, sort) {
 /* ----------------------------------------------------------------- start */
 
 export async function start() {
+  // Key Vault first: every adapter is constructed from configuration, so the
+  // vault must be read before anything reads config.
+  await hydrateConfig();
   await index.init();
 
   const server = http.createServer((req, res) => {
@@ -798,10 +822,40 @@ export async function start() {
       `  demo mode: ${config.demoMode} · adapters: ${JSON.stringify(config.adapters)}`
     );
     console.log(`  register: ${s.entries} entries across ${s.clusters} clusters`);
+    reportConfigSource();
     await prewarm();
   });
 
   return server;
+}
+
+/**
+ * Say where configuration came from, and name anything required that is
+ * missing. A misconfiguration should be visible in the first ten lines of the
+ * log, not discovered when somebody clicks Publish in front of an audience.
+ *
+ * Only non-sensitive values are printed. Keys are reported as resolved or not.
+ */
+function reportConfigSource() {
+  if (config.demoMode) {
+    console.log('  config: demo mode — seeded data, no Key Vault call made');
+    return;
+  }
+  if (!config.keyVault.name) {
+    console.log('  config: environment variables (no KEYVAULT_NAME set)');
+  } else {
+    const kv = config.keyVault.report.filter((r) => r.source === 'keyvault').length;
+    const e = config.keyVault.report.filter((r) => r.source === 'environment').length;
+    console.log(`  config: ${config.keyVault.name} — ${kv} from Key Vault, ${e} from environment`);
+    for (const err of config.keyVault.errors.slice(0, 3)) {
+      console.warn(`  key vault: ${err.name} — ${err.message}`);
+    }
+  }
+  const missing = missingRequired();
+  if (missing.length) {
+    console.warn(`  MISSING REQUIRED CONFIG: ${missing.join(', ')}`);
+    console.warn('  Live adapters will fail until these are onboarded. Seeded data still serves.');
+  }
 }
 
 /**
