@@ -880,7 +880,7 @@ function signInNotConfiguredPage() {
   <li>Restart the app.</li>
 </ol>
 <p class="govuk-body">For local development against real Azure back ends, set <code>ALLOW_UNAUTHENTICATED=true</code> and <code>LOCAL_DEV_GROUPS</code>. Never set those in a deployed environment.</p>
-<p class="govuk-body">Full steps are in <strong>docs/deploy-windows.md</strong>, section 5.</p>
+<p class="govuk-body">Full steps are in <strong>docs/DEPLOY.md</strong>, section 5.</p>
 </main></div></body></html>`;
 }
 

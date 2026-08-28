@@ -74,7 +74,6 @@ export const config = {
   /** Public base URL of this app. APIM calls back to it. */
   publicBaseUrl: env.PUBLIC_BASE_URL || '',
 
-  cosmosEndpoint: env.COSMOS_ENDPOINT || '',
   appInsightsConnectionString: env.APPLICATIONINSIGHTS_CONNECTION_STRING || '',
 
   entra: {

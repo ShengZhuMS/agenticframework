@@ -1,77 +1,141 @@
 // =============================================================================
 // Cortex — infrastructure.
 //
-// Subscription-scope entry point. `azd up` runs this.
+// REUSES YOUR EXISTING ESTATE BY DEFAULT.
+// Every resource name and resource group is a parameter, defaulted to the
+// resources already in subscription ME-MngEnvMCAP181916-Core. Where a resource
+// exists, Cortex is granted access to it. Where it does not, Cortex creates it.
 //
-// PROVISIONING TIME WARNING
-//   API Management takes 30-45 minutes and Purview 10-15. Both are started
-//   first and run in parallel with everything else. Budget an hour for a
-//   cold deployment and do not discover this the day before a demo.
+// The create* flags are set for you by scripts/Deploy-Cortex.ps1, which probes
+// each resource with `az resource show` before deploying. Set them by hand only
+// if you are running `azd`/`az deployment` directly.
 //
-// COST WARNING
-//   APIM Standard v2 (~£450/mo) plus Purview (~£800/mo) dominate. Set
-//   apimSku to 'Developer' (~£40/mo) for a PoC, or point at existing
-//   instances with useExistingApim / useExistingPurview.
+// WHAT IS ALWAYS CREATED
+//   - a user-assigned managed identity (Cortex needs its own, not Databricks')
+//   - the Container Apps environment and the two Cortex apps
+// Nothing else. Everything else is reused if you have it.
 // =============================================================================
 
 targetScope = 'subscription'
 
+// ----------------------------------------------------------------- general
+
 @minLength(2)
 @maxLength(20)
-@description('Environment name. Used to derive all resource names.')
-param environmentName string
+@description('Environment name. Used to name the resources Cortex creates.')
+param environmentName string = 'cortex'
 
-@description('Azure region. uksouth is Defra-appropriate and has every service used here.')
-param location string = 'uksouth'
+@description('Region for resources Cortex creates. Defaults to North Europe, where most of your estate lives.')
+param location string = 'northeurope'
 
-@description('APIM SKU. Developer is fine for a PoC and ~10x cheaper. MCP server support requires Developer, Basic, Standard, Premium, or a v2 tier — Consumption is NOT supported.')
-@allowed(['Developer', 'BasicV2', 'StandardV2'])
-param apimSku string = 'Developer'
-
-param apimPublisherEmail string
-param apimPublisherName string = 'Defra Cortex PoC'
-
-@description('Model to deploy. gpt-5-mini is cheap, fast and sufficient for summarise-and-cite work.')
-param modelName string = 'gpt-5-mini'
-
-@description('Model capacity in thousands of tokens per minute. Lower this if the sandbox quota rejects the deployment.')
-param modelCapacity int = 30
-
-@description('Skip APIM creation and use an existing instance.')
-param useExistingApim bool = false
-param existingApimName string = ''
-param existingApimResourceGroup string = ''
-
-@description('Skip Purview creation and use an existing account.')
-param useExistingPurview bool = false
-param existingPurviewName string = ''
-param existingPurviewResourceGroup string = ''
-
-@description('Pin every adapter to seeded data. Recommended true for the first demo.')
-param demoMode bool = true
-
-@description('Write the endpoints and identifiers provisioning knows into Key Vault. Needs "Key Vault Secrets Officer" on the vault for whoever runs the deployment. Set false to onboard every value by hand.')
-param seedKeyVault bool = true
+@description('Resource group for the resources Cortex creates (container apps, identity). Created if absent.')
+param cortexResourceGroup string = 'PRDCORECORTEX001'
 
 param tags object = {
-  'azd-env-name': environmentName
+  'azd-env-name': 'cortex'
   project: 'cortex'
   purpose: 'poc'
 }
 
+// ------------------------------------------------------------ API Management
+
+@description('Existing API Management instance. Leave as-is to reuse yours.')
+param apimName string = 'prdcoreapimneu001'
+param apimResourceGroup string = 'PRDCOREAPIM001'
+
+@description('Create API Management instead of reusing it. MCP servers need Developer, Basic, Standard, Premium or a v2 tier — never Consumption.')
+param createApim bool = false
+
+@allowed(['Developer', 'BasicV2', 'StandardV2'])
+param apimSku string = 'Developer'
+param apimPublisherEmail string = ''
+param apimPublisherName string = 'Defra Cortex'
+
+@description('APIM product that published MCP servers are bound to. Created if absent.')
+param apimProductId string = 'cortex'
+
+// -------------------------------------------------------------------- Purview
+
+@description('Existing Microsoft Purview account. Leave as-is to reuse yours.')
+param purviewName string = 'prdcorepurvieweus'
+param purviewResourceGroup string = 'PRDCOREPVW001'
+param createPurview bool = false
+
+// -------------------------------------------------------------------- Foundry
+
+@description('Existing Microsoft Foundry account (the new account+project model, not a hub).')
+param foundryAccountName string = 'prdcorefdryeus001'
+param foundryProjectName string = 'prdcorefdryproj-default'
+param foundryResourceGroup string = 'PRDCOREFDRY001'
+param createFoundry bool = false
+
+@description('Model deployment to use. Must already exist on the account when reusing it.')
+param modelName string = 'gpt-4o-mini'
+param modelCapacity int = 30
+
+@description('Deploy the model. Leave false when reusing an account that already has one.')
+param createModelDeployment bool = false
+
+// ------------------------------------------------------------------ Key Vault
+
+@description('Existing Key Vault for Cortex endpoints and keys.')
+param keyVaultName string = 'prdcorekveus'
+param keyVaultResourceGroup string = 'PRDCOREPVW001'
+param createKeyVault bool = false
+
+@description('Write the endpoints provisioning knows into Key Vault. Needs Key Vault Secrets Officer for whoever deploys.')
+param seedKeyVault bool = true
+
+// ----------------------------------------------------------- Container registry
+
+@description('Existing container registry for the Cortex images.')
+param registryName string = 'prdcoreamlacr001'
+param registryResourceGroup string = 'PRDCOREAML001'
+param createRegistry bool = false
+
+// --------------------------------------------------------------- Monitoring
+
+@description('Existing Log Analytics workspace and Application Insights.')
+param logAnalyticsName string = 'prdcoreamlneu03094960047'
+param appInsightsName string = 'prdcoreamlneu08774392429'
+param monitoringResourceGroup string = 'PRDCOREAML001'
+param createMonitoring bool = false
+
+// ------------------------------------------------------------------ derived
+
 var prefix = toLower(replace(environmentName, '_', '-'))
 var uniq = substring(uniqueString(subscription().id, environmentName), 0, 6)
-var rgName = 'rg-${prefix}'
 
-resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
-  name: rgName
+var effectiveApimRg = createApim ? cortexResourceGroup : apimResourceGroup
+var effectivePurviewRg = createPurview ? cortexResourceGroup : purviewResourceGroup
+var effectiveFoundryRg = createFoundry ? cortexResourceGroup : foundryResourceGroup
+var effectiveKeyVaultRg = createKeyVault ? cortexResourceGroup : keyVaultResourceGroup
+var effectiveRegistryRg = createRegistry ? cortexResourceGroup : registryResourceGroup
+var effectiveMonitoringRg = createMonitoring ? cortexResourceGroup : monitoringResourceGroup
+
+var effectiveApimName = createApim ? 'apim-${prefix}-${uniq}' : apimName
+var effectivePurviewName = createPurview ? 'pview-${prefix}-${uniq}' : purviewName
+var effectiveFoundryAccount = createFoundry ? 'aif-${prefix}-${uniq}' : foundryAccountName
+var effectiveFoundryProject = createFoundry ? 'cortex' : foundryProjectName
+var effectiveKeyVaultName = createKeyVault ? take('kv${replace(prefix, '-', '')}${uniq}', 24) : keyVaultName
+var effectiveRegistryName = createRegistry ? 'cr${replace(prefix, '-', '')}${uniq}' : registryName
+
+// ------------------------------------------------------- resource group
+
+resource cortexRg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
+  name: cortexResourceGroup
   location: location
   tags: tags
 }
 
+// ------------------------------------------------------------- identity
+// Always created. Cortex needs an identity of its own — reusing one that
+// belongs to another workload would make its permissions impossible to reason
+// about, and impossible to revoke without collateral damage.
+
 module identity 'modules/identity.bicep' = {
   name: 'identity'
-  scope: rg
+  scope: cortexRg
   params: {
     name: 'id-${prefix}'
     location: location
@@ -79,9 +143,11 @@ module identity 'modules/identity.bicep' = {
   }
 }
 
-module monitoring 'modules/monitoring.bicep' = {
-  name: 'monitoring'
-  scope: rg
+// ----------------------------------------------------------- monitoring
+
+module monitoringNew 'modules/monitoring.bicep' = if (createMonitoring) {
+  name: 'monitoring-new'
+  scope: cortexRg
   params: {
     logAnalyticsName: 'log-${prefix}'
     appInsightsName: 'appi-${prefix}'
@@ -90,138 +156,205 @@ module monitoring 'modules/monitoring.bicep' = {
   }
 }
 
-module registry 'modules/registry.bicep' = {
-  name: 'registry'
-  scope: rg
+module monitoringExisting 'modules/monitoring-existing.bicep' = if (!createMonitoring) {
+  name: 'monitoring-existing'
+  scope: resourceGroup(effectiveMonitoringRg)
   params: {
-    name: 'cr${replace(prefix, '-', '')}${uniq}'
+    logAnalyticsName: logAnalyticsName
+    appInsightsName: appInsightsName
+  }
+}
+
+// ------------------------------------------------------------- registry
+
+module registryNew 'modules/registry.bicep' = if (createRegistry) {
+  name: 'registry-new'
+  scope: cortexRg
+  params: {
+    name: effectiveRegistryName
     location: location
     tags: tags
     principalId: identity.outputs.principalId
   }
 }
 
-// Started early — this is the long pole at 30-45 minutes.
-module apim 'modules/apim.bicep' = if (!useExistingApim) {
-  name: 'apim'
-  scope: rg
+module registryExisting 'modules/registry-existing.bicep' = if (!createRegistry) {
+  name: 'registry-existing'
+  scope: resourceGroup(effectiveRegistryRg)
   params: {
-    name: 'apim-${prefix}-${uniq}'
+    name: registryName
+    principalId: identity.outputs.principalId
+  }
+}
+
+// --------------------------------------------------------- API Management
+
+module apimNew 'modules/apim.bicep' = if (createApim) {
+  name: 'apim-new'
+  scope: cortexRg
+  params: {
+    name: effectiveApimName
     location: location
     tags: tags
     sku: apimSku
     publisherEmail: apimPublisherEmail
     publisherName: apimPublisherName
+    productId: apimProductId
     principalId: identity.outputs.principalId
   }
 }
 
-module purview 'modules/purview.bicep' = if (!useExistingPurview) {
-  name: 'purview'
-  scope: rg
+module apimExisting 'modules/apim-existing.bicep' = if (!createApim) {
+  name: 'apim-existing'
+  scope: resourceGroup(effectiveApimRg)
   params: {
-    name: 'pview-${prefix}-${uniq}'
+    name: apimName
+    productId: apimProductId
+    principalId: identity.outputs.principalId
+  }
+}
+
+// ---------------------------------------------------------------- Purview
+// NOTE: Bicep can grant nothing useful on Purview. Its governance roles are
+// data-plane roles assigned in the Purview portal, and tenant-level role
+// groups do not accept service principals at all. Section 6 of the deployment
+// guide is a manual step for that reason, whether the account is new or yours.
+
+module purviewNew 'modules/purview.bicep' = if (createPurview) {
+  name: 'purview-new'
+  scope: cortexRg
+  params: {
+    name: effectivePurviewName
     location: location
     tags: tags
   }
 }
 
-module foundry 'modules/foundry.bicep' = {
-  name: 'foundry'
-  scope: rg
+// ---------------------------------------------------------------- Foundry
+
+module foundryNew 'modules/foundry.bicep' = if (createFoundry) {
+  name: 'foundry-new'
+  scope: cortexRg
   params: {
-    accountName: 'aif-${prefix}-${uniq}'
-    projectName: 'cortex'
+    accountName: effectiveFoundryAccount
+    projectName: effectiveFoundryProject
     location: location
     tags: tags
     modelName: modelName
     modelCapacity: modelCapacity
+    deployModel: true
     principalId: identity.outputs.principalId
   }
 }
 
-module cosmos 'modules/cosmos.bicep' = {
-  name: 'cosmos'
-  scope: rg
+module foundryExisting 'modules/foundry-existing.bicep' = if (!createFoundry) {
+  name: 'foundry-existing'
+  scope: resourceGroup(effectiveFoundryRg)
   params: {
-    name: 'cosmos-${prefix}-${uniq}'
+    accountName: foundryAccountName
+    projectName: foundryProjectName
+    modelName: modelName
+    modelCapacity: modelCapacity
+    deployModel: createModelDeployment
+    principalId: identity.outputs.principalId
+  }
+}
+
+// -------------------------------------------------------------- Key Vault
+
+module keyVaultNew 'modules/keyvault.bicep' = if (createKeyVault) {
+  name: 'keyvault-new'
+  scope: cortexRg
+  params: {
+    name: effectiveKeyVaultName
     location: location
     tags: tags
     principalId: identity.outputs.principalId
   }
 }
 
-module keyvault 'modules/keyvault.bicep' = {
-  name: 'keyvault'
-  scope: rg
+module keyVaultExisting 'modules/keyvault-existing.bicep' = if (!createKeyVault) {
+  name: 'keyvault-existing'
+  scope: resourceGroup(effectiveKeyVaultRg)
   params: {
-    // Vault names are globally unique, 3-24 chars, letters/digits/hyphens.
-    name: take('kv-${replace(prefix, '-', '')}${uniq}', 24)
-    location: location
-    tags: tags
+    name: keyVaultName
     principalId: identity.outputs.principalId
   }
 }
+
+// --------------------------------------------------------- container apps
+// Always created. This is the front door and it does not exist yet.
 
 module containerApps 'modules/containerapps.bicep' = {
   name: 'containerapps'
-  scope: rg
+  scope: cortexRg
   params: {
-    keyVaultName: keyvault.outputs.name
     environmentName: 'cae-${prefix}'
     webAppName: 'cortex-web'
     mcpAppName: 'cortex-purview-mcp'
     location: location
     tags: tags
-    registryLoginServer: registry.outputs.loginServer
+    keyVaultName: effectiveKeyVaultName
+    registryLoginServer: createRegistry ? registryNew.outputs.loginServer : registryExisting.outputs.loginServer
     identityId: identity.outputs.id
     identityClientId: identity.outputs.clientId
-    logAnalyticsCustomerId: monitoring.outputs.customerId
-    logAnalyticsKey: monitoring.outputs.primarySharedKey
-    demoMode: demoMode
+    logAnalyticsCustomerId: createMonitoring ? monitoringNew.outputs.customerId : monitoringExisting.outputs.customerId
+    logAnalyticsKey: createMonitoring ? monitoringNew.outputs.primarySharedKey : monitoringExisting.outputs.primarySharedKey
   }
 }
 
-// Seed the vault with everything provisioning knows. Runs after container
-// apps because two of the values are its outputs.
-//
-// The APIM subscription key and the Entra client secret are NOT here — they
-// are not known to the template, and a credential written through a
-// deployment is readable in the deployment history afterwards. Those two are
-// onboarded by hand. See the deployment guide.
-module keyvaultSecrets 'modules/keyvault-secrets.bicep' = if (seedKeyVault) {
+// ------------------------------------------------------- Key Vault secrets
+// Seeded after container apps because two of the values are its outputs.
+// The APIM subscription key and any Entra client secret are NOT here: they are
+// not known to the template, and a credential written through a deployment
+// stays readable in the deployment history afterwards.
+
+module keyVaultSecrets 'modules/keyvault-secrets.bicep' = if (seedKeyVault) {
   name: 'keyvault-secrets'
-  scope: rg
+  scope: resourceGroup(effectiveKeyVaultRg)
   params: {
-    keyVaultName: keyvault.outputs.name
+    keyVaultName: effectiveKeyVaultName
     values: {
       'azure-subscription-id': subscription().subscriptionId
-      'azure-resource-group': rgName
-      'apim-service-name': useExistingApim ? existingApimName : apim.outputs.name
-      'apim-gateway-url': useExistingApim ? '' : apim.outputs.gatewayUrl
-      'foundry-project-endpoint': foundry.outputs.projectEndpoint
+      'azure-resource-group': effectiveApimRg
+      'apim-service-name': effectiveApimName
+      'apim-gateway-url': 'https://${effectiveApimName}.azure-api.net'
+      'foundry-project-endpoint': 'https://${effectiveFoundryAccount}.services.ai.azure.com/api/projects/${effectiveFoundryProject}'
       'foundry-model': modelName
       'purview-endpoint': 'https://api.purview-service.microsoft.com'
       'purview-mcp-url': '${containerApps.outputs.mcpUrl}/mcp'
       'public-base-url': containerApps.outputs.webUrl
-      'cosmos-endpoint': cosmos.outputs.endpoint
-      'appinsights-connection-string': monitoring.outputs.connectionString
+      'appinsights-connection-string': createMonitoring ? monitoringNew.outputs.connectionString : monitoringExisting.outputs.connectionString
       'entra-tenant-id': subscription().tenantId
     }
   }
 }
 
-output AZURE_RESOURCE_GROUP string = rgName
+// ---------------------------------------------------------------- outputs
+
+output AZURE_RESOURCE_GROUP string = cortexResourceGroup
 output AZURE_LOCATION string = location
-output KEYVAULT_NAME string = keyvault.outputs.name
-output KEYVAULT_URI string = keyvault.outputs.uri
 output CORTEX_WEB_URL string = containerApps.outputs.webUrl
 output CORTEX_MCP_URL string = containerApps.outputs.mcpUrl
 output CORTEX_IDENTITY_PRINCIPAL_ID string = identity.outputs.principalId
 output CORTEX_IDENTITY_CLIENT_ID string = identity.outputs.clientId
-output AZURE_CONTAINER_REGISTRY_ENDPOINT string = registry.outputs.loginServer
-output FOUNDRY_PROJECT_ENDPOINT string = foundry.outputs.projectEndpoint
-output APIM_SERVICE_NAME string = useExistingApim ? existingApimName : apim.outputs.name
-output APIM_GATEWAY_URL string = useExistingApim ? '' : apim.outputs.gatewayUrl
-output PURVIEW_ACCOUNT_NAME string = useExistingPurview ? existingPurviewName : purview.outputs.name
-output PURVIEW_ENDPOINT string = 'https://api.purview-service.microsoft.com'
+
+output KEYVAULT_NAME string = effectiveKeyVaultName
+output KEYVAULT_RESOURCE_GROUP string = effectiveKeyVaultRg
+output APIM_SERVICE_NAME string = effectiveApimName
+output APIM_RESOURCE_GROUP string = effectiveApimRg
+output APIM_GATEWAY_URL string = 'https://${effectiveApimName}.azure-api.net'
+output PURVIEW_ACCOUNT_NAME string = effectivePurviewName
+output PURVIEW_RESOURCE_GROUP string = effectivePurviewRg
+output FOUNDRY_ACCOUNT_NAME string = effectiveFoundryAccount
+output FOUNDRY_PROJECT_ENDPOINT string = 'https://${effectiveFoundryAccount}.services.ai.azure.com/api/projects/${effectiveFoundryProject}'
+output AZURE_CONTAINER_REGISTRY_ENDPOINT string = createRegistry ? registryNew.outputs.loginServer : registryExisting.outputs.loginServer
+
+output REUSED array = concat(
+  createApim ? [] : ['API Management: ${apimName}'],
+  createPurview ? [] : ['Purview: ${purviewName}'],
+  createFoundry ? [] : ['Foundry: ${foundryAccountName}/${foundryProjectName}'],
+  createKeyVault ? [] : ['Key Vault: ${keyVaultName}'],
+  createRegistry ? [] : ['Container registry: ${registryName}'],
+  createMonitoring ? [] : ['Monitoring: ${appInsightsName}']
+)

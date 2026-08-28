@@ -14,7 +14,13 @@ A front door to Microsoft Purview, Azure API Management and Microsoft Foundry, b
 
 Or in VS Code: **Ctrl+Shift+P → Tasks: Run Task → Cortex: Deploy to Azure**.
 
-Three steps cannot be automated — the APIM key, Entra sign-in with the **groups claim**, and the Purview roles in **both** planes. All three are in **`docs/deploy-windows.md`**, and the app will not work correctly until they are done.
+**Cortex reuses your existing Azure estate.** It creates only the container apps and its own managed identity. Check what will be reused first:
+
+```powershell
+.\scripts\Deploy-Cortex.ps1 -WhatIfResources
+```
+
+Two steps cannot be automated — Entra sign-in with the **groups claim**, and the Purview roles in **both** planes. Both are in **`docs/DEPLOY.md`**, and the app will not work correctly until they are done.
 
 ## Run it locally
 
@@ -62,7 +68,8 @@ Usage, error rate and latency come from the API Management Reports API. **Cost p
 ## Layout
 
 ```
-infra/            Bicep. Key Vault, APIM, Purview, Foundry, Container Apps.
+docs/             HANDOVER.md · ARCHITECTURE.md · DEPLOY.md
+infra/            Bicep. Every resource name and RG is a parameter.
 scripts/          Deploy-Cortex.ps1, Start-Local.ps1, Test-Cortex.ps1, bootstrap.js
 bootstrap/        Defra content — INPUT to a script, not runtime data
 src/bff/          Backend for frontend. All Azure credentials live here.
@@ -87,3 +94,13 @@ Microsoft ships neither, and Cortex is largely the fact that they exist.
 Server-rendered GOV.UK Design System. `npm install` vendors the official `govuk-frontend` package into `src/web/assets/vendor/`; if that has not run, the app falls back to a bundled stylesheet using the same class names, so a missing build step degrades typography rather than the service.
 
 Zero `<script>` tags. The whole application works with JavaScript disabled.
+
+---
+
+## Documentation
+
+| | |
+|---|---|
+| **`docs/HANDOVER.md`** | Read first if you are picking this up. State of play, verified API facts, traps, next work. |
+| **`docs/ARCHITECTURE.md`** | What it is, why it exists, how it is built, what was deliberately left out. |
+| **`docs/DEPLOY.md`** | Deploy to Azure and run locally, including every Key Vault secret. |
