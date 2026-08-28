@@ -1,0 +1,1105 @@
+[
+  {
+    "cat": "Data",
+    "fresh": "Daily",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Open Government Licence — covers all staff and contractors",
+    "calls": 41200,
+    "consumers": 186,
+    "cpu": "£0.002",
+    "err": "0.2%",
+    "lat": "240ms",
+    "rag": "g",
+    "carbon": "~12 kgCO₂e per month, estimated",
+    "limits": "Sampling is not uniform in space or time. Absence of a result is not evidence of absence of a pollutant.",
+    "deps": [
+      "WIMS",
+      "Catchment Data Explorer"
+    ],
+    "location": "Point, OSGB36",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "water-quality-archive",
+    "name": "Water quality archive",
+    "cluster": "water",
+    "desc": "Sampling results for rivers, lakes, estuaries and groundwater, by sampling point and determinand. Derived from the sampling schema, its lineage back to WIMS and its Purview classification.",
+    "_source": {
+      "system": "purview",
+      "id": "water-quality-archive",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "15 minutes",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Open Government Licence — all staff",
+    "calls": 28900,
+    "consumers": 94,
+    "cpu": "£0.001",
+    "err": "0.6%",
+    "lat": "180ms",
+    "rag": "g",
+    "carbon": "~9 kgCO₂e per month, estimated",
+    "limits": "Telemetry gaps during high flow are common; the gauge is often the first thing a flood takes out.",
+    "deps": [
+      "Hydrology Data Explorer"
+    ],
+    "location": "Point, OSGB36",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "hydrology-flow-level",
+    "name": "Hydrology flow and level",
+    "cluster": "water",
+    "desc": "Fifteen-minute and daily river flow, groundwater level and rainfall from the telemetry network.",
+    "_source": {
+      "system": "purview",
+      "id": "hydrology-flow-level",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Weekly, in season",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Open Government Licence — all staff",
+    "calls": 6100,
+    "consumers": 41,
+    "cpu": "£0.002",
+    "err": "0.1%",
+    "lat": "210ms",
+    "rag": "g",
+    "carbon": "~2 kgCO₂e per month, estimated",
+    "limits": "Out of season there are no samples. The classification is a four-year rolling calculation, not this week’s water.",
+    "deps": [
+      "WIMS"
+    ],
+    "location": "Point, OSGB36",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "bathing-water-results",
+    "name": "Bathing water sample results",
+    "cluster": "water",
+    "desc": "Weekly in-season bacterial sampling at designated bathing waters, with the annual classification.",
+    "_source": {
+      "system": "purview",
+      "id": "bathing-water-results",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Annual",
+    "sens": "Official",
+    "access": "Request to Natural England Evidence",
+    "vis": "request",
+    "licence": "Derived product — internal use only, no onward publication",
+    "calls": 3400,
+    "consumers": 22,
+    "cpu": "£0.004",
+    "err": "0.4%",
+    "lat": "610ms",
+    "rag": "a",
+    "carbon": "~4 kgCO₂e per month, estimated",
+    "limits": "Classification accuracy varies by habitat; upland mosaics are the weakest class.",
+    "deps": [
+      "Living England"
+    ],
+    "location": "Polygon, OSGB36",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "catchment-land-cover",
+    "name": "Catchment land cover",
+    "cluster": "land",
+    "desc": "Land cover parcels attributed to water body catchments, used for source apportionment.",
+    "_source": {
+      "system": "purview",
+      "id": "catchment-land-cover",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ],
+    "allowedGroups": [
+      "ne-evidence"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Daily",
+    "sens": "Official–Sensitive",
+    "access": "No route in your current role",
+    "vis": "sensitivity",
+    "licence": "Internal only",
+    "calls": 19400,
+    "consumers": 37,
+    "cpu": "£0.003",
+    "err": "0.3%",
+    "lat": "320ms",
+    "rag": "g",
+    "carbon": "~7 kgCO₂e per month, estimated",
+    "limits": "Parcels are identifiable to a land holding. Aggregation rules apply before any onward use.",
+    "deps": [
+      "Rural Payments"
+    ],
+    "location": "Polygon, OSGB36",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "rural-land-parcels",
+    "name": "Rural land parcels",
+    "cluster": "farm",
+    "desc": "Registered land parcels with area, feature and eligibility attributes.",
+    "_source": {
+      "system": "purview",
+      "id": "rural-land-parcels",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ],
+    "allowedGroups": [
+      "rpa-land-data",
+      "restricted-permits"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Daily",
+    "sens": "Official–Sensitive",
+    "access": "No route in your current role",
+    "vis": "sensitivity",
+    "licence": "Internal only",
+    "calls": 0,
+    "consumers": 0,
+    "cpu": "—",
+    "err": "—",
+    "lat": "—",
+    "rag": "a",
+    "carbon": "—",
+    "limits": "Registered and reachable, but no consumer has been cleared to call it. Zero use is the honest number, not a gap in telemetry.",
+    "deps": [
+      "Livestock Information Service"
+    ],
+    "location": "Point, OSGB36",
+    "ownerState": "confirmed",
+    "flags": [
+      "zero use"
+    ],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "livestock-movements",
+    "name": "Livestock movement records",
+    "cluster": "animal",
+    "desc": "Movements between holdings, used for tracing in a disease outbreak.",
+    "_source": {
+      "system": "purview",
+      "id": "livestock-movements",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ],
+    "allowedGroups": [
+      "apha-surveillance",
+      "restricted-permits"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Daily",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Open Government Licence — all staff",
+    "calls": 5200,
+    "consumers": 33,
+    "cpu": "£0.001",
+    "err": "0.2%",
+    "lat": "190ms",
+    "rag": "g",
+    "carbon": "~2 kgCO₂e per month, estimated",
+    "limits": "Registration is not a permission to carry any particular waste.",
+    "deps": [
+      "Public Register"
+    ],
+    "location": "—",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "waste-carrier-registrations",
+    "name": "Waste carrier registrations",
+    "cluster": "waste",
+    "desc": "Registered carriers, brokers and dealers, with registration status and tier.",
+    "_source": {
+      "system": "purview",
+      "id": "waste-carrier-registrations",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ],
+    "allowedGroups": [
+      "all-staff"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Annual",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Open Government Licence — all staff",
+    "calls": 2900,
+    "consumers": 48,
+    "cpu": "£0.003",
+    "err": "0.1%",
+    "lat": "420ms",
+    "rag": "g",
+    "carbon": "~3 kgCO₂e per month, estimated",
+    "limits": "Minimum mappable woodland is half a hectare; small farm copses are systematically absent.",
+    "deps": [
+      "Forestry Commission Inventory"
+    ],
+    "location": "Polygon, OSGB36",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "national-forest-inventory",
+    "name": "National forest inventory",
+    "cluster": "land",
+    "desc": "Woodland extent, species composition and structure from the national survey programme.",
+    "_source": {
+      "system": "purview",
+      "id": "national-forest-inventory",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Per survey",
+    "sens": "Official",
+    "access": "Connected, not yet cleared for use",
+    "vis": "notcleared",
+    "licence": "Under review with commercial",
+    "calls": 0,
+    "consumers": 0,
+    "cpu": "—",
+    "err": "—",
+    "lat": "—",
+    "rag": "a",
+    "carbon": "—",
+    "limits": "Connected through the gateway in June. The clearance decision is with the AI Unit queue.",
+    "deps": [
+      "Cefas Data Portal"
+    ],
+    "location": "Point, WGS84",
+    "ownerState": "confirmed",
+    "flags": [
+      "zero use"
+    ],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "marine-catch-returns",
+    "name": "Marine survey catch returns",
+    "cluster": "marine",
+    "desc": "Species, weight and position from research survey tows.",
+    "_source": {
+      "system": "purview",
+      "id": "marine-catch-returns",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Per model run",
+    "sens": "Official",
+    "access": "Request to EA Flood Risk",
+    "vis": "request",
+    "licence": "Internal use; onward sharing needs the model owner’s agreement",
+    "calls": 8700,
+    "consumers": 58,
+    "cpu": "£0.011",
+    "err": "0.9%",
+    "lat": "2.4s",
+    "rag": "a",
+    "carbon": "~28 kgCO₂e per month, estimated",
+    "limits": "Model outputs are scenarios, not forecasts. Using them as a prediction of a specific event is the most common misuse.",
+    "deps": [
+      "NaFRA"
+    ],
+    "location": "Raster, OSGB36",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "flood-risk-model-outputs",
+    "name": "Flood risk model outputs",
+    "cluster": "flood",
+    "desc": "Modelled depth, extent and likelihood surfaces for fluvial, tidal and surface water sources.",
+    "_source": {
+      "system": "purview",
+      "id": "flood-risk-model-outputs",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ],
+    "allowedGroups": [
+      "ea-flood-risk"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Last updated 2019",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Open Government Licence — all staff",
+    "calls": 410,
+    "consumers": 9,
+    "cpu": "£0.002",
+    "err": "0.2%",
+    "lat": "260ms",
+    "rag": "r",
+    "carbon": "~1 kgCO₂e per month, estimated",
+    "limits": "Seven years old. Agricultural practice has changed materially since the base year.",
+    "deps": [],
+    "location": "Grid, OSGB36",
+    "ownerState": "proposed",
+    "flags": [
+      "stale",
+      "unowned"
+    ],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "ammonia-emissions-grid",
+    "name": "Ammonia emissions grid",
+    "cluster": "air",
+    "desc": "Modelled ammonia emissions on a 1km grid, apportioned by source sector.",
+    "owner": "Not claimed",
+    "_source": {
+      "system": "purview",
+      "id": "ammonia-emissions-grid",
+      "maintainedBy": "agent",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "Skill",
+    "fresh": "Live",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Internal service",
+    "calls": 12400,
+    "consumers": 76,
+    "cpu": "£0.006",
+    "err": "1.1%",
+    "lat": "700ms",
+    "rag": "a",
+    "carbon": "~5 kgCO₂e per month, estimated",
+    "limits": "Only sites with a current permit reference. Historic sites that predate the reference scheme return nothing.",
+    "deps": [
+      "Public Register",
+      "waste-carrier-registrations"
+    ],
+    "location": "—",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "permit-history-lookup",
+    "name": "Permit history lookup",
+    "cluster": "waste",
+    "desc": "Returns the permit, its variations and its compliance history for a site reference.",
+    "_source": {
+      "system": "apim",
+      "id": "permit-history-lookup",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {
+      "mcp": "https://apim-cortex.azure-api.net/permit-history-lookup-mcp/mcp",
+      "openapi": "https://apim-cortex.azure-api.net/permit-history-lookup/openapi.json"
+    },
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ],
+    "allowedGroups": [
+      "waste-crime",
+      "ea-waste-regulation"
+    ]
+  },
+  {
+    "cat": "Skill",
+    "fresh": "Live",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Internal service",
+    "calls": 9800,
+    "consumers": 132,
+    "cpu": "£0.031",
+    "err": "0.7%",
+    "lat": "3.1s",
+    "rag": "g",
+    "carbon": "~41 kgCO₂e per month, estimated",
+    "limits": "Cross-cluster only where reference data has been confirmed. Six catchments have unresolved identifiers and are excluded.",
+    "deps": [
+      "water-quality-archive",
+      "hydrology-flow-level",
+      "permit-history-lookup"
+    ],
+    "location": "—",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "catchment-summariser",
+    "name": "Catchment summariser",
+    "cluster": "water",
+    "desc": "Assembles a plain-English picture of a catchment from quality, flow, permit and incident sources.",
+    "_source": {
+      "system": "apim",
+      "id": "catchment-summariser",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {
+      "mcp": "https://apim-cortex.azure-api.net/catchment-summariser-mcp/mcp",
+      "openapi": "https://apim-cortex.azure-api.net/catchment-summariser/openapi.json"
+    },
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ],
+    "allowedGroups": [
+      "analysts",
+      "agent-builders",
+      "ea-water-quality"
+    ]
+  },
+  {
+    "cat": "Skill",
+    "fresh": "Quarterly",
+    "sens": "Official",
+    "access": "Licence does not cover you",
+    "vis": "licence",
+    "licence": "Commercial gazetteer, licensed per named seat. 40 seats held; a tool call made on behalf of an unlicensed user is a contractual problem, not a technical one.",
+    "calls": 3100,
+    "consumers": 38,
+    "cpu": "£0.09",
+    "err": "0.5%",
+    "lat": "380ms",
+    "rag": "a",
+    "carbon": "~6 kgCO₂e per month, estimated",
+    "limits": "Match rates fall sharply for rural and unnamed premises.",
+    "deps": [],
+    "location": "Point, OSGB36",
+    "ownerState": "confirmed",
+    "flags": [
+      "licence blocked"
+    ],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "address-matching",
+    "name": "Address and premises matching",
+    "cluster": "farm",
+    "desc": "Matches free-text addresses to a canonical premises identifier.",
+    "_source": {
+      "system": "apim",
+      "id": "address-matching",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {
+      "mcp": "https://apim-cortex.azure-api.net/address-matching-mcp/mcp",
+      "openapi": "https://apim-cortex.azure-api.net/address-matching/openapi.json"
+    },
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ],
+    "allowedGroups": [
+      "rpa-land-data"
+    ]
+  },
+  {
+    "cat": "Agent",
+    "fresh": "Live",
+    "sens": "Official",
+    "access": "Open to incident duty staff",
+    "vis": "request",
+    "licence": "Internal service",
+    "calls": 2200,
+    "consumers": 64,
+    "cpu": "£0.14",
+    "err": "2.1%",
+    "lat": "6.8s",
+    "rag": "a",
+    "carbon": "~52 kgCO₂e per month, estimated",
+    "limits": "Read-only. It assembles context and never triages on its own; the category is always set by the duty officer.",
+    "deps": [
+      "catchment-summariser",
+      "permit-history-lookup",
+      "water-quality-archive"
+    ],
+    "location": "—",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "incident-triage",
+    "name": "Incident triage assistant",
+    "cluster": "water",
+    "desc": "Reads an incoming incident report and assembles the surrounding context: nearby permits, recent samples, prior reports at the same location.",
+    "_source": {
+      "system": "foundry",
+      "id": "incident-triage",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {
+      "mcp": "https://apim-cortex.azure-api.net/incident-triage-mcp/mcp"
+    },
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ],
+    "allowedGroups": [
+      "incident-duty",
+      "ea-water-quality"
+    ]
+  },
+  {
+    "cat": "Agent",
+    "fresh": "Live",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Internal service",
+    "calls": 640,
+    "consumers": 29,
+    "cpu": "£0.22",
+    "err": "1.4%",
+    "lat": "11s",
+    "rag": "g",
+    "carbon": "~18 kgCO₂e per month, estimated",
+    "limits": "Responses are stripped of personal data before ingestion. It cannot tell you who said something, by design.",
+    "deps": [],
+    "location": "—",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "consultation-summariser",
+    "name": "Consultation response summariser",
+    "cluster": "land",
+    "desc": "Clusters and summarises free-text consultation responses, with a quotation for every theme it reports.",
+    "_source": {
+      "system": "foundry",
+      "id": "consultation-summariser",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {
+      "mcp": "https://apim-cortex.azure-api.net/consultation-summariser-mcp/mcp"
+    },
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ],
+    "allowedGroups": [
+      "agent-builders",
+      "ne-evidence"
+    ]
+  },
+  {
+    "cat": "Agent",
+    "fresh": "Live",
+    "sens": "Official",
+    "access": "Connected, not yet cleared for use",
+    "vis": "notcleared",
+    "licence": "Internal service",
+    "calls": 0,
+    "consumers": 0,
+    "cpu": "—",
+    "err": "—",
+    "lat": "—",
+    "rag": "a",
+    "carbon": "—",
+    "limits": "Awaiting assurance. It proposes a schedule that a person then changes; it books nothing.",
+    "deps": [
+      "rural-land-parcels"
+    ],
+    "location": "—",
+    "ownerState": "confirmed",
+    "flags": [
+      "zero use"
+    ],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "inspection-scheduler",
+    "name": "Farm inspection scheduler",
+    "cluster": "farm",
+    "desc": "Proposes an inspection schedule from risk, geography and travel time.",
+    "_source": {
+      "system": "foundry",
+      "id": "inspection-scheduler",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {
+      "mcp": "https://apim-cortex.azure-api.net/inspection-scheduler-mcp/mcp"
+    },
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "App",
+    "fresh": "Per classification cycle",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Open Government Licence — all staff",
+    "calls": 1900,
+    "consumers": 210,
+    "cpu": "—",
+    "err": "0.4%",
+    "lat": "1.1s",
+    "rag": "g",
+    "carbon": "—",
+    "limits": "A browser, not an interface. Bulk questions should go to the archive, not to this.",
+    "deps": [
+      "water-quality-archive"
+    ],
+    "location": "—",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "catchment-data-explorer",
+    "name": "Catchment Data Explorer",
+    "cluster": "water",
+    "desc": "Public-facing browser for water body classification, reasons for not achieving good status, and measures.",
+    "_source": {
+      "system": "apim",
+      "id": "catchment-data-explorer",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "App",
+    "fresh": "Monthly",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Open Government Licence — all staff",
+    "calls": 2400,
+    "consumers": 340,
+    "cpu": "—",
+    "err": "0.3%",
+    "lat": "1.6s",
+    "rag": "g",
+    "carbon": "—",
+    "limits": "Designation boundaries are indicative at large scale; the legal boundary is the marketplace entry.",
+    "deps": [],
+    "location": "Polygon, OSGB36",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "magic-map",
+    "name": "MAGIC map browser",
+    "cluster": "land",
+    "desc": "Map browser for statutory designations, agri-environment schemes and habitat inventories.",
+    "_source": {
+      "system": "apim",
+      "id": "magic-map",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Live",
+    "sens": "Official",
+    "access": "No direct route in your role. Answers available from the holder.",
+    "vis": "person",
+    "licence": "Internal only",
+    "calls": 1400,
+    "consumers": 11,
+    "cpu": "—",
+    "err": "—",
+    "lat": "—",
+    "rag": "g",
+    "carbon": "—",
+    "limits": "Individual records identify the agent who resolved a ticket. Nothing below team level leaves the holder.",
+    "deps": [
+      "ServiceNow"
+    ],
+    "location": "—",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": [
+      "Average tickets per person, by directorate, monthly",
+      "Open P1 incidents by service",
+      "Median time to resolve, by assignment group"
+    ],
+    "minAgg": "Team level. No answer is returned covering fewer than 10 people.",
+    "holderStats": {
+      "requests": 34,
+      "released": 31,
+      "declined": 3,
+      "median": "2 days"
+    },
+    "id": "servicenow-incidents",
+    "name": "Service incidents and tickets",
+    "cluster": "corp",
+    "desc": "Incidents, requests and service metrics from ServiceNow, by assignment group and resolving agent.",
+    "_source": {
+      "system": "purview",
+      "id": "servicenow-incidents",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Monthly, on close",
+    "sens": "Official–Sensitive",
+    "access": "No direct route in your role. Answers available from the holder.",
+    "vis": "person",
+    "licence": "Internal only",
+    "calls": 890,
+    "consumers": 8,
+    "cpu": "—",
+    "err": "—",
+    "lat": "—",
+    "rag": "a",
+    "carbon": "—",
+    "limits": "Pre-close figures move. A number taken before the ledger closes will not match the one reported afterwards.",
+    "deps": [
+      "Finance ledger"
+    ],
+    "location": "—",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": [
+      "Average delivery cost per programme, by directorate",
+      "Burn rate against plan, by portfolio",
+      "Committed versus actual, month on month"
+    ],
+    "minAgg": "Programme level. Nothing is returned that resolves to an individual contract or a named supplier rate.",
+    "holderStats": {
+      "requests": 21,
+      "released": 16,
+      "declined": 5,
+      "median": "6 days"
+    },
+    "id": "finance-ledger",
+    "name": "Programme and portfolio spend",
+    "cluster": "corp",
+    "desc": "Committed and actual spend by programme, portfolio and directorate, from the finance ledger.",
+    "_source": {
+      "system": "purview",
+      "id": "finance-ledger",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "Data",
+    "fresh": "Hourly",
+    "sens": "Official–Sensitive",
+    "access": "Aggregate answers only, from the holder.",
+    "vis": "person",
+    "licence": "Internal only",
+    "calls": 220,
+    "consumers": 4,
+    "cpu": "—",
+    "err": "—",
+    "lat": "—",
+    "rag": "a",
+    "carbon": "—",
+    "limits": "This is organisational signal, not individual monitoring. The distinction is enforced by the minimum aggregation below, not by anyone remembering it.",
+    "deps": [
+      "Endpoint management"
+    ],
+    "location": "—",
+    "ownerState": "confirmed",
+    "flags": [],
+    "askable": [
+      "Share of devices below specification, by team",
+      "Median processor load during working hours, by portfolio",
+      "Device age profile, by directorate"
+    ],
+    "minAgg": "Team level, minimum 10 devices. A question that would resolve to fewer is refused, not rounded.",
+    "holderStats": {
+      "requests": 9,
+      "released": 7,
+      "declined": 2,
+      "median": "4 days"
+    },
+    "id": "endpoint-telemetry",
+    "name": "Endpoint performance telemetry",
+    "cluster": "corp",
+    "desc": "Processor load, memory pressure and device age from the management agent already deployed across the estate.",
+    "_source": {
+      "system": "purview",
+      "id": "endpoint-telemetry",
+      "maintainedBy": "human",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  },
+  {
+    "cat": "App",
+    "fresh": "Hourly",
+    "sens": "Official",
+    "access": "Open to all staff",
+    "vis": "available",
+    "licence": "Open Government Licence — all staff",
+    "calls": 880,
+    "consumers": 61,
+    "cpu": "—",
+    "err": "3.4%",
+    "lat": "2.9s",
+    "rag": "r",
+    "carbon": "—",
+    "limits": "The owner field is a proposal from resource tags and has never been confirmed by a person. Treat the contact route as unverified.",
+    "deps": [],
+    "location": "Point, OSGB36",
+    "ownerState": "proposed",
+    "flags": [
+      "unowned",
+      "duplicate"
+    ],
+    "askable": null,
+    "minAgg": null,
+    "holderStats": null,
+    "id": "air-quality-dashboard",
+    "name": "Air quality dashboard",
+    "cluster": "air",
+    "desc": "Monitoring site readings, exceedance counts and trend by pollutant.",
+    "owner": "Not claimed",
+    "_source": {
+      "system": "apim",
+      "id": "air-quality-dashboard",
+      "maintainedBy": "agent",
+      "syncedAt": "2026-08-21T09:14:00Z"
+    },
+    "_endpoints": {},
+    "_illustrative": [
+      "calls",
+      "consumers",
+      "cpu",
+      "err",
+      "lat",
+      "carbon"
+    ]
+  }
+]
