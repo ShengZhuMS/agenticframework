@@ -2,70 +2,159 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Cortex: Deploy to Azure",
-      "detail": "Full deployment — provision, deploy, onboard secrets, bootstrap, verify. Allow an hour on a cold run.",
+      "label": "Cortex: What will be reused?",
+      "detail": "Probe which Azure resources exist. Changes nothing.",
       "type": "shell",
       "command": "pwsh",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/Deploy-Cortex.ps1"],
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Deploy-Cortex.ps1",
+        "-WhatIfResources"
+      ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
-      "group": { "kind": "build", "isDefault": true }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Deploy to Azure",
+      "detail": "Full deployment \u2014 provision, deploy, onboard secrets, bootstrap, verify. Allow an hour on a cold run.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Deploy-Cortex.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
     },
     {
       "label": "Cortex: Redeploy code only",
       "detail": "Skip provisioning and bootstrap. Use after a code change.",
       "type": "shell",
       "command": "pwsh",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/Deploy-Cortex.ps1", "-SkipProvision", "-SkipBootstrap"],
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Deploy-Cortex.ps1",
+        "-SkipProvision",
+        "-SkipBootstrap"
+      ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     },
     {
       "label": "Cortex: Run locally",
       "detail": "Run on this machine against your real Azure resources.",
       "type": "shell",
       "command": "pwsh",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/Start-Local.ps1", "-Groups", "all-staff,waste-crime,analysts"],
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Start-Local.ps1",
+        "-Groups",
+        "all-staff,waste-crime,analysts"
+      ],
       "problemMatcher": [],
       "isBackground": true,
-      "presentation": { "reveal": "always", "panel": "dedicated" }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     },
     {
       "label": "Cortex: Health check",
       "detail": "Check the deployed app and every back end.",
       "type": "shell",
       "command": "pwsh",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/Test-Cortex.ps1"],
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Test-Cortex.ps1"
+      ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     },
     {
       "label": "Cortex: Run tests",
       "detail": "The unit suite. No Azure needed.",
       "type": "shell",
       "command": "npm",
-      "args": ["test"],
+      "args": [
+        "test"
+      ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
-      "group": { "kind": "test", "isDefault": true }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
     },
     {
       "label": "Cortex: Bootstrap content",
       "detail": "Create the Defra governance domains and data products in Purview. Idempotent.",
       "type": "shell",
       "command": "npm",
-      "args": ["run", "bootstrap"],
+      "args": [
+        "run",
+        "bootstrap"
+      ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     },
     {
       "label": "Cortex: Bootstrap dry run",
       "detail": "Validate the bootstrap content without writing anything. No Azure needed.",
       "type": "shell",
       "command": "node",
-      "args": ["scripts/bootstrap.js", "--dry-run"],
+      "args": [
+        "scripts/bootstrap.js",
+        "--dry-run"
+      ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     }
   ]
 }

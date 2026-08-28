@@ -178,14 +178,6 @@ export const SECRET_CATALOGUE = [
       'Public URL of this app. APIM calls back to it, so the generated OpenAPI must carry a reachable address.'
   },
   {
-    secret: 'cosmos-endpoint',
-    env: 'COSMOS_ENDPOINT',
-    path: 'cosmosEndpoint',
-    sensitive: false,
-    required: false,
-    description: 'Cosmos DB account endpoint for the Cortex Index. Auth is managed identity — there is no key.'
-  },
-  {
     secret: 'appinsights-connection-string',
     env: 'APPLICATIONINSIGHTS_CONNECTION_STRING',
     path: 'appInsightsConnectionString',

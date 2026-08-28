@@ -2,17 +2,41 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "environmentName":     { "value": "${AZURE_ENV_NAME}" },
-    "location":            { "value": "${AZURE_LOCATION}" },
-    "apimSku":             { "value": "${APIM_SKU=Developer}" },
-    "apimPublisherEmail":  { "value": "${APIM_PUBLISHER_EMAIL}" },
-    "apimPublisherName":   { "value": "${APIM_PUBLISHER_NAME=Defra Cortex PoC}" },
-    "modelName":           { "value": "${FOUNDRY_MODEL=gpt-5-mini}" },
-    "modelCapacity":       { "value": "${FOUNDRY_MODEL_CAPACITY=30}" },
-    "useExistingApim":     { "value": "${USE_EXISTING_APIM=false}" },
-    "existingApimName":    { "value": "${EXISTING_APIM_NAME=}" },
-    "useExistingPurview":  { "value": "${USE_EXISTING_PURVIEW=false}" },
-    "existingPurviewName": { "value": "${EXISTING_PURVIEW_NAME=}" },
-    "demoMode":            { "value": "${DEMO_MODE=true}" }
+    "environmentName":        { "value": "${AZURE_ENV_NAME=cortex}" },
+    "location":               { "value": "${AZURE_LOCATION=northeurope}" },
+    "cortexResourceGroup":    { "value": "${CORTEX_RESOURCE_GROUP=PRDCORECORTEX001}" },
+
+    "apimName":               { "value": "${APIM_NAME=prdcoreapimneu001}" },
+    "apimResourceGroup":      { "value": "${APIM_RG=PRDCOREAPIM001}" },
+    "createApim":             { "value": "${CREATE_APIM=false}" },
+    "apimSku":                { "value": "${APIM_SKU=Developer}" },
+    "apimPublisherEmail":     { "value": "${APIM_PUBLISHER_EMAIL=}" },
+    "apimProductId":          { "value": "${APIM_PRODUCT_ID=cortex}" },
+
+    "purviewName":            { "value": "${PURVIEW_NAME=prdcorepurvieweus}" },
+    "purviewResourceGroup":   { "value": "${PURVIEW_RG=PRDCOREPVW001}" },
+    "createPurview":          { "value": "${CREATE_PURVIEW=false}" },
+
+    "foundryAccountName":     { "value": "${FOUNDRY_ACCOUNT=prdcorefdryeus001}" },
+    "foundryProjectName":     { "value": "${FOUNDRY_PROJECT=prdcorefdryproj-default}" },
+    "foundryResourceGroup":   { "value": "${FOUNDRY_RG=PRDCOREFDRY001}" },
+    "createFoundry":          { "value": "${CREATE_FOUNDRY=false}" },
+    "modelName":              { "value": "${MODEL_NAME=gpt-4o-mini}" },
+    "modelCapacity":          { "value": "${MODEL_CAPACITY=30}" },
+    "createModelDeployment":  { "value": "${CREATE_MODEL_DEPLOYMENT=false}" },
+
+    "keyVaultName":           { "value": "${KEYVAULT_NAME=prdcorekveus}" },
+    "keyVaultResourceGroup":  { "value": "${KEYVAULT_RG=PRDCOREPVW001}" },
+    "createKeyVault":         { "value": "${CREATE_KEYVAULT=false}" },
+    "seedKeyVault":           { "value": "${SEED_KEYVAULT=true}" },
+
+    "registryName":           { "value": "${REGISTRY_NAME=prdcoreamlacr001}" },
+    "registryResourceGroup":  { "value": "${REGISTRY_RG=PRDCOREAML001}" },
+    "createRegistry":         { "value": "${CREATE_REGISTRY=false}" },
+
+    "logAnalyticsName":       { "value": "${LOG_ANALYTICS_NAME=prdcoreamlneu03094960047}" },
+    "appInsightsName":        { "value": "${APP_INSIGHTS_NAME=prdcoreamlneu08774392429}" },
+    "monitoringResourceGroup":{ "value": "${MONITORING_RG=PRDCOREAML001}" },
+    "createMonitoring":       { "value": "${CREATE_MONITORING=false}" }
   }
 }

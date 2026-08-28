@@ -11,6 +11,7 @@ param location string
 param tags object
 param modelName string
 param modelCapacity int
+param deployModel bool = true
 param principalId string
 
 // Role definition IDs. Foundry User was previously named Azure AI User —
@@ -45,7 +46,7 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-previ
   }
 }
 
-resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = {
+resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = if (deployModel) {
   parent: account
   name: modelName
   sku: {
