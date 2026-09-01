@@ -9,10 +9,27 @@ param accountName string
 param projectName string
 param location string
 param tags object
-param modelName string
-param modelCapacity int
-param deployModel bool = true
 param principalId string
+
+param modelName string = 'gpt-5.4-mini'
+
+// See foundry-existing.bicep for why this is never left to ARM's default.
+@description('Model version, pinned. An unpinned version resolves to ARM\'s current default, which moves and eventually lands on a deprecated build.')
+param modelVersion string = '2026-03-17'
+
+@description('Deployment name, i.e. what the application asks for at inference time. Defaults to the model name.')
+param modelDeploymentName string = ''
+
+@allowed(['GlobalStandard', 'Standard', 'DataZoneStandard'])
+param modelSkuName string = 'GlobalStandard'
+
+param modelCapacity int = 30
+param deployModel bool = true
+
+@allowed(['OnceCurrentVersionExpired', 'OnceNewDefaultVersionAvailable', 'NoAutoUpgrade'])
+param modelVersionUpgradeOption string = 'OnceCurrentVersionExpired'
+
+var effectiveDeploymentName = empty(modelDeploymentName) ? modelName : modelDeploymentName
 
 // Role definition IDs. Foundry User was previously named Azure AI User —
 // the names changed, the IDs did not.
@@ -48,16 +65,18 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-previ
 
 resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = if (deployModel) {
   parent: account
-  name: modelName
+  name: effectiveDeploymentName
   sku: {
-    name: 'GlobalStandard'
+    name: modelSkuName
     capacity: modelCapacity
   }
   properties: {
     model: {
       format: 'OpenAI'
       name: modelName
+      version: modelVersion
     }
+    versionUpgradeOption: modelVersionUpgradeOption
   }
 }
 
@@ -89,3 +108,4 @@ output projectName string = project.name
 output projectEndpoint string = 'https://${account.name}.services.ai.azure.com/api/projects/${project.name}'
 output projectPrincipalId string = project.identity.principalId
 output accountPrincipalId string = account.identity.principalId
+output modelDeploymentName string = effectiveDeploymentName
