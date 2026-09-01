@@ -3,7 +3,7 @@
   "tasks": [
     {
       "label": "Cortex: What will be reused?",
-      "detail": "Probe which Azure resources exist. Changes nothing.",
+      "detail": "Probe which Azure resources exist and whether the pinned model is deployable. Changes nothing.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -23,7 +23,7 @@
     },
     {
       "label": "Cortex: Deploy to Azure",
-      "detail": "Full deployment \u2014 provision, deploy, onboard secrets, bootstrap, verify. Allow an hour on a cold run.",
+      "detail": "Full deployment — provision, deploy, onboard secrets, bootstrap, verify. Safe to run repeatedly.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -46,7 +46,7 @@
     },
     {
       "label": "Cortex: Redeploy code only",
-      "detail": "Skip provisioning and bootstrap. Use after a code change.",
+      "detail": "Rebuild and push both images. No infrastructure, no bootstrap. Use after a code change.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -55,8 +55,48 @@
         "Bypass",
         "-File",
         "${workspaceFolder}/scripts/Deploy-Cortex.ps1",
-        "-SkipProvision",
+        "-AppOnly"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Upgrade the model",
+      "detail": "Move the existing model deployment onto the pinned model and version.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Deploy-Cortex.ps1",
+        "-UpgradeModel",
         "-SkipBootstrap"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Reset and start clean",
+      "detail": "Delete the Cortex resource group and local azd environment. Prompts for confirmation.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Deploy-Cortex.ps1",
+        "-Reset"
       ],
       "problemMatcher": [],
       "presentation": {
@@ -88,7 +128,7 @@
     },
     {
       "label": "Cortex: Health check",
-      "detail": "Check the deployed app and every back end.",
+      "detail": "Check the deployed app, the MCP server and every back end.",
       "type": "shell",
       "command": "pwsh",
       "args": [

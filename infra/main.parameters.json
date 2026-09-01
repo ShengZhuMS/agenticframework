@@ -5,6 +5,7 @@
     "environmentName":        { "value": "${AZURE_ENV_NAME=cortex}" },
     "location":               { "value": "${AZURE_LOCATION=northeurope}" },
     "cortexResourceGroup":    { "value": "${CORTEX_RESOURCE_GROUP=PRDCORECORTEX001}" },
+    "cortexResourceGroupLocation": { "value": "${CORTEX_RESOURCE_GROUP_LOCATION=}" },
 
     "apimName":               { "value": "${APIM_NAME=prdcoreapimneu001}" },
     "apimResourceGroup":      { "value": "${APIM_RG=PRDCOREAPIM001}" },
@@ -21,8 +22,13 @@
     "foundryProjectName":     { "value": "${FOUNDRY_PROJECT=prdcorefdryproj-default}" },
     "foundryResourceGroup":   { "value": "${FOUNDRY_RG=PRDCOREFDRY001}" },
     "createFoundry":          { "value": "${CREATE_FOUNDRY=false}" },
-    "modelName":              { "value": "${MODEL_NAME=gpt-4o-mini}" },
+
+    "modelName":              { "value": "${MODEL_NAME=gpt-5.4-mini}" },
+    "modelVersion":           { "value": "${MODEL_VERSION=2026-03-17}" },
+    "modelDeploymentName":    { "value": "${MODEL_DEPLOYMENT_NAME=}" },
+    "modelSkuName":           { "value": "${MODEL_SKU=GlobalStandard}" },
     "modelCapacity":          { "value": "${MODEL_CAPACITY=30}" },
+    "modelVersionUpgradeOption": { "value": "${MODEL_UPGRADE_OPTION=OnceCurrentVersionExpired}" },
     "createModelDeployment":  { "value": "${CREATE_MODEL_DEPLOYMENT=false}" },
 
     "keyVaultName":           { "value": "${KEYVAULT_NAME=prdcorekveus}" },
@@ -37,6 +43,10 @@
     "logAnalyticsName":       { "value": "${LOG_ANALYTICS_NAME=prdcoreamlneu03094960047}" },
     "appInsightsName":        { "value": "${APP_INSIGHTS_NAME=prdcoreamlneu08774392429}" },
     "monitoringResourceGroup":{ "value": "${MONITORING_RG=PRDCOREAML001}" },
-    "createMonitoring":       { "value": "${CREATE_MONITORING=false}" }
+    "createMonitoring":       { "value": "${CREATE_MONITORING=false}" },
+
+    "webImageName":           { "value": "${SERVICE_WEB_IMAGE_NAME=}" },
+    "mcpImageName":           { "value": "${SERVICE_PURVIEW_MCP_IMAGE_NAME=}" },
+    "mcpMinReplicas":         { "value": "${MCP_MIN_REPLICAS=1}" }
   }
 }
