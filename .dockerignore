@@ -1,5 +1,10 @@
 node_modules
 .git
+.venv
+.azure
+.vscode
 infra
+test
 docs
 *.md
+Dockerfile*

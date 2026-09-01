@@ -14,6 +14,15 @@
 //   - a user-assigned managed identity (Cortex needs its own, not Databricks')
 //   - the Container Apps environment and the two Cortex apps
 // Nothing else. Everything else is reused if you have it.
+//
+// RE-RUNNING THIS TEMPLATE
+// Every resource here is addressed by a fixed name and every role assignment
+// by a deterministic guid(), so a second deployment with the same inputs is a
+// no-op rather than a conflict. The two things that were NOT safe to re-run
+// have been fixed: container images are no longer reset to the placeholder on
+// every provision (see modules/containerapps.bicep), and the azd-env-name tag
+// now follows environmentName instead of being hardcoded, so two environments
+// can no longer claim each other's resources.
 // =============================================================================
 
 targetScope = 'subscription'
@@ -31,11 +40,22 @@ param location string = 'northeurope'
 @description('Resource group for the resources Cortex creates (container apps, identity). Created if absent.')
 param cortexResourceGroup string = 'PRDCORECORTEX001'
 
+// A resource group's location is immutable. Re-running with a different
+// -Location against a group that already exists is rejected by ARM, and the
+// message does not mention the resource group. Deploy-Cortex.ps1 reads the
+// live group's location and passes it here so the group is left alone while
+// new resources still land in `location`.
+@description('Location of the Cortex resource group. Set by the deploy script to the existing group\'s location. Leave empty to use `location`.')
+param cortexResourceGroupLocation string = ''
+
+@description('Tags applied to everything Cortex creates. azd-env-name must track environmentName or azd cannot find its own resources.')
 param tags object = {
-  'azd-env-name': 'cortex'
+  'azd-env-name': environmentName
   project: 'cortex'
   purpose: 'poc'
 }
+
+var effectiveRgLocation = empty(cortexResourceGroupLocation) ? location : cortexResourceGroupLocation
 
 // ------------------------------------------------------------ API Management
 
@@ -69,9 +89,29 @@ param foundryProjectName string = 'prdcorefdryproj-default'
 param foundryResourceGroup string = 'PRDCOREFDRY001'
 param createFoundry bool = false
 
-@description('Model deployment to use. Must already exist on the account when reusing it.')
-param modelName string = 'gpt-4o-mini'
+// WHY THE MODEL AND ITS VERSION ARE BOTH PARAMETERS
+// gpt-4o-mini 2024-07-18 is Deprecated: existing deployments keep serving,
+// new ones are refused. The template never named a version, so ARM resolved
+// the account default — which had moved to that deprecated build — and the
+// whole subscription deployment failed with ServiceModelDeprecating. Naming
+// the version makes the failure impossible to reach by accident, and makes
+// the next migration a one-line change instead of a diagnosis.
+@description('Model to deploy. Deploy-Cortex.ps1 verifies this is offered by the account and is not deprecated before provisioning.')
+param modelName string = 'gpt-5.4-mini'
+
+@description('Model version, pinned. Never leave this empty.')
+param modelVersion string = '2026-03-17'
+
+@description('Deployment name the application asks for at inference time. Defaults to the model name.')
+param modelDeploymentName string = ''
+
+@allowed(['GlobalStandard', 'Standard', 'DataZoneStandard'])
+param modelSkuName string = 'GlobalStandard'
+
 param modelCapacity int = 30
+
+@allowed(['OnceCurrentVersionExpired', 'OnceNewDefaultVersionAvailable', 'NoAutoUpgrade'])
+param modelVersionUpgradeOption string = 'OnceCurrentVersionExpired'
 
 @description('Deploy the model. Leave false when reusing an account that already has one.')
 param createModelDeployment bool = false
@@ -83,7 +123,7 @@ param keyVaultName string = 'prdcorekveus'
 param keyVaultResourceGroup string = 'PRDCOREPVW001'
 param createKeyVault bool = false
 
-@description('Write the endpoints provisioning knows into Key Vault. Needs Key Vault Secrets Officer for whoever deploys.')
+@description('Write the endpoints provisioning knows into Key Vault. Needs Key Vault Secrets Officer for whoever deploys. Deploy-Cortex.ps1 turns this off automatically rather than failing the deployment when you lack the role.')
 param seedKeyVault bool = true
 
 // ----------------------------------------------------------- Container registry
@@ -100,6 +140,19 @@ param logAnalyticsName string = 'prdcoreamlneu03094960047'
 param appInsightsName string = 'prdcoreamlneu08774392429'
 param monitoringResourceGroup string = 'PRDCOREAML001'
 param createMonitoring bool = false
+
+// ----------------------------------------------------------- container images
+
+// Fed back in by azd after each successful deploy. Empty only on a first run.
+// This is what stops a re-provision rolling the apps back to the placeholder.
+@description('Current image for cortex-web. azd supplies SERVICE_WEB_IMAGE_NAME.')
+param webImageName string = ''
+
+@description('Current image for cortex-purview-mcp. azd supplies SERVICE_PURVIEW_MCP_IMAGE_NAME.')
+param mcpImageName string = ''
+
+@description('Minimum replicas for the MCP server. 1 avoids a cold start on the first agent call mid-demo.')
+param mcpMinReplicas int = 1
 
 // ------------------------------------------------------------------ derived
 
@@ -120,11 +173,13 @@ var effectiveFoundryProject = createFoundry ? 'cortex' : foundryProjectName
 var effectiveKeyVaultName = createKeyVault ? take('kv${replace(prefix, '-', '')}${uniq}', 24) : keyVaultName
 var effectiveRegistryName = createRegistry ? 'cr${replace(prefix, '-', '')}${uniq}' : registryName
 
+var effectiveModelDeployment = empty(modelDeploymentName) ? modelName : modelDeploymentName
+
 // ------------------------------------------------------- resource group
 
 resource cortexRg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: cortexResourceGroup
-  location: location
+  location: effectiveRgLocation
   tags: tags
 }
 
@@ -241,7 +296,11 @@ module foundryNew 'modules/foundry.bicep' = if (createFoundry) {
     location: location
     tags: tags
     modelName: modelName
+    modelVersion: modelVersion
+    modelDeploymentName: effectiveModelDeployment
+    modelSkuName: modelSkuName
     modelCapacity: modelCapacity
+    modelVersionUpgradeOption: modelVersionUpgradeOption
     deployModel: true
     principalId: identity.outputs.principalId
   }
@@ -254,7 +313,11 @@ module foundryExisting 'modules/foundry-existing.bicep' = if (!createFoundry) {
     accountName: foundryAccountName
     projectName: foundryProjectName
     modelName: modelName
+    modelVersion: modelVersion
+    modelDeploymentName: effectiveModelDeployment
+    modelSkuName: modelSkuName
     modelCapacity: modelCapacity
+    modelVersionUpgradeOption: modelVersionUpgradeOption
     deployModel: createModelDeployment
     principalId: identity.outputs.principalId
   }
@@ -300,6 +363,9 @@ module containerApps 'modules/containerapps.bicep' = {
     identityClientId: identity.outputs.clientId
     logAnalyticsCustomerId: createMonitoring ? monitoringNew.outputs.customerId : monitoringExisting.outputs.customerId
     logAnalyticsKey: createMonitoring ? monitoringNew.outputs.primarySharedKey : monitoringExisting.outputs.primarySharedKey
+    webImageName: webImageName
+    mcpImageName: mcpImageName
+    mcpMinReplicas: mcpMinReplicas
   }
 }
 
@@ -308,6 +374,11 @@ module containerApps 'modules/containerapps.bicep' = {
 // The APIM subscription key and any Entra client secret are NOT here: they are
 // not known to the template, and a credential written through a deployment
 // stays readable in the deployment history afterwards.
+//
+// cortex-environment-name is a marker, not configuration. Several azd
+// environments can point at one shared vault, in which case the last one
+// provisioned silently owns every value in it. Deploy-Cortex.ps1 reads this
+// before provisioning and warns when it is about to take the vault over.
 
 module keyVaultSecrets 'modules/keyvault-secrets.bicep' = if (seedKeyVault) {
   name: 'keyvault-secrets'
@@ -320,12 +391,13 @@ module keyVaultSecrets 'modules/keyvault-secrets.bicep' = if (seedKeyVault) {
       'apim-service-name': effectiveApimName
       'apim-gateway-url': 'https://${effectiveApimName}.azure-api.net'
       'foundry-project-endpoint': 'https://${effectiveFoundryAccount}.services.ai.azure.com/api/projects/${effectiveFoundryProject}'
-      'foundry-model': modelName
+      'foundry-model': effectiveModelDeployment
       'purview-endpoint': 'https://api.purview-service.microsoft.com'
       'purview-mcp-url': '${containerApps.outputs.mcpUrl}/mcp'
       'public-base-url': containerApps.outputs.webUrl
       'appinsights-connection-string': createMonitoring ? monitoringNew.outputs.connectionString : monitoringExisting.outputs.connectionString
       'entra-tenant-id': subscription().tenantId
+      'cortex-environment-name': environmentName
     }
   }
 }
@@ -334,13 +406,18 @@ module keyVaultSecrets 'modules/keyvault-secrets.bicep' = if (seedKeyVault) {
 
 output AZURE_RESOURCE_GROUP string = cortexResourceGroup
 output AZURE_LOCATION string = location
+output AZURE_RESOURCE_GROUP_LOCATION string = effectiveRgLocation
 output CORTEX_WEB_URL string = containerApps.outputs.webUrl
 output CORTEX_MCP_URL string = containerApps.outputs.mcpUrl
+output CORTEX_WEB_APP_NAME string = containerApps.outputs.webName
+output CORTEX_MCP_APP_NAME string = containerApps.outputs.mcpName
+output CORTEX_CONTAINER_ENVIRONMENT string = containerApps.outputs.environmentName
 output CORTEX_IDENTITY_PRINCIPAL_ID string = identity.outputs.principalId
 output CORTEX_IDENTITY_CLIENT_ID string = identity.outputs.clientId
 
 output KEYVAULT_NAME string = effectiveKeyVaultName
 output KEYVAULT_RESOURCE_GROUP string = effectiveKeyVaultRg
+output KEYVAULT_SEEDED bool = seedKeyVault
 output APIM_SERVICE_NAME string = effectiveApimName
 output APIM_RESOURCE_GROUP string = effectiveApimRg
 output APIM_GATEWAY_URL string = 'https://${effectiveApimName}.azure-api.net'
@@ -348,6 +425,9 @@ output PURVIEW_ACCOUNT_NAME string = effectivePurviewName
 output PURVIEW_RESOURCE_GROUP string = effectivePurviewRg
 output FOUNDRY_ACCOUNT_NAME string = effectiveFoundryAccount
 output FOUNDRY_PROJECT_ENDPOINT string = 'https://${effectiveFoundryAccount}.services.ai.azure.com/api/projects/${effectiveFoundryProject}'
+output FOUNDRY_MODEL_NAME string = modelName
+output FOUNDRY_MODEL_VERSION string = modelVersion
+output FOUNDRY_MODEL_DEPLOYMENT string = effectiveModelDeployment
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = createRegistry ? registryNew.outputs.loginServer : registryExisting.outputs.loginServer
 
 output REUSED array = concat(

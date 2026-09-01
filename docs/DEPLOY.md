@@ -33,8 +33,11 @@ In VS Code, accept the recommended extensions prompt (Azure Dev CLI, Container A
 | Subscription | **Contributor** | Create the container apps |
 | Subscription | **User Access Administrator** | Create role assignments on your existing resources |
 | Key Vault `prdcorekveus` | **Key Vault Secrets Officer** | Write the seeded values |
+| Registry `prdcoreamlacr001` | **AcrPush** | Push the two container images |
 | Entra | **Application Administrator** | Create the sign-in app registration |
 | Purview | **Data Governance Administrator** | Assign governance domain roles (section 6) |
+
+The deploy script checks the Key Vault and registry roles up front and tells you which one is missing, rather than failing eight minutes into a provision.
 
 ---
 
@@ -57,6 +60,7 @@ REUSE   Registry         prdcoreamlacr001 (PRDCOREAML001)
 REUSE   Monitoring       prdcoreamlneu08774392429 (PRDCOREAML001)
 CREATE  Container Apps   cortex-web, cortex-purview-mcp (PRDCORECORTEX001)
 CREATE  Managed identity id-cortex (PRDCORECORTEX001)
+OK      gpt-5.4-mini 2026-03-17 is deployable (GenerallyAvailable)
 ```
 
 Anything reported as CREATE that you expected to REUSE means the name or resource group is wrong. Override it:
@@ -79,20 +83,88 @@ Or **Ctrl+Shift+P → Tasks: Run Task → Cortex: Deploy to Azure**.
 
 Roughly 10 minutes when reusing your estate — the long poles are creating APIM or Purview, and you are doing neither.
 
-The script installs dependencies, vendors GOV.UK Frontend, provisions, onboards the APIM key, bootstraps the content and health-checks the result. Safe to re-run.
+The script installs dependencies, vendors GOV.UK Frontend, provisions, onboards the APIM key, bootstraps the content and health-checks the result.
+
+### Re-running it
+
+**Designed for it.** Run the same command as many times as you like; it reconciles rather than recreates. Specifically:
+
+| What used to break | What happens now |
+|---|---|
+| A second provision reset both apps to the `mcr` placeholder image mid-deploy | The running image is read off the live app and fed back into the template. Your deployed code survives a re-provision |
+| An unpinned model version drifted onto a deprecated build | The model **and** version are pinned, and checked against the account's catalogue before anything is created |
+| A changed `-Location` collided with the existing resource group | The group's real location is read and reused. New resources still go to `-Location` |
+| Missing Key Vault Secrets Officer failed the whole deployment | Seeding is skipped with a warning; the app falls back to environment variables and still starts |
+| A soft-deleted name gave "already exists or is in a conflicting state" | Checked before the create is attempted, with the recover/purge command printed |
+| `azd env new` failed silently on an existing environment | The environment list is checked first |
+
+### The switches
+
+| Switch | Use it when |
+|---|---|
+| `-WhatIfResources` | You want the plan. Changes nothing |
+| `-AppOnly` | Code changed, infrastructure did not. Builds and pushes both images, nothing else. This is the fast loop |
+| `-UpgradeModel` | An existing model deployment should move onto the pinned model and version |
+| `-SkipProvision` | Provisioning already succeeded and you are re-running the steps after it |
+| `-SkipBootstrap` | You do not want to touch Purview content this run |
+| `-SkipHealthCheck` | You are deploying into something that is not up yet |
+| `-ForceSeedKeyVault` | The role check is wrong and you know you can write secrets |
+| `-Reset` | Start clean. Deletes the Cortex resource group and the local azd environment, after prompting |
+
+`-Reset` is deliberately narrow. It does **not** remove the Key Vault secrets, the `cortex` product in APIM, the role assignments for the Cortex identity, or the Purview domains and data products — those live on shared resources and are removed by hand.
+
+### When it fails
 
 | Failure | Fix |
 |---|---|
+| `ServiceModelDeprecating` | The pinned version is no longer deployable. See section 4 |
 | `AuthorizationFailed` on a role assignment | You lack User Access Administrator. Ask your admin, then re-run with `-SkipProvision` |
-| Docker errors | Start Docker Desktop |
+| Docker errors | Start Docker Desktop. The script now checks the daemon before provisioning |
 | `RoleAssignmentExists` | Harmless |
-| Model not found | The script deploys `gpt-4o-mini` if absent. Override with `-ModelName` |
+| `A resource with this name already exists or is in a conflicting state` | Usually a soft-deleted resource holding the name. `-WhatIfResources` reports it and prints the recover command |
+
+Nothing in the script is destructive except `-Reset`. Fix the cause and run the same command again.
 
 ---
 
-## 4. Key Vault secrets
+## 4. The model, and why it is pinned
 
-**17 values. Bicep writes 11. You set one.**
+The first live deployment failed here, so it is worth understanding.
+
+```
+ServiceModelDeprecating: The model 'Format:OpenAI,Name:gpt-4o-mini,Version:2024-07-18'
+is in deprecating state and cannot be used for new deployments.
+```
+
+The template asked for `gpt-4o-mini` and named **no version**, so ARM resolved the account's current default — which had moved to `2024-07-18`. That version is in the Deprecated lifecycle stage: existing deployments keep serving, new ones are refused. The template had not changed; the default underneath it had.
+
+The fix is in two parts:
+
+1. **Both the model and its version are parameters, and both are pinned.** Default: `gpt-5.4-mini` version `2026-03-17`.
+2. **`versionUpgradeOption` is `OnceCurrentVersionExpired`.** The pinned version is held until Azure retires it, then moved forward automatically — rather than the deployment starting to fail on a re-run.
+
+Before provisioning, the script reads `az cognitiveservices account list-models` and refuses to proceed if the pinned version is deprecating, listing what the account will accept instead.
+
+To change model:
+
+```powershell
+.\scripts\Deploy-Cortex.ps1 -ModelName gpt-5-mini -ModelVersion 2025-08-07 -UpgradeModel
+```
+
+To see what the account offers:
+
+```powershell
+az cognitiveservices account list-models -g PRDCOREFDRY001 -n prdcorefdryeus001 `
+  --query "[].{name:name, version:version, status:lifecycleStatus}" -o table
+```
+
+> The deployment name and the model name are separate parameters. Leave `-ModelDeploymentName` empty and the deployment is named after the model, which is the simple case. Set it when you want the application to keep asking for one name while the model underneath changes.
+
+---
+
+## 5. Key Vault secrets
+
+**17 values. Bicep writes 12. You set one.**
 
 ### What you set by hand
 
@@ -111,9 +183,13 @@ az keyvault secret set --vault-name $kv --name apim-subscription-key --value "<p
 
 ### What Bicep writes
 
-`azure-subscription-id`, `azure-resource-group`, `apim-service-name`, `apim-gateway-url`, `foundry-project-endpoint`, `foundry-model`, `purview-endpoint`, `purview-mcp-url`, `public-base-url`, `appinsights-connection-string`, `entra-tenant-id`.
+`azure-subscription-id`, `azure-resource-group`, `apim-service-name`, `apim-gateway-url`, `foundry-project-endpoint`, `foundry-model`, `purview-endpoint`, `purview-mcp-url`, `public-base-url`, `appinsights-connection-string`, `entra-tenant-id`, `cortex-environment-name`.
 
 > **Only 3 of the 17 are genuinely secret** — the APIM key, the Entra client secret, and the App Insights connection string (which embeds an instrumentation key). The rest are endpoints and names that are already in the portal. Keeping them in the vault buys one real thing: a single place to change configuration per environment. It is not a security control, and it is worth not mistaking it for one.
+
+### One vault, one environment
+
+`cortex-environment-name` records which azd environment last seeded the vault. Two environments pointing at the same vault will overwrite each other's endpoints, and the symptom — an app talking to the wrong container — is not obvious. The deploy script reads this marker and warns before it takes the vault over. If you genuinely need two environments, give the second one its own vault with `-KeyVaultName`.
 
 ### Foundry → APIM connection
 
@@ -149,7 +225,7 @@ Secrets cache for 10 minutes, so a rotated key is picked up without a restart.
 
 ---
 
-## 5. Entra sign-in — and the GROUPS claim
+## 6. Entra sign-in — and the GROUPS claim
 
 **Read this twice. Getting it half-right is the most likely reason a working deployment looks broken.**
 
@@ -175,6 +251,8 @@ az containerapp auth update --name cortex-web -g $v.AZURE_RESOURCE_GROUP `
   --unauthenticated-client-action RedirectToLoginPage
 ```
 
+Container Apps authentication settings live outside the Bicep, so they survive a re-provision. You do this once.
+
 ### d. Map group ids to names
 
 Entra sends group **object ids**; access rules read against names.
@@ -187,13 +265,15 @@ $map = @(
 az containerapp update --name cortex-web -g $v.AZURE_RESOURCE_GROUP --set-env-vars "CORTEX_GROUP_NAMES=$map"
 ```
 
+> `az containerapp update --set-env-vars` is additive on the live app, but the Bicep does not know about `CORTEX_GROUP_NAMES`, so a later `azd provision` drops it. Re-run this line after any provision, or move the mapping into `infra/modules/containerapps.bicep` once it settles.
+
 ### e. Check
 
 Sign in and open **`/profile`**. It lists your groups and how many entries fall into each state. If it warns you are in no named groups, step b or d is wrong.
 
 ---
 
-## 6. Purview roles — BOTH planes
+## 7. Purview roles — BOTH planes
 
 **Cannot be automated.** These are data-plane roles assigned in the Purview portal, and tenant-level role groups do not accept service principals at all.
 
@@ -217,9 +297,11 @@ node scripts/bootstrap.js --only=purview   # creates the domains
 npm run bootstrap                          # creates and publishes the data products
 ```
 
+The Cortex identity is stable across re-deployments — it is created once and reused — so you assign these roles once, not on every deploy. `-Reset` destroys it, and you will need to assign them again.
+
 ---
 
-## 7. Bootstrap the content
+## 8. Bootstrap the content
 
 ```powershell
 npm run bootstrap
@@ -235,7 +317,7 @@ node scripts/bootstrap.js --dry-run   # validate payloads, no Azure needed
 
 ---
 
-## 8. Verify
+## 9. Verify
 
 ```powershell
 .\scripts\Test-Cortex.ps1
@@ -248,15 +330,33 @@ node scripts/bootstrap.js --dry-run   # validate payloads, no Azure needed
   OK    Purview
   OK    API Management
   OK    Foundry
+  OK    Purview MCP server (4 tools)
 ```
 
-All five green means the golden path will run. **Run this the morning of a demo.**
+All six green means the golden path will run. **Run this the morning of a demo.**
 
-`entries: 0` means bootstrap has not run, or the Purview roles in section 6 are missing.
+`entries: 0` means bootstrap has not run, or the Purview roles in section 7 are missing.
+
+A 404 from the MCP server means that app is still on the placeholder image — run `.\scripts\Deploy-Cortex.ps1 -AppOnly`.
 
 ---
 
-## 9. Run locally
+## 10. The two container apps
+
+Cortex deploys two images from one source tree:
+
+| App | Image | Serves | Why separate |
+|---|---|---|---|
+| `cortex-web` | `Dockerfile` | The GOV.UK front end and the BFF, port 3000 | The front door |
+| `cortex-purview-mcp` | `Dockerfile.mcp` | `/mcp` and `/health`, port 3000 | A Foundry agent cannot reach the catalogue any other way. It is called by the agent, not by a browser |
+
+Both are declared as services in `azure.yaml`, so `azd deploy` builds and pushes both. Before that they shared one declaration, and the MCP app ran the placeholder image permanently — the app existed, answered on its URL, and returned nothing an agent could use.
+
+The MCP app runs `minReplicas: 1` for the same reason the web app does: an MCP client gives up long before a cold container finishes starting, and it is called mid-answer. Set `MCP_MIN_REPLICAS=0` in the azd environment if you are only testing.
+
+---
+
+## 11. Run locally
 
 Local means *your machine, real Azure*. There is no offline mode.
 
@@ -277,20 +377,27 @@ node scripts/bootstrap.js --dry-run   # validate content, no Azure needed
 
 ---
 
-## 10. Demo day
+## 12. Demo day
 
-- [ ] `.\scripts\Test-Cortex.ps1` — five green
+- [ ] `.\scripts\Test-Cortex.ps1` — six green
 - [ ] Sign in, open `/profile`, confirm your groups
 - [ ] Walk the golden path once end to end
 - [ ] Delete the rehearsal agent so the demo creates it fresh
 - [ ] Have a second account in different groups ready — the same page through different eyes is the most persuasive moment
 - [ ] `cortex-web` has `minReplicas: 1`, so nobody waits on a cold start
+- [ ] Do not deploy on the day. If you must, use `-AppOnly` — it does not touch infrastructure
 
 > **There is no fallback if a back end is down.** That is the trade for everything being real. Record a walkthrough as insurance.
 
 ---
 
-## 11. Teardown
+## 13. Teardown
+
+```powershell
+.\scripts\Deploy-Cortex.ps1 -Reset
+```
+
+Or by hand:
 
 ```powershell
 az group delete --name PRDCORECORTEX001 --yes

@@ -11,7 +11,7 @@
   Run the unit tests instead.
 #>
 [CmdletBinding()]
-param([switch]$Local, [string]$Url)
+param([switch]$Local, [string]$Url, [string]$McpUrl)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -23,9 +23,10 @@ try {
     exit $LASTEXITCODE
   }
 
-  if (-not $Url) {
+  if (-not $Url -or -not $McpUrl) {
     azd env get-values | ForEach-Object {
-      if ($_ -match '^CORTEX_WEB_URL="?([^"]*)"?$') { $Url = $Matches[1] }
+      if (-not $Url    -and $_ -match '^CORTEX_WEB_URL="?([^"]*)"?$') { $Url = $Matches[1] }
+      if (-not $McpUrl -and $_ -match '^CORTEX_MCP_URL="?([^"]*)"?$') { $McpUrl = $Matches[1] }
     }
   }
   if (-not $Url) { throw 'No URL. Pass -Url, or run from a folder with an azd environment.' }
@@ -60,6 +61,25 @@ try {
     } catch {
       $failed++
       Write-Host ("  FAIL  {0} — {1}" -f $c.Name, $_.Exception.Message) -ForegroundColor Red
+    }
+  }
+
+  # The MCP server is a separate container app on a separate image. It was
+  # never deployed to before azure.yaml declared it as a service, so it is
+  # worth confirming it is running Cortex code and not the placeholder.
+  if ($McpUrl) {
+    try {
+      $m = Invoke-RestMethod -Uri "$McpUrl/health" -TimeoutSec 30
+      if ($m.ok) {
+        Write-Host ("  OK    Purview MCP server ({0} tools)" -f $m.tools) -ForegroundColor Green
+      } else {
+        $failed++
+        Write-Host '  FAIL  Purview MCP server returned ok=false' -ForegroundColor Red
+      }
+    } catch {
+      $failed++
+      Write-Host ("  FAIL  Purview MCP server — {0}" -f $_.Exception.Message) -ForegroundColor Red
+      Write-Host '        If this 404s, the app is still on the placeholder image. Run: .\scripts\Deploy-Cortex.ps1 -AppOnly' -ForegroundColor Yellow
     }
   }
 

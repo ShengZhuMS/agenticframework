@@ -1,0 +1,20 @@
+# Glue 1 — the Purview MCP server, as its own image.
+#
+# Same zero-dependency base and the same source tree as the web app; only the
+# entry point differs. Two images rather than one image with two commands,
+# because azd builds and pushes one image per service and a command override
+# in Bicep would be silently lost the next time someone edited the template.
+FROM mcr.microsoft.com/azurelinux/base/nodejs:20
+
+WORKDIR /app
+COPY package.json ./
+COPY src ./src
+COPY seed ./seed
+COPY scripts ./scripts
+
+ENV NODE_ENV=production
+ENV PORT=3000
+EXPOSE 3000
+
+USER 1000
+CMD ["node", "src/purview-mcp/server.js"]
