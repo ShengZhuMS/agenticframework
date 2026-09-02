@@ -542,8 +542,44 @@ try {
     throw 'Incomplete deployment — no web URL was published.'
   }
 
+  # -------------------------------------------------- 10b reconcile the apps
+  # WHY THIS EXISTS
+  # `azd deploy` updates the container image and nothing else. Anything else
+  # about the app was written during provisioning, while the placeholder image
+  # was still running, and is never revisited. If those two disagree — most
+  # obviously the ingress port — the app is unreachable and the symptom is the
+  # Container Apps welcome page or a 502, neither of which points at the cause.
+  #
+  # So after deploying, check the live apps against what they should be and
+  # correct them in place. This also repairs a deployment that is already in
+  # that state, without a re-provision.
+  Step 8 'Reconciling the container apps'
+  $appPort = 3000
+  foreach ($app in @('cortex-web','cortex-purview-mcp')) {
+    $live = Get-AzJson @('containerapp','show','-n',$app,'-g',$CortexResourceGroup)
+    if (-not $live) { Warn2 "$app not found in $CortexResourceGroup"; continue }
+
+    $image = $live.properties.template.containers[0].image
+    $port  = $live.properties.configuration.ingress.targetPort
+
+    if ($image -match 'k8se/quickstart') {
+      Warn2 "$app is still running the placeholder image."
+      Info  'Its code was never pushed. Build and push it with:'
+      Info  "    .\scripts\Deploy-Cortex.ps1 -AppOnly"
+    } else {
+      Ok "$app runs $image"
+    }
+
+    if ($port -ne $appPort) {
+      Warn2 "$app ingress points at port $port but Cortex listens on $appPort. Correcting."
+      az containerapp ingress update -n $app -g $CortexResourceGroup --target-port $appPort --only-show-errors | Out-Null
+      if ($LASTEXITCODE -eq 0) { Ok "$app ingress now targets $appPort" }
+      else { Fail "Could not update ingress on $app. Fix by hand: az containerapp ingress update -n $app -g $CortexResourceGroup --target-port $appPort" }
+    }
+  }
+
   # ------------------------------------------------------------ 11 secrets
-  Step 8 'Onboarding the APIM subscription key'
+  Step 9 'Onboarding the APIM subscription key'
   if (-not $kv) {
     Warn2 'No Key Vault name in the environment. Skipping.'
   } else {
@@ -569,7 +605,7 @@ try {
 
   # ---------------------------------------------------------- 12 bootstrap
   if (-not $SkipBootstrap) {
-    Step 9 'Creating the Defra content in Purview and API Management'
+    Step 10 'Creating the Defra content in Purview and API Management'
     Warn2 'Needs the Purview roles from the deployment guide, section 6.'
     npm run bootstrap
     if ($LASTEXITCODE -ne 0) {
@@ -579,7 +615,7 @@ try {
 
   # ------------------------------------------------------------- 13 check
   if (-not $SkipHealthCheck) {
-    Step 10 'Checking the deployment'
+    Step 11 'Checking the deployment'
     # A container app that has just taken a new revision needs a moment. Three
     # attempts with a short back-off turns a spurious red into a real signal.
     foreach ($p in @('/api/health','/api/health/keyvault','/api/health/purview','/api/health/apim','/api/health/foundry')) {

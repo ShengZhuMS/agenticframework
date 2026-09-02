@@ -11,7 +11,7 @@
   Run the unit tests instead.
 #>
 [CmdletBinding()]
-param([switch]$Local, [string]$Url, [string]$McpUrl)
+param([switch]$Local, [string]$Url, [string]$McpUrl, [string]$ResourceGroup)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -23,13 +23,50 @@ try {
     exit $LASTEXITCODE
   }
 
-  if (-not $Url -or -not $McpUrl) {
+  if (-not $Url -or -not $McpUrl -or -not $ResourceGroup) {
     azd env get-values | ForEach-Object {
-      if (-not $Url    -and $_ -match '^CORTEX_WEB_URL="?([^"]*)"?$') { $Url = $Matches[1] }
-      if (-not $McpUrl -and $_ -match '^CORTEX_MCP_URL="?([^"]*)"?$') { $McpUrl = $Matches[1] }
+      if (-not $Url           -and $_ -match '^CORTEX_WEB_URL="?([^"]*)"?$')       { $Url = $Matches[1] }
+      if (-not $McpUrl        -and $_ -match '^CORTEX_MCP_URL="?([^"]*)"?$')       { $McpUrl = $Matches[1] }
+      if (-not $ResourceGroup -and $_ -match '^AZURE_RESOURCE_GROUP="?([^"]*)"?$') { $ResourceGroup = $Matches[1] }
     }
   }
   if (-not $Url) { throw 'No URL. Pass -Url, or run from a folder with an azd environment.' }
+
+  # WHAT IS ACTUALLY RUNNING
+  # Checked first, because the two failures that look like an application fault
+  # are not one. A placeholder image means the code was never pushed; an ingress
+  # port that does not match the app means nothing can reach it. Both present as
+  # the Container Apps welcome page or a 502, and neither is visible from an
+  # HTTP check alone.
+  if ($ResourceGroup -and (Get-Command az -ErrorAction SilentlyContinue)) {
+    Write-Host "Container apps in $ResourceGroup`n"
+    foreach ($app in @('cortex-web','cortex-purview-mcp')) {
+      $raw = az containerapp show -n $app -g $ResourceGroup -o json 2>$null
+      if ($LASTEXITCODE -ne 0 -or -not $raw) {
+        Write-Host ("  FAIL  {0} not found" -f $app) -ForegroundColor Red
+        continue
+      }
+      $c     = $raw | ConvertFrom-Json
+      $image = $c.properties.template.containers[0].image
+      $port  = $c.properties.configuration.ingress.targetPort
+      $rev   = $c.properties.runningStatus
+
+      if ($image -match 'k8se/quickstart') {
+        Write-Host ("  FAIL  {0} is running the PLACEHOLDER image" -f $app) -ForegroundColor Red
+        Write-Host '        Its code was never pushed. Run: .\scripts\Deploy-Cortex.ps1 -AppOnly' -ForegroundColor Yellow
+      } else {
+        Write-Host ("  OK    {0}  {1}" -f $app, ($image -split '/')[-1]) -ForegroundColor Green
+      }
+      if ($port -ne 3000) {
+        Write-Host ("  FAIL  {0} ingress targets port {1}; Cortex listens on 3000" -f $app, $port) -ForegroundColor Red
+        Write-Host ("        Fix: az containerapp ingress update -n {0} -g {1} --target-port 3000" -f $app, $ResourceGroup) -ForegroundColor Yellow
+      }
+      if ($rev -and $rev -ne 'Running') {
+        Write-Host ("  WARN  {0} status is {1}" -f $app, $rev) -ForegroundColor Yellow
+      }
+    }
+    Write-Host ''
+  }
 
   Write-Host "Checking $Url`n"
   $checks = @(
