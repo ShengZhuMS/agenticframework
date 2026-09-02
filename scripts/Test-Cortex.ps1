@@ -95,6 +95,26 @@ try {
           Write-Host '        Register is empty — run: npm run bootstrap' -ForegroundColor Yellow
         }
       }
+
+      # Where configuration actually came from. In a subscription where the
+      # vault is unreachable this is the line that matters: the check passes
+      # either way, because the app is designed to fall back, so 'ok' alone
+      # does not tell you whether the vault is being used.
+      if ($c.Path -eq '/api/health/keyvault') {
+        if ($r.configured) {
+          Write-Host ("        {0} from Key Vault, {1} from environment" -f $r.fromKeyVault, $r.fromEnvironment)
+          if ($r.fromKeyVault -eq 0) {
+            Write-Host '        Vault is configured but supplied nothing — it is unreachable from the app.' -ForegroundColor Yellow
+            Write-Host '        Expected if public network access is disabled. Run the deploy script to switch' -ForegroundColor Yellow
+            Write-Host '        to direct configuration, or give the app a private endpoint.' -ForegroundColor Yellow
+          }
+        } else {
+          Write-Host ("        Direct configuration — {0} values from the environment, no vault in use" -f $r.fromEnvironment)
+        }
+        if ($r.missingRequired -and $r.missingRequired.Count -gt 0) {
+          Write-Host ("        MISSING: {0}" -f ($r.missingRequired -join ', ')) -ForegroundColor Red
+        }
+      }
     } catch {
       $failed++
       Write-Host ("  FAIL  {0} — {1}" -f $c.Name, $_.Exception.Message) -ForegroundColor Red

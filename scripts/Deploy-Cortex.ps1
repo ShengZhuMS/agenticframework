@@ -88,6 +88,13 @@ param(
   [string]$ModelSku             = 'GlobalStandard',
   [int]$ModelCapacity           = 30,
 
+  # 'auto' probes the vault and decides. 'keyvault' forces the vault path even
+  # when it looks unreachable. 'direct' skips the vault entirely and passes
+  # configuration to the container apps, with the sensitive values held as
+  # Container Apps secrets. See docs/DEPLOY.md section 5.
+  [ValidateSet('auto','keyvault','direct')]
+  [string]$ConfigSource         = 'auto',
+
   [switch]$WhatIfResources,
   [switch]$SkipProvision,
   [switch]$SkipBootstrap,
@@ -266,8 +273,26 @@ try {
     }
   }
 
-  # A vault on the legacy access-policy model silently ignores RBAC.
+  # ------------------------------------------------- 5b Key Vault reachability
+  #
+  # THE DISTINCTION THAT MATTERS HERE — data plane versus control plane.
+  #
+  # Key Vault firewall rules apply to the DATA plane only. A vault with
+  # publicNetworkAccess = Disabled STILL accepts the secrets this template
+  # writes, because an ARM deployment is a control-plane operation and the ARM
+  # deployment service is on the Key Vault trusted-services list. What it
+  # refuses is being READ over the public internet.
+  #
+  # Azure Container Apps is NOT on that trusted list. So a locked-down vault
+  # seeds perfectly and is then unreadable by the running app: every secret
+  # lookup fails, the app falls back to environment variables exactly as it was
+  # designed to, and the marketplace is empty for reasons that look like an
+  # application fault and are not.
+  #
+  # Rather than deploy something that cannot work, detect it and pass
+  # configuration to the container apps directly instead.
   $seedKeyVault = $true
+  $useKeyVault = $true
   if ($found.KeyVault) {
     $vault = Get-AzJson @('keyvault','show','-n',$KeyVaultName,'-g',$KeyVaultResourceGroup)
     if ($vault -and $vault.properties.enableRbacAuthorization -ne $true) {
@@ -275,6 +300,44 @@ try {
       Warn2 'The role assignment will be ignored. Either switch it to RBAC:'
       Write-Host "    az keyvault update -n $KeyVaultName -g $KeyVaultResourceGroup --enable-rbac-authorization true"
       Warn2 'or add an access policy for the Cortex identity after deployment.'
+    }
+
+    $publicAccess = if ($vault) { $vault.properties.publicNetworkAccess } else { '' }
+    # Reads the vault the way the app will. -o none because a secret NAME is
+    # not sensitive but there is no reason to print one either.
+    az keyvault secret list --vault-name $KeyVaultName --maxresults 1 -o none 2>$null
+    $dataPlaneReadable = ($LASTEXITCODE -eq 0)
+
+    switch ($ConfigSource) {
+      'keyvault' { $useKeyVault = $true;  Ok 'Configuration source: Key Vault (forced)' }
+      'direct'   { $useKeyVault = $false; Ok 'Configuration source: passed directly to the apps (forced)' }
+      default {
+        if ($publicAccess -eq 'Disabled') {
+          $useKeyVault = $false
+          Warn2 "$KeyVaultName has public network access DISABLED."
+          Info  'Container Apps is not a Key Vault trusted service, so the running app'
+          Info  'cannot read it without a private endpoint. Configuration will be passed'
+          Info  'to the container apps directly instead, and the sensitive values held as'
+          Info  'Container Apps secrets. Override with -ConfigSource keyvault.'
+        } elseif (-not $dataPlaneReadable) {
+          $useKeyVault = $false
+          Warn2 "$KeyVaultName did not answer a data-plane read from this machine."
+          Info  'Either a firewall rule excludes you, or you lack Key Vault Secrets User.'
+          Info  'Configuration will be passed to the container apps directly. If the app'
+          Info  'itself can reach the vault, override with -ConfigSource keyvault.'
+        } else {
+          Ok 'Configuration source: Key Vault'
+        }
+      }
+    }
+
+    # Seeding is a control-plane write, so it is NOT blocked by the firewall
+    # and is still worth doing — it keeps the vault as the record of the
+    # deployment's configuration for when a private endpoint arrives. It is
+    # skipped only when the deployment genuinely cannot write.
+    if (-not $useKeyVault -and $publicAccess -eq 'Disabled') {
+      Info  'The vault will still be seeded: ARM writes secrets through the control'
+      Info  'plane, which the firewall does not restrict. The app just will not read it.'
     }
 
     # Seeding secrets needs Secrets Officer. Without it the whole deployment
@@ -298,8 +361,11 @@ try {
     }
 
     # Several azd environments can share one vault, in which case the last
-    # one provisioned quietly owns every value in it.
-    $owner = az keyvault secret show --vault-name $KeyVaultName --name cortex-environment-name --query value -o tsv 2>$null
+    # one provisioned quietly owns every value in it. Only checkable when the
+    # data plane answers — it is a secret read like any other.
+    $owner = if ($dataPlaneReadable) {
+      az keyvault secret show --vault-name $KeyVaultName --name cortex-environment-name --query value -o tsv 2>$null
+    } else { $null }
     if ($owner -and $owner -ne $EnvironmentName) {
       Warn2 "$KeyVaultName currently holds the configuration for environment '$owner'."
       Info  "Provisioning '$EnvironmentName' will overwrite it. Both environments cannot share one vault."
@@ -490,6 +556,7 @@ try {
       KEYVAULT_RG                   = $KeyVaultResourceGroup
       CREATE_KEYVAULT               = (-not $found.KeyVault).ToString().ToLower()
       SEED_KEYVAULT                 = $seedKeyVault.ToString().ToLower()
+      USE_KEYVAULT                  = $useKeyVault.ToString().ToLower()
       REGISTRY_NAME                 = $RegistryName
       REGISTRY_RG                   = $RegistryResourceGroup
       CREATE_REGISTRY               = (-not $found.Registry).ToString().ToLower()
@@ -532,6 +599,12 @@ try {
   $mcpUrl = $v['CORTEX_MCP_URL']
   $apim   = $v['APIM_SERVICE_NAME']
   $apimRg = $v['APIM_RESOURCE_GROUP']
+
+  # Read back from the deployment output rather than the local variable, so a
+  # -SkipProvision run still knows which mode the deployed app is actually in.
+  $configSource = $v['CORTEX_CONFIG_SOURCE']
+  if (-not $configSource) { $configSource = if ($useKeyVault) { 'keyvault' } else { 'direct' } }
+  Ok "Configuration source: $configSource"
 
   # A partly-finished provision leaves the outputs absent. Saying so plainly
   # beats five confusing failures in the steps that follow.
@@ -579,26 +652,101 @@ try {
   }
 
   # ------------------------------------------------------------ 11 secrets
+  #
+  # WHERE THE APIM KEY GOES, AND WHY IT IS NOT A BICEP PARAMETER.
+  #
+  # Reading the key is a control-plane call against API Management, so it works
+  # regardless of the Key Vault firewall. Writing it is the part that has to
+  # adapt:
+  #
+  #   Key Vault mode — write it to the vault, as before.
+  #   Direct mode    — write it as a Container Apps secret on cortex-web.
+  #
+  # It is set here rather than passed through Bicep on purpose. azd sources
+  # template parameters from .azure/<env>/.env, so a credential passed that way
+  # is written to disk in plaintext. Setting it on the app afterwards keeps it
+  # out of the repo, out of the azd environment file, and out of the deployment
+  # history.
+  #
+  # The cost of that choice: a bare `azd provision` that bypasses this script
+  # may drop the secret. That is why this step runs on every deployment and
+  # re-asserts it, and why it is cheap to re-run.
   Step 9 'Onboarding the APIM subscription key'
-  if (-not $kv) {
-    Warn2 'No Key Vault name in the environment. Skipping.'
-  } else {
-    $existing = az keyvault secret show --vault-name $kv --name apim-subscription-key --query value -o tsv 2>$null
-    if ($existing) {
-      Ok 'apim-subscription-key already onboarded'
+
+  $apimKey = $null
+  if ($apim -and $apimRg) {
+    $apimKey = az rest --method POST --url ("https://management.azure.com/subscriptions/{0}/resourceGroups/{1}/providers/Microsoft.ApiManagement/service/{2}/subscriptions/master/listSecrets?api-version=2024-05-01" -f $acct.id, $apimRg, $apim) `
+                 --query primaryKey -o tsv 2>$null
+    if (-not $apimKey) {
+      Warn2 'Could not read the APIM subscription key from API Management.'
+      Info  'You may lack rights on the APIM instance. Published MCP servers will not authenticate until it is set.'
+    }
+  }
+
+  if ($configSource -eq 'keyvault') {
+    if (-not $kv) {
+      Warn2 'No Key Vault name in the environment. Skipping.'
     } else {
-      $key = az rest --method POST --url ("https://management.azure.com/subscriptions/{0}/resourceGroups/{1}/providers/Microsoft.ApiManagement/service/{2}/subscriptions/master/listSecrets?api-version=2024-05-01" -f $acct.id, $apimRg, $apim) `
-               --query primaryKey -o tsv 2>$null
-      if ($key) {
-        az keyvault secret set --vault-name $kv --name apim-subscription-key --value $key --only-show-errors | Out-Null
+      $existing = az keyvault secret show --vault-name $kv --name apim-subscription-key --query value -o tsv 2>$null
+      if ($existing) {
+        Ok 'apim-subscription-key already onboarded'
+      } elseif ($apimKey) {
+        az keyvault secret set --vault-name $kv --name apim-subscription-key --value $apimKey --only-show-errors | Out-Null
         if ($LASTEXITCODE -eq 0) { Ok 'Onboarded from API Management' }
         else {
-          Warn2 'Could not write the key to the vault — you likely lack Key Vault Secrets Officer.'
+          Warn2 'Could not write the key to the vault — you likely lack Key Vault Secrets Officer,'
+          Warn2 'or the vault refuses data-plane writes from here. Set it by hand:'
           Write-Host "    az keyvault secret set --vault-name $kv --name apim-subscription-key --value '<key>'"
         }
+      }
+    }
+  }
+  else {
+    # Direct mode. The secret lives on the container app.
+    if (-not $apimKey) {
+      Warn2 'No APIM key to set. Skipping.'
+    } else {
+      # Compare before writing. Setting an identical secret still creates a new
+      # revision, and a new revision on every deploy is churn nobody asked for.
+      $currentKey = az containerapp secret show -n 'cortex-web' -g $CortexResourceGroup `
+                      --secret-name 'apim-subscription-key' --query value -o tsv 2>$null
+
+      if ($currentKey -eq $apimKey) {
+        Ok 'apim-subscription-key already set on cortex-web'
       } else {
-        Warn2 'Could not read the APIM key. Set it by hand:'
-        Write-Host "    az keyvault secret set --vault-name $kv --name apim-subscription-key --value '<key>'"
+        az containerapp secret set -n 'cortex-web' -g $CortexResourceGroup `
+          --secrets "apim-subscription-key=$apimKey" --only-show-errors | Out-Null
+        if ($LASTEXITCODE -eq 0) { Ok 'apim-subscription-key stored as a Container Apps secret' }
+        else { Fail 'Could not set the secret on cortex-web.' }
+      }
+
+      # The env var has to reference the secret, or the app never reads it.
+      $envRef = az containerapp show -n 'cortex-web' -g $CortexResourceGroup `
+                  --query "properties.template.containers[0].env[?name=='APIM_SUBSCRIPTION_KEY'].secretRef | [0]" -o tsv 2>$null
+      if ($envRef -ne 'apim-subscription-key') {
+        az containerapp update -n 'cortex-web' -g $CortexResourceGroup `
+          --set-env-vars 'APIM_SUBSCRIPTION_KEY=secretref:apim-subscription-key' --only-show-errors | Out-Null
+        if ($LASTEXITCODE -eq 0) { Ok 'cortex-web reads APIM_SUBSCRIPTION_KEY from that secret' }
+        else { Fail 'Could not map APIM_SUBSCRIPTION_KEY on cortex-web.' }
+      }
+    }
+
+    # App Insights is optional, and its connection string embeds an
+    # instrumentation key, so it gets the same treatment rather than being a
+    # plain environment variable.
+    $aiConn = az monitor app-insights component show -g $MonitoringResourceGroup -a $AppInsightsName `
+                --query connectionString -o tsv 2>$null
+    if ($aiConn) {
+      $currentAi = az containerapp secret show -n 'cortex-web' -g $CortexResourceGroup `
+                     --secret-name 'appinsights-connection-string' --query value -o tsv 2>$null
+      if ($currentAi -ne $aiConn) {
+        az containerapp secret set -n 'cortex-web' -g $CortexResourceGroup `
+          --secrets "appinsights-connection-string=$aiConn" --only-show-errors | Out-Null
+        az containerapp update -n 'cortex-web' -g $CortexResourceGroup `
+          --set-env-vars 'APPLICATIONINSIGHTS_CONNECTION_STRING=secretref:appinsights-connection-string' --only-show-errors | Out-Null
+        if ($LASTEXITCODE -eq 0) { Ok 'App Insights connection string stored as a Container Apps secret' }
+      } else {
+        Ok 'App Insights connection string already set'
       }
     }
   }
@@ -645,7 +793,16 @@ try {
   Write-Host "===========================================================" -ForegroundColor Green
   Write-Host "`n  Web : $webUrl"
   if ($mcpUrl) { Write-Host "  MCP : $mcpUrl/mcp" }
-  Write-Host "  Model: $effectiveDeploymentName ($ModelName $effectiveVersion)`n"
+  Write-Host "  Model: $effectiveDeploymentName ($ModelName $effectiveVersion)"
+  Write-Host "  Config: $configSource`n"
+  if ($configSource -eq 'direct') {
+    Write-Host " Configuration is held on the container apps, not in Key Vault." -ForegroundColor Yellow
+    Write-Host " The vault refuses data-plane reads, and Container Apps is not a trusted service," -ForegroundColor Yellow
+    Write-Host " so it could not have been read at runtime. The three sensitive values are" -ForegroundColor Yellow
+    Write-Host " Container Apps secrets: encrypted at rest, but readable by anyone with" -ForegroundColor Yellow
+    Write-Host " Contributor on the app. Fine for a sandbox, not for production." -ForegroundColor Yellow
+    Write-Host " docs/DEPLOY.md section 5 has the route back to Key Vault.`n" -ForegroundColor Yellow
+  }
   Write-Host " Two steps remain. Neither can be automated.`n"
   Write-Host "  1. Purview roles — BOTH planes. Identity: $($v['CORTEX_IDENTITY_PRINCIPAL_ID'])"
   Write-Host "     Deployment guide, section 6."

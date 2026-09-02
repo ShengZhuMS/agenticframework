@@ -109,6 +109,7 @@ The script installs dependencies, vendors GOV.UK Frontend, provisions, onboards 
 | `-SkipBootstrap` | You do not want to touch Purview content this run |
 | `-SkipHealthCheck` | You are deploying into something that is not up yet |
 | `-ForceSeedKeyVault` | The role check is wrong and you know you can write secrets |
+| `-ConfigSource` | `auto` (default), `keyvault` or `direct`. See section 5 |
 | `-Reset` | Start clean. Deletes the Cortex resource group and the local azd environment, after prompting |
 
 `-Reset` is deliberately narrow. It does **not** remove the Key Vault secrets, the `cortex` product in APIM, the role assignments for the Cortex identity, or the Purview domains and data products — those live on shared resources and are removed by hand.
@@ -162,7 +163,73 @@ az cognitiveservices account list-models -g PRDCOREFDRY001 -n prdcorefdryeus001 
 
 ---
 
-## 5. Key Vault secrets
+## 5. Configuration: Key Vault, or straight onto the apps
+
+**Cortex runs either way. The deploy script picks, and tells you which.**
+
+### The distinction that decides it
+
+Key Vault firewall rules apply to the **data plane only**. A vault with
+`publicNetworkAccess: Disabled` still accepts the secrets this template writes,
+because an ARM deployment is a control-plane operation and the ARM deployment
+service is a Key Vault trusted service. What it refuses is being **read** over
+the public internet.
+
+**Azure Container Apps is not on the trusted-services list**, and never will be
+— that list covers services where Microsoft controls all the running code.
+So in a locked-down subscription the vault seeds perfectly and is then
+unreadable by the app: every lookup fails, the app falls back to environment
+variables exactly as designed, and the marketplace is empty for reasons that
+look like an application fault and are not.
+
+| Operation | Plane | Blocked by a locked-down vault? |
+|---|---|---|
+| Bicep seeding the config values | Control | No |
+| `az keyvault secret set` | Data | Yes |
+| Opening the vault in the portal | Data | Yes |
+| The app reading secrets at startup | Data | **Yes** |
+
+### The two modes
+
+| `-ConfigSource` | What happens |
+|---|---|
+| `auto` (default) | Probes the vault. Public access disabled, or no data-plane answer → `direct`. Otherwise `keyvault` |
+| `keyvault` | Force the vault path. Use once a private endpoint is in place |
+| `direct` | Skip the vault. Configuration goes onto the container apps, sensitive values as Container Apps secrets |
+
+In `direct` mode `KEYVAULT_NAME` is deliberately **not** set on the apps. An
+empty vault name makes the adapter skip cleanly rather than spend its 15-second
+timeout budget failing at every start.
+
+Confirm which mode is live:
+
+```powershell
+.\scripts\Test-Cortex.ps1
+```
+
+```
+  OK    Key Vault
+        Direct configuration — 14 values from the environment, no vault in use
+```
+
+`0 from Key Vault, 14 from environment` **with** a vault configured means the
+app is still pointed at a vault it cannot reach. Re-run the deploy script.
+
+### The security trade in direct mode
+
+A Container Apps secret is encrypted at rest and stays out of the deployment
+history, but it is readable by anyone with Contributor on the app:
+
+```powershell
+az containerapp secret list -n cortex-web -g PRDCORECORTEX001 --show-values
+```
+
+Key Vault behind a private endpoint is stronger — separate RBAC plane, access
+logging, rotation. Direct mode is a reasonable trade for a sandbox and should
+not go to production. See §5c for the way back.
+
+### 5b. Key Vault secrets
+
 
 **17 values. Bicep writes 12. You set one.**
 
@@ -203,6 +270,27 @@ azd ai connection create cortex-apim --kind remote-tool `
 
 az keyvault secret set --vault-name $kv --name foundry-mcp-connection --value "<connection id>"
 ```
+
+### 5c. The route back to Key Vault
+
+Once a private endpoint exists, in this order:
+
+1. VNet with a subnet delegated to `Microsoft.App/environments`.
+2. **Recreate the Container Apps environment inside it.** A managed environment
+   cannot be VNet-joined after creation, so `cae-cortex` and both apps must be
+   destroyed and rebuilt. This is the expensive step — plan it.
+3. Private endpoint on the vault, plus a `privatelink.vaultcore.azure.net`
+   private DNS zone linked to the VNet.
+4. `.\scripts\Deploy-Cortex.ps1 -ConfigSource keyvault`
+
+This does not restore *your own* access — you are still outside the VNet, so
+`az keyvault secret set` and the portal stay blocked without a jumpbox, Bastion
+or VPN. The deploy script works around that by reading the APIM key from ARM
+rather than expecting you to paste it.
+
+If the vault sits behind a **Network Security Perimeter** rather than a plain
+firewall, the trusted-services bypass is overridden and even ARM is blocked —
+you need an explicit inbound access rule on the perimeter.
 
 ### If the vault uses access policies
 
