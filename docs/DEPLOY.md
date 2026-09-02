@@ -380,10 +380,14 @@ azd env get-values | Select-String CORTEX_IDENTITY_PRINCIPAL_ID
 Domains do not exist until you bootstrap, so:
 
 ```powershell
+. .\scripts\Set-CortexEnv.ps1             # load config into this session — see section 8
 node scripts/bootstrap.js --only=purview   # creates the domains
 # ... assign roles in the portal ...
 npm run bootstrap                          # creates and publishes the data products
 ```
+
+> **The leading dot on the first line is load-bearing.** Without it bootstrap
+> has no configuration and stops before it reaches Purview. See section 8.
 
 The Cortex identity is stable across re-deployments — it is created once and reused — so you assign these roles once, not on every deploy. `-Reset` destroys it, and you will need to assign them again.
 
@@ -392,13 +396,40 @@ The Cortex identity is stable across re-deployments — it is created once and r
 ## 8. Bootstrap the content
 
 ```powershell
+. .\scripts\Set-CortexEnv.ps1
 npm run bootstrap
 ```
 
 Creates 9 governance domains and 14 data products in your real Purview, and a REST API plus MCP server per skill in your APIM. Idempotent.
 
+### Why the first line is needed
+
+`bootstrap.js` reads configuration the same way the app does — Key Vault first, environment variables second. **But bootstrap runs on your machine, not in the container.** The deployed apps get their configuration from provisioning; this local Node process has neither that nor a readable vault, because public network access is disabled and a secret read is a data-plane operation.
+
+Without it you get:
+
+```
+Missing required configuration:
+  - azure-subscription-id
+  - azure-resource-group
+  - apim-service-name
+  - apim-gateway-url
+  - apim-subscription-key
+  - foundry-project-endpoint
+  - purview-mcp-url
+  - public-base-url
+```
+
+That is not a Purview problem, a roles problem or a network problem. It is the eight entries marked `required` in `SECRET_CATALOGUE` resolving to nothing, and bootstrap stopping before it makes a single call.
+
+`Set-CortexEnv.ps1` reads what provisioning published into the azd environment, fetches the APIM subscription key from API Management's ARM endpoint — a control-plane call, so the Key Vault firewall does not apply — and sets both for the session. **Nothing is written to disk**; the key lives in that window's memory and goes when you close it.
+
+**It must be dot-sourced.** `.\scripts\Set-CortexEnv.ps1` runs in a child scope and its variables are discarded on exit. The script detects this and refuses rather than appearing to work.
+
+`Deploy-Cortex.ps1` does the same thing in-process, so bootstrap during a full deployment needs no preparation. This is only for running bootstrap by hand.
+
 ```powershell
-node scripts/bootstrap.js --dry-run   # validate payloads, no Azure needed
+node scripts/bootstrap.js --dry-run   # validate payloads, no Azure and no config needed
 ```
 
 > ⚠️ **Publishing is the least certain step in the deployment.** The Unified Catalog API has no publish operation — it is a status transition on a full-replace PUT, and the portal enforces preconditions Microsoft does not document. If publishing is refused the script creates the product as `DRAFT` and tells you; publish those by hand.

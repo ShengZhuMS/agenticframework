@@ -752,12 +752,47 @@ try {
   }
 
   # ---------------------------------------------------------- 12 bootstrap
+  #
+  # BOOTSTRAP RUNS HERE, NOT IN THE CONTAINER.
+  #
+  # bootstrap.js reads configuration the same way the app does: Key Vault
+  # first, environment second. The deployed apps get their configuration from
+  # provisioning, but this is a local Node process — it has neither. When the
+  # vault is unreachable from this machine (public network access disabled,
+  # and a read is a data-plane operation) every required value resolves to
+  # nothing and bootstrap exits with "Missing required configuration".
+  #
+  # So the values are put into the environment before the child process
+  # starts. `$env:` here is inherited by npm, which is exactly what is wanted;
+  # nothing is written to disk.
   if (-not $SkipBootstrap) {
     Step 10 'Creating the Defra content in Purview and API Management'
-    Warn2 'Needs the Purview roles from the deployment guide, section 6.'
+    Warn2 'Needs the Purview roles from the deployment guide, section 7.'
+
+    # The app's azure-resource-group is the group holding API MANAGEMENT — it
+    # exists to build APIM ARM resource ids. Not the Cortex group, which is
+    # what the azd output called AZURE_RESOURCE_GROUP holds.
+    $env:AZURE_SUBSCRIPTION_ID    = $acct.id
+    $env:AZURE_RESOURCE_GROUP     = $apimRg
+    $env:APIM_SERVICE_NAME        = $apim
+    $env:APIM_GATEWAY_URL         = $v['APIM_GATEWAY_URL']
+    $env:FOUNDRY_PROJECT_ENDPOINT = $v['FOUNDRY_PROJECT_ENDPOINT']
+    $env:PUBLIC_BASE_URL          = $webUrl
+    $env:PURVIEW_MCP_URL          = if ($mcpUrl) { "$mcpUrl/mcp" } else { '' }
+    if ($apimKey) { $env:APIM_SUBSCRIPTION_KEY = $apimKey }
+
+    # Only point bootstrap at the vault when the vault is actually usable from
+    # here. An unreachable vault name costs the timeout budget and supplies
+    # nothing; empty makes the adapter skip straight to these values.
+    $env:KEYVAULT_NAME = if ($configSource -eq 'keyvault') { $kv } else { '' }
+
     npm run bootstrap
     if ($LASTEXITCODE -ne 0) {
-      Warn2 'Bootstrap reported failures. It is idempotent — fix the roles and re-run: npm run bootstrap'
+      Warn2 'Bootstrap reported failures. It is idempotent — fix the cause and re-run.'
+      Info  'To re-run by hand, load the configuration into your session first:'
+      Info  '    . .\scripts\Set-CortexEnv.ps1'
+      Info  '    npm run bootstrap'
+      Info  'Without that first line the values above are gone and every one is reported missing.'
     } else { Ok 'Domains and data products created' }
   }
 
