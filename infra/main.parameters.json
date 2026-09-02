@@ -35,6 +35,10 @@
     "keyVaultResourceGroup":  { "value": "${KEYVAULT_RG=PRDCOREPVW001}" },
     "createKeyVault":         { "value": "${CREATE_KEYVAULT=false}" },
     "seedKeyVault":           { "value": "${SEED_KEYVAULT=true}" },
+    "useKeyVault":            { "value": "${USE_KEYVAULT=true}" },
+
+    "groupNames":             { "value": "${CORTEX_GROUP_NAMES=}" },
+    "entraClientId":          { "value": "${ENTRA_CLIENT_ID=}" },
 
     "registryName":           { "value": "${REGISTRY_NAME=prdcoreamlacr001}" },
     "registryResourceGroup":  { "value": "${REGISTRY_RG=PRDCOREAML001}" },
