@@ -66,7 +66,7 @@
     },
     {
       "label": "Cortex: Deploy without Key Vault",
-      "detail": "Force direct configuration \u2014 for a vault with public network access disabled.",
+      "detail": "Force direct configuration — for a vault with public network access disabled.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -187,12 +187,15 @@
     },
     {
       "label": "Cortex: Bootstrap content",
-      "detail": "Create the Defra governance domains and data products in Purview. Idempotent.",
+      "detail": "Create the Defra governance domains and data products in Purview. Loads config first. Idempotent.",
       "type": "shell",
-      "command": "npm",
+      "command": "pwsh",
       "args": [
-        "run",
-        "bootstrap"
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        ". ./scripts/Set-CortexEnv.ps1; npm run bootstrap"
       ],
       "problemMatcher": [],
       "presentation": {
@@ -203,12 +206,32 @@
     },
     {
       "label": "Cortex: Bootstrap dry run",
-      "detail": "Validate the bootstrap content without writing anything. No Azure needed.",
+      "detail": "Validate the bootstrap content without writing anything. No Azure and no config needed.",
       "type": "shell",
       "command": "node",
       "args": [
         "scripts/bootstrap.js",
         "--dry-run"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Load config into a terminal",
+      "detail": "Open a PowerShell terminal with the Cortex configuration loaded, for running bootstrap by hand.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-NoExit",
+        "-Command",
+        ". ./scripts/Set-CortexEnv.ps1"
       ],
       "problemMatcher": [],
       "presentation": {
