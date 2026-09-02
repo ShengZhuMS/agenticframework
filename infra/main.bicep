@@ -126,6 +126,30 @@ param createKeyVault bool = false
 @description('Write the endpoints provisioning knows into Key Vault. Needs Key Vault Secrets Officer for whoever deploys. Deploy-Cortex.ps1 turns this off automatically rather than failing the deployment when you lack the role.')
 param seedKeyVault bool = true
 
+// WHY THIS EXISTS — the data plane / control plane split.
+//
+// Key Vault firewall rules apply to the DATA plane only. A vault with
+// `publicNetworkAccess: Disabled` still accepts the secrets written by this
+// template, because an ARM deployment is a control-plane operation and the ARM
+// deployment service is on the Key Vault trusted-services list. What it refuses
+// is being READ over the public internet — and Azure Container Apps is NOT a
+// trusted service, so the running app cannot reach it without a private
+// endpoint.
+//
+// The result is a vault that seeds perfectly and is useless at runtime: the app
+// starts, every secret read fails, it falls back to environment variables, and
+// the marketplace is empty. Setting useKeyVault false passes configuration to
+// the apps directly instead. See modules/containerapps.bicep for the security
+// trade this makes, and docs/DEPLOY.md §5 for the route back to a vault.
+@description('Read configuration from Key Vault at runtime. Set false when the vault is unreachable from the container apps. Deploy-Cortex.ps1 detects this and sets it for you.')
+param useKeyVault bool = true
+
+@description('Entra group id to name mapping, e.g. "<guid>=all-staff,<guid>=waste-crime". Passed to the app so it survives a re-provision.')
+param groupNames string = ''
+
+@description('Entra app registration client id for sign-in. Optional.')
+param entraClientId string = ''
+
 // ----------------------------------------------------------- Container registry
 
 @description('Existing container registry for the Cortex images.')
@@ -366,6 +390,25 @@ module containerApps 'modules/containerapps.bicep' = {
     webImageName: webImageName
     mcpImageName: mcpImageName
     mcpMinReplicas: mcpMinReplicas
+
+    // Direct configuration. Ignored when useKeyVault is true, so the same
+    // values are computed once here and the mode decides which path uses them.
+    useKeyVault: useKeyVault
+    azureSubscriptionId: subscription().subscriptionId
+    azureResourceGroup: effectiveApimRg
+    apimServiceName: effectiveApimName
+    apimGatewayUrl: 'https://${effectiveApimName}.azure-api.net'
+    foundryProjectEndpoint: 'https://${effectiveFoundryAccount}.services.ai.azure.com/api/projects/${effectiveFoundryProject}'
+    foundryModel: effectiveModelDeployment
+    purviewEndpoint: 'https://api.purview-service.microsoft.com'
+    entraTenantId: subscription().tenantId
+    entraClientId: entraClientId
+    groupNames: groupNames
+
+    // The APIM subscription key and the App Insights connection string are
+    // deliberately NOT passed. Deploy-Cortex.ps1 writes them onto the app after
+    // provisioning, so neither credential is written into the azd environment
+    // file on disk or left readable in the deployment history.
   }
 }
 
@@ -418,6 +461,7 @@ output CORTEX_IDENTITY_CLIENT_ID string = identity.outputs.clientId
 output KEYVAULT_NAME string = effectiveKeyVaultName
 output KEYVAULT_RESOURCE_GROUP string = effectiveKeyVaultRg
 output KEYVAULT_SEEDED bool = seedKeyVault
+output CORTEX_CONFIG_SOURCE string = containerApps.outputs.configSource
 output APIM_SERVICE_NAME string = effectiveApimName
 output APIM_RESOURCE_GROUP string = effectiveApimRg
 output APIM_GATEWAY_URL string = 'https://${effectiveApimName}.azure-api.net'

@@ -65,6 +65,27 @@
       }
     },
     {
+      "label": "Cortex: Deploy without Key Vault",
+      "detail": "Force direct configuration \u2014 for a vault with public network access disabled.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Deploy-Cortex.ps1",
+        "-ConfigSource",
+        "direct"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
       "label": "Cortex: Upgrade the model",
       "detail": "Move the existing model deployment onto the pinned model and version.",
       "type": "shell",

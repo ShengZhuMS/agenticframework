@@ -140,6 +140,7 @@ These cost real time to establish. They were correct in August 2026 and several 
 | **Purview roles in one plane only** | Assets silently invisible, including in search | Data Product Owner **and** Data reader. Both |
 | **Key Vault on access policies** | RBAC assignment silently ignored | `--enable-rbac-authorization true`. Deploy script warns |
 | **Two azd environments, one Key Vault** | The last one provisioned owns every endpoint in the vault; the other app talks to the wrong container | `cortex-environment-name` records the owner and the deploy script warns. Give the second environment its own vault |
+| **Key Vault with public access disabled** | The vault seeds fine and is then unreadable at runtime, because KV firewall rules are data-plane only and Container Apps is not a trusted service. App starts, falls back to environment, marketplace is empty — looks like an app fault | `-ConfigSource direct` passes configuration to the apps instead. Only a private endpoint restores the vault path |
 | **`fetch()` has no timeout** | A hanging back end blocks startup forever; readiness probe never passes | Bounded in `keyvault.js`. Apply the same pattern to any new outbound call |
 | **Readiness probe against the placeholder** | First provision hangs, then fails for a reason unrelated to the template | The probe and target port are only applied once a real image is present |
 | **APIM and Purview in different regions** | Yours are North Europe and East US | Works fine; adds latency. Do not "fix" by moving anything |
@@ -170,7 +171,7 @@ These cost real time to establish. They were correct in August 2026 and several 
 4. **Recurring requests.** Cadence is captured and approved methods are stored, but nothing issues them on a schedule.
 5. **Skill invocation shim.** `bootstrap.js` publishes skills pointing at `/shim/skills/:id`, which is not implemented. Either implement it or stop publishing those APIs.
 6. **Data Map lineage.** `getAssets()` exists; lineage on the entry page comes from managed attributes, not real lineage.
-7. **`CORTEX_GROUP_NAMES` lives outside the Bicep.** It is set with `az containerapp update` and dropped by the next provision. Move it into `containerapps.bicep` once the group mapping settles.
+7. **Get Key Vault back in the runtime path.** The sandbox vault has public network access disabled, so the apps run on direct configuration with three Container Apps secrets. That is weaker than a vault — the secrets are readable by anyone with Contributor on the app. Fixing it means a VNet-integrated Container Apps environment and a private endpoint, and the environment cannot be VNet-joined after creation, so it has to be rebuilt. `docs/DEPLOY.md` §5c has the order.
 
 ---
 
@@ -183,3 +184,4 @@ These cost real time to establish. They were correct in August 2026 and several 
 - **Comments explain *why*.** The code says what it does; comments should say why it is that way, especially where a shape is surprising or a rule is load-bearing.
 - **Business language in the UI.** No jargon, no product names in user-facing copy where a plain word will do.
 - **Infrastructure must survive a re-run.** Assume every template is applied many times. Anything that only works the first time is a bug, not a limitation.
+- **Configuration has two supported sources, and the app must not care which.** Key Vault when it is reachable, the environment otherwise. `SECRET_CATALOGUE` in `adapters/keyvault.js` is the contract between them: add a value there and to `containerapps.bicep`, or it will work in one mode and not the other.
