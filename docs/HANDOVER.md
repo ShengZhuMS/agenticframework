@@ -52,6 +52,7 @@ infra/                Bicep. Reuses existing Azure resources; creates only what 
 scripts/
   Deploy-Cortex.ps1     Probes what exists, sets create* flags, deploys, bootstraps, verifies.
   Preprovision-Check.ps1 azd hook. Guards a bare `azd up` against the two known provision failures.
+  Set-CortexEnv.ps1     Dot-source to load config into a session, for running bootstrap by hand.
   Start-Local.ps1       Run on your machine against real Azure.
   Test-Cortex.ps1       Health check a deployment, including the MCP server.
   bootstrap.js          Writes the Defra content into real Purview + APIM. Idempotent.
@@ -141,6 +142,7 @@ These cost real time to establish. They were correct in August 2026 and several 
 | **Key Vault on access policies** | RBAC assignment silently ignored | `--enable-rbac-authorization true`. Deploy script warns |
 | **Two azd environments, one Key Vault** | The last one provisioned owns every endpoint in the vault; the other app talks to the wrong container | `cortex-environment-name` records the owner and the deploy script warns. Give the second environment its own vault |
 | **Key Vault with public access disabled** | The vault seeds fine and is then unreadable at runtime, because KV firewall rules are data-plane only and Container Apps is not a trusted service. App starts, falls back to environment, marketplace is empty — looks like an app fault | `-ConfigSource direct` passes configuration to the apps instead. Only a private endpoint restores the vault path |
+| **Running bootstrap without loading config** | `Missing required configuration` listing all 8 required secrets. bootstrap.js runs on your machine, not in the container, so it has neither the deployed env vars nor a readable vault | `. .\scripts\Set-CortexEnv.ps1` first — dot-sourced. `Deploy-Cortex.ps1` does it in-process |
 | **`fetch()` has no timeout** | A hanging back end blocks startup forever; readiness probe never passes | Bounded in `keyvault.js`. Apply the same pattern to any new outbound call |
 | **Readiness probe against the placeholder** | First provision hangs, then fails for a reason unrelated to the template | The probe and target port are only applied once a real image is present |
 | **APIM and Purview in different regions** | Yours are North Europe and East US | Works fine; adds latency. Do not "fix" by moving anything |
@@ -152,6 +154,8 @@ These cost real time to establish. They were correct in August 2026 and several 
 **One live provision has now run.** It reached Azure, created the resource group, the Container Apps environment and both container apps, and failed on the model deployment — which is the trap at the top of §7. The infrastructure path is real; the model, image and idempotency fixes in this repo came out of that run.
 
 **Still unverified:** bootstrap against real Purview, the publish status transition, the APIM MCP server creation, and the end-to-end golden path.
+
+**A note on the Purview roles.** They are assigned against governance domains, and the domains do not exist until bootstrap has successfully created them. If bootstrap has been failing at the configuration check, it never reached Purview, so no Cortex domains exist and any roles assigned so far are on pre-existing domains — not the ones Cortex will use. Assign them again, on the Cortex domains, after the first successful bootstrap.
 
 **Do these in order:**
 
