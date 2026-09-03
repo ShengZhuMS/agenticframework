@@ -99,7 +99,7 @@ That last state is the deck's problem rendered as a UI state rather than a dead 
 
 **Glue 1 — Purview MCP server.** Exposes the catalogue as MCP tools (`list_governance_domains`, `search_data_products`, `get_data_product`, `get_lineage`, `get_schema`), published through APIM and attached to agents as an ordinary MCP tool. **Catalogue metadata only, never the underlying data** — it answers "what exists, who owns it, what does it mean", never "give me the rows". That keeps the access-control story clean and is exactly the thin slice Defra's deck asks for.
 
-**Glue 2 — publish an agent as MCP.** Cortex hosts a generic invocation shim, generates an OpenAPI operation per agent, imports it into APIM, projects an MCP server over it, and writes the endpoint back onto the entry. All four steps use documented APIM management APIs; only the shim is ours.
+**Glue 2 — publish an agent as MCP.** Cortex hosts a generic invocation shim, generates an OpenAPI operation per agent, imports it into APIM, projects an MCP server over it (one PUT: `type: 'mcp'` with the tools inline in `mcpTools`, each pointing at the backing operation by full ARM id), and writes the endpoint back onto the entry. All four steps use documented APIM management APIs; only the shim is ours.
 
 ---
 

@@ -60,6 +60,12 @@ Node **20 or later**. Docker Desktop must be **running** when you deploy (the sc
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
+**This repository lives in a OneDrive folder.** Files that arrive by OneDrive sync, browser download or an extracted zip carry the *Mark of the Web*, and `RemoteSigned` then refuses to run them — *"…is not digitally signed. You cannot run this script on the current system."* The deploy script unblocks every script in the repository at step 1, and the azd hook runs with `-ExecutionPolicy Bypass`, so you should never see it. If it ever stops `Deploy-Cortex.ps1` itself:
+
+```powershell
+Get-ChildItem -Recurse -Include *.ps1 | Unblock-File
+```
+
 In VS Code, accept the recommended extensions (Azure Dev CLI, Container Apps, Bicep, PowerShell). Every command in this guide is also a task: **Ctrl+Shift+P → Tasks: Run Task → Cortex: …**
 
 ### Permissions *you* need
@@ -190,6 +196,14 @@ Access rules read group **names** (`waste-crime`, `analysts`, `cortex-official-s
 
 The mapping is written to the azd environment (so a re-provision keeps it) and to the live app (so it applies now). To create the groups and add yourself — for the "same page, different eyes" moment — add `-CreateGroups`. To turn the default group off and rely on Entra alone: `-DefaultGroups ''`.
 
+If `/profile` lists **unmapped group ids**, that is the groups you are already in, shown by object id because nothing has named them yet. It is not a fault — an id only affects access once a rule refers to it. To name them all after their Entra display names:
+
+```powershell
+.\scripts\Set-CortexAuth.ps1 -MapMyGroups
+```
+
+Mappings are additive across runs, and an explicit `-GroupMap` alias always wins over an automatic name.
+
 The special group names the rules understand:
 
 | Group name | Effect |
@@ -293,6 +307,11 @@ The approved model catalogue the Build page offers is the deployment(s) that exi
 | Bootstrap: `No catalog-level policy (dgpolicy_datagovernanceapp_*) was returned` | Same as above, or the tenant is not on the new Purview portal | Same fix; check the portal shows "Unified Catalog" |
 | Bootstrap: `created as DRAFT — publish refused` | The catalogue's publish preconditions were not met | Expected sometimes. Products still show, tagged Draft. Publish in the portal |
 | Bootstrap: **Missing required configuration** listing eight values | You ran it without loading config into the session | `. .\scripts\Set-CortexEnv.ps1` — with the leading dot — then `npm run bootstrap` |
+| **`Continuous access evaluation resulted in challenge … TokenCreatedWithOutdatedPolicies`** | Your Azure CLI token was issued before your directory roles changed (you just became Application Administrator, say) and Entra refuses it. On Windows a plain `az login` often returns the *same* token via the broker | `Set-CortexAuth.ps1` and `Deploy-Cortex.ps1` clear the cache, sign you in again and fall back to the device-code flow. By hand: `az account clear` → `az login --use-device-code` → `az account set --subscription <id>` |
+| Set-CortexAuth: **Sign-in points at client …, which no longer exists** | The app registration Easy Auth uses was deleted; nobody can sign in | Let the script finish — it creates a new one and re-points the app |
+| Health checks all **redirected to sign-in** / all `ok=false` at once | Sign-in is guarding `/api/health*`; the checks were reading the login page | `Set-CortexAuth.ps1` excludes the machine paths. Then `Test-Cortex.ps1` |
+| Bootstrap: skills fail with **500 InternalServerError** on `…-mcp/tools/invoke` | The old request shape. An MCP server must be created with its tools **inline** (`type: 'mcp'` + `mcpTools`) in one PUT; the child `/tools` resource does not work and a server created without tools silently loses its type | Fixed: one PUT, verified after. A type-null leftover is deleted and recreated. Re-run `node scripts/bootstrap.js --only=apim` |
+| `/profile` lists **N unmapped group ids** | Entra sends group object ids; the rules read names. Nothing is broken — an id only matters once a rule refers to it | `.\scripts\Set-CortexAuth.ps1 -MapMyGroups` names every group you are in after its display name. `-GroupMap 'waste-crime=<Entra group>'` gives one a name a rule uses |
 | `/profile` says **no named groups** | The token predates the groups claim, or the group ids are unmapped | Sign out and in. Map ids with `Set-CortexAuth.ps1 -GroupMap` |
 | Marketplace looks almost empty; entries say "Licence does not cover you" | Strict mode with no group mapping | `Set-CortexAuth.ps1 -DefaultGroups all-staff`, or map groups |
 | Page says **Sign-in is not configured** | Authentication is not on in front of the app | `.\scripts\Set-CortexAuth.ps1` |
@@ -302,6 +321,8 @@ The approved model catalogue the Build page offers is the deployment(s) that exi
 | **ServiceModelDeprecating** | The pinned model version is no longer deployable | `-WhatIfResources` lists what the account accepts; pin one with `-ModelVersion` |
 | **AuthorizationFailed** on a role assignment | You lack User Access Administrator | Get the role, then re-run with `-SkipProvision` |
 | `A resource with this name already exists or is in a conflicting state` | Usually a soft-deleted Key Vault or Foundry account | The script prints the recover/purge command |
+| `Preprovision-Check.ps1` **is not digitally signed. You cannot run this script** | The file carries the Mark of the Web (OneDrive sync, download, extracted zip) and PowerShell's policy is `RemoteSigned` | Fixed: the deploy script unblocks scripts at step 1 and the hook runs with `-ExecutionPolicy Bypass`. If you see it, you have an old `azure.yaml` — re-run the deploy script |
+| `imgId: The system cannot find the file specified` on both services | Not a Docker fault. azd builds images in parallel with provisioning and **cancelled** the builds when another step failed (usually the one above) | Fix the other error and re-run |
 | **Masked credential placeholders found in the source** | A file came back from a chat or transfer tool with a run of `*` where a value was | Restore the file from git. The pattern to look for is six asterisks |
 | `spawn az ENOENT` / `spawn EINVAL` locally | Windows CLI spawn traps | Fixed in `token.js`; if you see it, you have an old copy |
 | Docker errors mid-provision | Docker Desktop not running | Start it. The script now checks first |
@@ -336,7 +357,7 @@ Every resource name and group is also a parameter: `-ApimName`, `-ApimResourceGr
 
 | Script | Does |
 |---|---|
-| `Set-CortexAuth.ps1` | Sign-in, groups claim, group mapping, default group. Idempotent. `-RotateSecret` mints a new client secret |
+| `Set-CortexAuth.ps1` | Sign-in, groups claim, group mapping, default group. Idempotent. `-MapMyGroups` names every group you are in; `-GroupMap` names specific ones; `-CreateGroups` creates them; `-RotateSecret` mints a new client secret |
 | `Set-CortexEnv.ps1` | **Dot-source it.** Loads the deployment's configuration into the session for running bootstrap by hand. Nothing written to disk |
 | `bootstrap.js` | `npm run bootstrap`. `--only=roles\|purview\|apim`, `--principal=<oid>`, `--skip-roles`, `--dry-run`, `--no-adopt` |
 | `Test-Cortex.ps1` | Health-check a deployment. `-Local` runs the unit tests instead |

@@ -1,5 +1,127 @@
 # What changed — 3 September 2026
 
+## Addendum 3, same day: the API Management 500 was the request shape, not a race
+
+`node scripts/bootstrap.js --only=apim` failed the same five skills again with
+`500 InternalServerError` on `PUT /apis/<skill>-mcp/tools/invoke` — now after a
+genuine 150 seconds of back-off per skill. Timing was never the cause.
+
+**The verified shape** (api-version `2025-09-01-preview`, checked against a
+working May 2026 implementation): an MCP server is created with **one PUT**
+that carries **both** `type: 'mcp'` **and** a non-empty `mcpTools` array —
+`{ name, description, operationId: <full ARM id of the backing operation> }`.
+Two things follow, and both bit us:
+
+- **Without `mcpTools`, ARM silently drops the type.** The `…-mcp` API was
+  created as a plain HTTP API (a GET shows `type: null`). Everything that then
+  treated it as an MCP server failed with an unhelpful 500.
+- **The child `/apis/{id}/tools/{tool}` resource does not work via PUT** in
+  this api-version, even though the TypeSpec describes it. The repository's
+  "verified fact" that tools are a child resource was wrong.
+
+The one skill that "worked" — Permit history lookup — was a server that
+already existed in the right shape from an earlier portal-side experiment, so
+its tool update was accepted; the five new ones could never have been.
+
+Fixed in both places that create MCP servers:
+
+- `src/bff/adapters/apim.js` — `createMcpServer({ …, tools })` sends the tools
+  inline, deletes and recreates a type-null leftover (it cannot be converted in
+  place), and **verifies** the GET shows `type: mcp` with tools. `addTool()` is
+  now a read-modify-write of `mcpTools`. `listMcpServers()` reads the tools
+  inline and derives the endpoint as `{gateway}/{path}/mcp` — `serviceUrl` is
+  null on an MCP API, which is why the Marketplace never showed an MCP endpoint
+  for the skills. Listings now follow `nextLink`.
+- `scripts/bootstrap.js` — the same one-PUT shape, the same leftover
+  replacement, the same verification.
+- `src/bff/services/publish.js` (Glue 2) — passes the `ask` tool into
+  `createMcpServer`; the separate "add tool" step is gone.
+- `test/fixtures.js` now behaves like ARM (type survives only with tools;
+  `GET /apis/{id}` reads back what was PUT) and `test/bootstrap.test.js` pins
+  the shape: never `/tools/`, type + tools in one body, full ARM operation id.
+
+**Also:** `/profile` showed *8 unmapped group ids*. Those are the Entra groups
+you are already in, shown by object id because nothing had named them. Not a
+fault — an id only affects access once a rule refers to it.
+`Set-CortexAuth.ps1 -MapMyGroups` now names every group you are in after its
+Entra display name (additive; an explicit `-GroupMap` alias always wins), and
+the profile page says so instead of pointing at a raw setting.
+
+Re-run: `. .\scripts\Set-CortexEnv.ps1` then `node scripts/bootstrap.js --only=apim`
+— expect the five `…-mcp` leftovers to be reported as *replacing* and each
+skill to end `created — tool "invoke", endpoint https://…/<skill>-mcp/mcp`.
+
+## Addendum 2, same day: what the first successful run showed
+
+The full run got through. **Purview is fixed**: the Cortex identity was granted
+Data Governance Administrator and Global Catalog Reader at catalogue level and
+Governance Domain Owner on the nine domains, and **all fourteen data products
+were created and published** — the owner was indeed what the catalogue had been
+waiting for. Three things still went wrong, all now fixed:
+
+1. **Sign-in: `TokenCreatedWithOutdatedPolicies`.** You had just added yourself
+   to Application Administrator, and the Azure CLI was still using a Graph token
+   issued *before* that change. Entra's continuous access evaluation refuses such
+   a token and the CLI cannot renew it silently — so `az ad app create` failed
+   with a message that read like a missing permission. `Set-CortexAuth.ps1` now
+   pre-flights a directory call, recognises the challenge, signs you in again
+   and retries; `Deploy-Cortex.ps1` step 2 does the same. **On Windows a plain
+   `az login` is not enough** — the Web Account Manager broker signs you in
+   silently and hands back the same revoked token (that is what the second
+   failure was). The scripts therefore clear the CLI cache first and, if the
+   challenge persists, fall back to `az login --use-device-code`, which always
+   re-authenticates. By hand: `az account clear; az login --use-device-code;
+   az account set --subscription <id>`. You
+   also deleted the old "Cortex" registration, which left the container app's
+   sign-in pointing at a client id that no longer exists — **nobody can sign in
+   until `Set-CortexAuth.ps1` has replaced it.** The script now says exactly that.
+2. **API Management: five skills failed with 500 — and the retry waited 0 s.**
+   `Number(headers.get('retry-after'))` is `Number(null)` = 0 when the header is
+   absent, so every "retry" happened inside the same second. Fixed with a tested
+   `retryDelayMs()`; the tool step now also waits for the MCP server resource to
+   read back and retries five times from ten seconds upward. Re-run bootstrap
+   (`. .\scripts\Set-CortexEnv.ps1` then `node scripts/bootstrap.js --only=apim`).
+3. **Every health check "returned ok=false".** Not the app: sign-in is guarding
+   `/api/health*`, so the checks were following a 302 to the login page and
+   reading HTML. `Deploy-Cortex.ps1` and `Test-Cortex.ps1` no longer follow
+   redirects and say "redirected to sign-in" instead; `Set-CortexAuth.ps1`
+   excludes the machine paths, after which the checks are real.
+
+Order now: `.\scripts\Set-CortexAuth.ps1` (fixes sign-in and unblocks the
+health paths) → `.\scripts\Test-Cortex.ps1` → bootstrap `--only=apim` for the
+five skills.
+
+## Addendum 1, same day: the first full run
+
+`Deploy-Cortex.ps1` failed at `azd up` with two errors on screen:
+
+```
+'preprovision' hook failed ... Preprovision-Check.ps1 cannot be loaded. The file ... is not
+digitally signed. You cannot run this script on the current system.
+step "package-web" failed: ... open ...\azd-docker-build...\imgId: The system cannot find the file specified.
+```
+
+**One cause, not two.** The repository sits in a OneDrive folder; files that
+arrive by sync, download or an extracted zip carry the *Mark of the Web*, and
+PowerShell's default `RemoteSigned` policy refuses to run them. That stopped the
+pre-provision hook. azd builds the container images in parallel with
+provisioning and cancelled the builds when the hook failed — the missing
+`imgId` is the cancellation, not Docker.
+
+Why it "worked yesterday": yesterday's deployment was `-AppOnly` (`azd deploy`),
+which never runs the pre-provision hook. Today was the first `azd up` since the
+hook was added on 2 September, and the first time its file was executed.
+
+Fixed in three places:
+
+- `azure.yaml` — the hook runs through a nested `pwsh -NoProfile -ExecutionPolicy Bypass -File …`, so the file's zone cannot block it, and propagates the exit code.
+- `Deploy-Cortex.ps1` step 1 — unblocks every `.ps1` in the repository (outside `node_modules`, `.venv`, `.git`) and reports how many carried the mark; the `azd up` failure text now names both signatures.
+- `Set-CortexAuth.ps1` — while here: if sign-in is already configured on the app (you did this by hand), the script keeps that app registration instead of creating a second "Cortex" one and switching the app over.
+
+`docs/DEPLOY.md` §1 and §6 cover it. Re-run `.\scripts\Deploy-Cortex.ps1`.
+
+---
+
 Round 3. The Purview 403, a live Ask page, sign-in automation, and a deployment
 guide that reads in the order you need it. Every file below lands where it
 belongs when the folder is copied over `agenticframework/`. Nothing was

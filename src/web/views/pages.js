@@ -209,9 +209,15 @@ export function profilePage(ctx, { counts }) {
       rawIds.length
         ? `<h3 class="govuk-heading-s">Unmapped group ids</h3>
            <p class="govuk-body-s">
-             Entra sent ${esc(rawIds.length)} group ids with no name mapped to them.
-             Access rules written against names will not match these. Map them with
-             <code>CORTEX_GROUP_NAMES</code>.
+             Entra sent ${esc(rawIds.length)} group id${rawIds.length > 1 ? 's' : ''} with no name mapped to
+             ${rawIds.length > 1 ? 'them' : 'it'}. Access rules are written against names, so these grant
+             nothing until they are named. Nothing is wrong: an id only matters once a rule refers to it.
+           </p>
+           <p class="govuk-body-s">
+             To name every group you are in after its Entra display name:
+             <code>.\\scripts\\Set-CortexAuth.ps1 -MapMyGroups</code>.
+             To make one of them mean something to the access rules, give it the rule's name:
+             <code>-GroupMap 'waste-crime=&lt;Entra group name&gt;'</code>.
            </p>
            <ul class="govuk-list govuk-list--bullet">
              ${rawIds.map((g) => `<li><code style="font-size:15px">${esc(g)}</code></li>`).join('')}
