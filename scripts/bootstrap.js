@@ -29,13 +29,39 @@
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import config, { hydrateConfig, missingRequired } from '../src/bff/config.js';
 import { getToken } from '../src/bff/adapters/token.js';
 
 const ARM_SCOPE = 'https://management.azure.com/.default';
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has('--dry-run');
+const NO_ADOPT = args.has('--no-adopt');
 const ONLY = [...args].find((a) => a.startsWith('--only='))?.split('=')[1];
+
+/**
+ * Resolve the content directory against the REPOSITORY, not the working
+ * directory. `config.bootstrapDir` defaults to the relative string 'bootstrap',
+ * so running `node scripts/bootstrap.js` from anywhere except the repo root
+ * used to fail with a bare ENOENT that named a path the user never typed.
+ */
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * fetch() has no default timeout, so a back end that accepts the connection
+ * and then goes quiet hangs bootstrap forever with no output. Same convention
+ * as keyvault.js: bound every outbound call.
+ */
+const HTTP_TIMEOUT_MS = Number(process.env.BOOTSTRAP_HTTP_TIMEOUT_MS || 30_000);
+
+/**
+ * Purview's Unified Catalog allows only 100 List calls per 20 seconds, so a
+ * 429 during a bootstrap run is a normal condition rather than a fault.
+ */
+const MAX_RETRIES = 3;
+
+/** Query page size. Kept at the documented List ceiling. */
+const PAGE_SIZE = 100;
 
 let created = 0;
 let updated = 0;
@@ -45,8 +71,11 @@ const log = {
   step: (m) => console.log(`\n=== ${m} ===`),
   ok: (m) => console.log(`  ok    ${m}`),
   skip: (m) => console.log(`  skip  ${m}`),
+  warn: (m) => console.log(`  warn  ${m}`),
   fail: (m) => console.log(`  FAIL  ${m}`)
 };
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* ------------------------------------------------------------- purview */
 
@@ -55,17 +84,38 @@ async function purviewFetch(pathname, { method = 'GET', body, query = {} } = {})
   url.searchParams.set('api-version', config.purview.apiVersion);
   for (const [k, v] of Object.entries(query)) if (v != null) url.searchParams.set(k, String(v));
 
-  const token = await getToken(config.purview.scope);
-  const res = await fetch(url, {
-    method,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`${method} ${pathname} → ${res.status} ${text.slice(0, 300)}`);
+  for (let attempt = 0; ; attempt++) {
+    const token = await getToken(config.purview.scope);
+    let res;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(HTTP_TIMEOUT_MS)
+      });
+    } catch (err) {
+      if (err?.name === 'TimeoutError') {
+        throw new Error(`${method} ${pathname} → no response within ${HTTP_TIMEOUT_MS}ms`);
+      }
+      throw err;
+    }
+
+    // Throttled or transiently unavailable: wait the advertised time and retry.
+    if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+      const retryAfter = Number(res.headers.get('retry-after'));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter * 1000 : 2000 * (attempt + 1);
+      log.warn(`${res.status} from Purview — waiting ${Math.round(waitMs / 1000)}s and retrying`);
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`${method} ${pathname} → ${res.status} ${text.slice(0, 300)}`);
+    }
+    return res.status === 204 ? null : res.json();
   }
-  return res.status === 204 ? null : res.json();
 }
 
 /** Deterministic GUID from a stable string, so re-running finds what it made. */
@@ -84,6 +134,48 @@ function guidFor(seed) {
   return `${a}-${b.slice(0, 4)}-4${b.slice(5, 8)}-8${c.slice(1, 4)}-${c.slice(4)}${d}`;
 }
 
+/**
+ * List every governance domain, following the pagination cursor.
+ *
+ * The single-page version of this was an idempotency bug waiting to happen:
+ * a tenant with more than one page of domains would not find the Cortex ones
+ * on a re-run and would create them again.
+ */
+async function listAllDomains() {
+  const out = [];
+  let skipToken;
+  do {
+    const page = await purviewFetch('/datagovernance/catalog/businessdomains', {
+      query: { $skipToken: skipToken }
+    });
+    out.push(...(page?.value || []));
+    skipToken = page?.nextLink ? new URL(page.nextLink).searchParams.get('$skipToken') : null;
+  } while (skipToken);
+  return out;
+}
+
+/**
+ * Query every data product Cortex might have created previously.
+ *
+ * multiStatus MUST include Draft. When the publish transition is refused the
+ * fallback below creates the product as DRAFT — and a Published-only query
+ * would then not find it on the next run and would create a duplicate. Note
+ * the title-case filter values against the upper-case entity field; that
+ * asymmetry is real.
+ */
+async function listAllDataProducts() {
+  const out = [];
+  for (let skip = 0; ; skip += PAGE_SIZE) {
+    const res = await purviewFetch('/datagovernance/catalog/dataProducts/query', {
+      method: 'POST',
+      body: { skip, top: PAGE_SIZE, multiStatus: ['Published', 'Draft', 'Expired'] }
+    });
+    const batch = res?.value || [];
+    out.push(...batch);
+    if (batch.length < PAGE_SIZE) return out;
+  }
+}
+
 async function bootstrapDomains(domains) {
   log.step(`Governance domains (${domains.length})`);
   const ids = {};
@@ -91,8 +183,7 @@ async function bootstrapDomains(domains) {
   let existing = [];
   if (!DRY_RUN) {
     try {
-      const page = await purviewFetch('/datagovernance/catalog/businessdomains');
-      existing = page.value || [];
+      existing = await listAllDomains();
     } catch (err) {
       log.fail(`could not list domains — ${err.message}`);
       throw err;
@@ -102,11 +193,25 @@ async function bootstrapDomains(domains) {
   for (const d of domains) {
     const id = guidFor(`domain:${d.id}`);
     ids[d.id] = id;
-    const already = existing.find((x) => x.id === id || x.name === d.name);
+    const byId = existing.find((x) => x.id === id);
+    const byName = byId ? null : existing.find((x) => x.name === d.name);
+    const already = byId || byName;
 
     if (DRY_RUN) {
       log.skip(`${d.name} (dry run)`);
       continue;
+    }
+
+    // Matching on name is what makes this idempotent when Purview assigns its
+    // own id — but it also means a domain someone else created under the same
+    // name gets updated in place. Say so rather than doing it silently.
+    if (byName) {
+      if (NO_ADOPT) {
+        failed++;
+        log.fail(`${d.name} — a domain of this name already exists and --no-adopt was given`);
+        continue;
+      }
+      log.warn(`${d.name} — adopting the existing domain of this name (id ${byName.id})`);
     }
 
     try {
@@ -146,17 +251,16 @@ async function bootstrapDataProducts(products, domainIds) {
   log.step(`Data products (${products.length})`);
 
   let existing = [];
-  try {
-    if (!DRY_RUN) {
-      const res = await purviewFetch('/datagovernance/catalog/dataProducts/query', {
-        method: 'POST',
-        body: { top: 500 }
-      });
-      existing = res.value || [];
+  if (!DRY_RUN) {
+    try {
+      existing = await listAllDataProducts();
+    } catch (err) {
+      // Not fatal — but it does mean this run cannot tell new from existing,
+      // so it must not pass silently the way it used to. A duplicate here is
+      // far more confusing to unpick than a warning is to read.
+      log.warn(`could not query existing data products — ${err.message}`);
+      log.warn('proceeding as if every product is new; re-run once the query works');
     }
-  } catch {
-    // A query failure is not fatal — treat everything as new and let the
-    // per-product create report its own error.
   }
 
   for (const p of products) {
@@ -220,11 +324,15 @@ async function bootstrapDataProducts(products, domainIds) {
             method: 'PUT',
             body: { ...already, ...draft }
           });
+          // It already existed — this is an update, not a creation. Counting it
+          // as created made a re-run report 14 new products every time.
+          updated++;
+          log.ok(`${p.name} (updated as DRAFT — publish refused: ${err.message.slice(0, 80)})`);
         } else {
           await purviewFetch('/datagovernance/catalog/dataProducts', { method: 'POST', body: draft });
+          created++;
+          log.ok(`${p.name} (created as DRAFT — publish refused: ${err.message.slice(0, 80)})`);
         }
-        created++;
-        log.ok(`${p.name} (created as DRAFT — publish refused: ${err.message.slice(0, 80)})`);
       } catch (err2) {
         failed++;
         log.fail(`${p.name} — ${err2.message}`);
@@ -275,17 +383,44 @@ async function apimFetch(pathname, { method = 'GET', body, query = {}, headers =
   url.searchParams.set('api-version', config.apim.apiVersion);
   for (const [k, v] of Object.entries(query)) if (v != null) url.searchParams.set(k, String(v));
 
-  const token = await getToken(ARM_SCOPE);
-  const res = await fetch(url, {
-    method,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...headers },
-    body: body ? JSON.stringify(body) : undefined
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`${method} ${pathname} → ${res.status} ${text.slice(0, 300)}`);
+  for (let attempt = 0; ; attempt++) {
+    const token = await getToken(ARM_SCOPE);
+    let res;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          ...headers
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(HTTP_TIMEOUT_MS)
+      });
+    } catch (err) {
+      if (err?.name === 'TimeoutError') {
+        throw new Error(`${method} ${pathname} → no response within ${HTTP_TIMEOUT_MS}ms`);
+      }
+      throw err;
+    }
+
+    if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+      const retryAfter = Number(res.headers.get('retry-after'));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter * 1000 : 2000 * (attempt + 1);
+      log.warn(`${res.status} from ARM — waiting ${Math.round(waitMs / 1000)}s and retrying`);
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`${method} ${pathname} → ${res.status} ${text.slice(0, 300)}`);
+    }
+    const payload = res.status === 204 ? null : await res.json();
+    // 201 means ARM created it, 200 means it replaced one that was there.
+    // Returning the status is what lets the summary line tell the truth.
+    return { status: res.status, body: payload };
   }
-  return res.status === 204 ? null : res.json();
 }
 
 async function bootstrapSkills(skills) {
@@ -300,7 +435,7 @@ async function bootstrapSkills(skills) {
       // A REST API per skill, pointed at the Cortex shim so it is genuinely
       // callable rather than a name in a list.
       const spec = skillSpec(s, config.publicBaseUrl);
-      await apimFetch(`/apis/${s.id}`, {
+      const api = await apimFetch(`/apis/${s.id}`, {
         method: 'PUT',
         headers: { 'If-Match': '*' },
         body: {
@@ -348,13 +483,22 @@ async function bootstrapSkills(skills) {
         }
       });
 
+      // Association with the product is not fatal — but swallowing the reason
+      // meant a skill that never appeared for subscribers gave no clue why.
       await apimFetch(`/products/${config.apim.productId}/apis/${s.id}-mcp`, {
         method: 'PUT',
         headers: { 'Content-Length': '0' }
-      }).catch(() => {});
+      }).catch((err) => {
+        log.warn(`${s.name} — not added to product "${config.apim.productId}": ${err.message.slice(0, 120)}`);
+      });
 
-      created++;
-      log.ok(`${s.name} (API + MCP server)`);
+      if (api.status === 201) {
+        created++;
+        log.ok(`${s.name} (API + MCP server created)`);
+      } else {
+        updated++;
+        log.ok(`${s.name} (API + MCP server updated)`);
+      }
     } catch (err) {
       failed++;
       log.fail(`${s.name} — ${err.message}`);
@@ -366,7 +510,7 @@ function skillSpec(s, baseUrl) {
   return {
     openapi: '3.0.3',
     info: { title: s.name, version: '1', description: s.description },
-    servers: [{ url: `${baseUrl || 'https://localhost'}/shim/skills/${s.id}` }],
+    servers: [{ url: `${baseUrl}/shim/skills/${s.id}` }],
     paths: {
       '/invoke': {
         post: {
@@ -398,6 +542,14 @@ async function main() {
   console.log('Cortex bootstrap');
   console.log(DRY_RUN ? '  DRY RUN — nothing will be written\n' : '');
 
+  // An unrecognised --only used to run nothing at all and exit 0, which reads
+  // exactly like a successful no-op run.
+  if (ONLY && !['purview', 'apim'].includes(ONLY)) {
+    console.error(`\nUnknown --only=${ONLY}. Valid values: purview, apim.`);
+    process.exitCode = 1;
+    return;
+  }
+
   if (!DRY_RUN) await hydrateConfig();
 
   const missing = DRY_RUN ? [] : missingRequired();
@@ -405,15 +557,29 @@ async function main() {
     console.error('\nMissing required configuration:');
     for (const m of missing) console.error(`  - ${m}`);
     console.error('\nOnboard these to Key Vault, or set them as environment variables.');
-    console.error('See docs/keyvault.md.');
-    process.exit(1);
+    console.error('On Windows the quickest route is:  . .\\scripts\\Set-CortexEnv.ps1');
+    console.error('See docs/DEPLOY.md.');
+    process.exitCode = 1;
+    return;
   }
 
   console.log(`  purview : ${config.purview.endpoint}`);
   console.log(`  apim    : ${config.apim.serviceName || '(not set)'}`);
 
-  const dir = config.bootstrapDir;
-  const read = async (f) => JSON.parse(await readFile(path.join(dir, f), 'utf8'));
+  const dir = path.isAbsolute(config.bootstrapDir)
+    ? config.bootstrapDir
+    : path.resolve(REPO_ROOT, config.bootstrapDir);
+
+  const read = async (f) => {
+    const file = path.join(dir, f);
+    try {
+      return JSON.parse(await readFile(file, 'utf8'));
+    } catch (err) {
+      if (err.code === 'ENOENT') throw new Error(`Content file not found: ${file}`);
+      if (err instanceof SyntaxError) throw new Error(`${file} is not valid JSON: ${err.message}`);
+      throw err;
+    }
+  };
 
   const domains = await read('domains.json');
   const products = await read('data-products.json');
@@ -428,6 +594,12 @@ async function main() {
     if (!config.apim.serviceName) {
       log.step('API Management');
       log.skip('APIM_SERVICE_NAME not set — skipping');
+    } else if (!DRY_RUN && !config.publicBaseUrl) {
+      // The generated OpenAPI carries this as its server URL. Defaulting it to
+      // localhost published APIs that could never be called, and said nothing.
+      log.step('API Management');
+      log.fail('PUBLIC_BASE_URL not set — skills would be published pointing at an unreachable address');
+      failed++;
     } else {
       await bootstrapSkills(skills);
     }
@@ -440,10 +612,57 @@ async function main() {
     console.log('  Data Product Owner (catalogue plane) AND Data reader (Data Map plane).');
     console.log('  Both are required. Missing the second is the most common cause.');
   }
-  process.exit(failed ? 1 : 0);
+
+  // process.exit() truncates stdout when it is a pipe — which it always is
+  // under `npm run`, on Windows especially. Set the code and let Node drain.
+  process.exitCode = failed ? 1 : 0;
 }
 
-main().catch((err) => {
-  console.error('\nBootstrap failed:', err.message);
-  process.exit(1);
-});
+/**
+ * Only run when invoked as a script. Importing this file used to execute the
+ * whole bootstrap as a side effect, which is why none of the logic above was
+ * ever covered by a test — including the idempotency rules, where a mistake
+ * silently duplicates content in a real catalogue.
+ */
+const invokedDirectly =
+  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error('\nBootstrap failed:', err.message);
+    process.exitCode = 1;
+  });
+}
+
+export {
+  main,
+  purviewFetch,
+  apimFetch,
+  listAllDomains,
+  listAllDataProducts,
+  bootstrapDomains,
+  bootstrapDataProducts,
+  bootstrapSkills,
+  skillSpec,
+  mapFrequency,
+  attributesFor,
+  guidFor
+};
+
+/** Counters, for tests. Not part of the script's behaviour. */
+export const __counters = {
+  get created() {
+    return created;
+  },
+  get updated() {
+    return updated;
+  },
+  get failed() {
+    return failed;
+  },
+  reset() {
+    created = 0;
+    updated = 0;
+    failed = 0;
+  }
+};

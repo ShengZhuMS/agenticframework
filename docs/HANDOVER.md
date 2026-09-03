@@ -27,7 +27,7 @@ Cortex is a single front door to Microsoft Purview, Azure API Management and Mic
 | Entra sign-in | Working |
 | **Verified against real Azure** | **Partly — see §8** |
 
-127 unit tests and a 23-step end-to-end script pass against HTTP stubs shaped like real Azure responses.
+157 unit tests and a 23-step end-to-end script pass against HTTP stubs shaped like real Azure responses.
 
 ---
 
@@ -76,6 +76,8 @@ src/web/              Server-rendered GOV.UK pages. No client JS at all.
 src/purview-mcp/      Glue 1.
 test/
   fixtures.js         HTTP-level Azure stubs. Start here to write a test.
+  token.test.js       How the Azure CLI is invoked. Both Windows spawn traps, pinned.
+  bootstrap.test.js   The idempotency rules. A mistake here duplicates a real catalogue.
 ```
 
 ---
