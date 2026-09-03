@@ -152,7 +152,7 @@ ${identityBar(ctx)}
   <div class="govuk-phase-banner">
     <p class="govuk-phase-banner__content">
       <strong class="govuk-tag">Alpha</strong>
-      <span>This is a prototype created by CCoE for SIT. For technical queries and bug reporting, please contact the sheng.zhu@defra.gov.uk</span>
+      <span>This is a prototype only created by CCoE for SIT. For technical queries and bug reporting, please contact sheng.zhu@defra.gov.uk</span>
     </p>
   </div>
 
