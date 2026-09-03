@@ -111,3 +111,56 @@ describe('access requests capture the requester at the time of asking', () => {
     assert.deepEqual(r.requesterGroups, USERS.consumer.groups);
   });
 });
+
+describe('governance domains are named two ways, and the register uses one', () => {
+  test('a slug or a display name resolves to the Purview domain id', () => {
+    // bootstrap/domains.json, the MCP tool and a new agent's default all say
+    // "water" or "corp"; Purview says a GUID. Both must land on the same domain.
+    assert.equal(index.clusterById('water')?.id, 'd-water');
+    assert.equal(index.clusterById('Waste and resources')?.id, 'd-waste');
+    assert.equal(index.clusterById('corp')?.id, 'd-corp');
+    assert.equal(index.clusterById('d-corp')?.id, 'd-corp');
+  });
+
+  test('an entry registered under a slug is stored under the domain id', () => {
+    index.upsert({
+      id: 'slug-agent',
+      name: 'Slug agent',
+      cat: 'Agent',
+      cluster: 'corp',
+      desc: 'Built with the default cluster',
+      owner: 'Test',
+      _source: { system: 'foundry', id: 'slug-agent' },
+      _endpoints: {}
+    });
+    assert.equal(index.get('slug-agent').cluster, 'd-corp');
+    assert.ok(!index.coverage().byDomain.corp, 'no phantom "corp" domain appears on the map');
+    index.entries.delete('slug-agent');
+  });
+
+  test('a domain nobody knows is left alone rather than guessed', () => {
+    index.upsert({
+      id: 'stray',
+      name: 'Stray',
+      cat: 'Skill',
+      cluster: 'unassigned',
+      desc: 'x',
+      owner: 'Test',
+      _source: { system: 'apim', id: 'stray' },
+      _endpoints: {}
+    });
+    assert.equal(index.get('stray').cluster, 'unassigned');
+    index.entries.delete('stray');
+  });
+
+  test("Cortex's own Ask agent is not a marketplace entry", async () => {
+    const restoreAgents = await loadIndex({ agents: [{ name: 'cortex-ask', version: 1 }, { name: 'waste-carrier-checker', version: 1 }] });
+    try {
+      assert.equal(index.get('cortex-ask'), null);
+      assert.ok(index.get('waste-carrier-checker'));
+    } finally {
+      restoreAgents();
+      restore = await loadIndex();
+    }
+  });
+});

@@ -20,7 +20,7 @@ Or in VS Code: **Ctrl+Shift+P → Tasks: Run Task → Cortex: Deploy to Azure**.
 .\scripts\Deploy-Cortex.ps1 -WhatIfResources
 ```
 
-Two steps cannot be automated — Entra sign-in with the **groups claim**, and the Purview roles in **both** planes. Both are in **`docs/DEPLOY.md`**, and the app will not work correctly until they are done.
+The script also switches on Entra sign-in **with the groups claim** and grants the Cortex identity its **Purview Unified Catalog roles** — the two steps that used to be manual, and the two most common reasons a working deployment looked broken. **`docs/DEPLOY.md`** walks through it in order.
 
 ## Run it locally
 
@@ -31,7 +31,7 @@ Two steps cannot be automated — Entra sign-in with the **groups claim**, and t
 Local means *your machine, real Azure*. There is no offline mode. Anything you publish is published for real.
 
 ```powershell
-npm test                       # 127 tests, no Azure needed
+npm test                              # 214 tests, no Azure needed
 node scripts/bootstrap.js --dry-run   # validate content, no Azure needed
 ```
 
@@ -46,7 +46,7 @@ node scripts/bootstrap.js --dry-run   # validate content, no Azure needed
 | **Map** | The estate by governance domain, with cross-domain dependencies and a full text alternative |
 | **Build an agent** | Approved model catalogue, knowledge checklist with unavailable items greyed out and explained, permitted actions, seven computed assurance gates |
 | **Publish** | Generates OpenAPI, imports it into APIM, creates an MCP server over it, writes the endpoint back to the register |
-| **Ask** | Answers with a provenance panel: sources, freshness, confidence, and what it could not reach |
+| **Ask** | A Foundry agent (`cortex-ask`) answers from the catalogue entries the asker can reach, citing them. Provenance panel: sources, freshness, confidence, what it could not reach — and how the answer was produced |
 | **Requests** | A working lifecycle — the holder's agent drafts inside *their* permissions, a person reviews the method and releases |
 | **Share your data** | Gateway registration, ownership confirmation, the access-request queue |
 
@@ -54,10 +54,11 @@ node scripts/bootstrap.js --dry-run   # validate content, no Azure needed
 
 **Microsoft Entra group membership decides everything.** There are no personas and no anonymous browsing. Clearance and licence entitlement are derived from groups, so they live in Entra where they can be governed and revoked — not in this application.
 
-Two consequences worth knowing:
+Three consequences worth knowing:
 
-1. **The groups claim is mandatory.** Without it every user appears to be in no groups, almost every entry correctly resolves to "not available", and the Marketplace looks broken for reasons that are not obvious. `/profile` diagnoses exactly this.
-2. **An agent can never reach further than the person who built it.** The greyed-out checkbox is a courtesy; the server-side refusal on submit is the control, and it is tested.
+1. **The groups claim is mandatory.** `scripts/Set-CortexAuth.ps1` switches it on. Without it every user appears to be in no groups, almost every entry correctly resolves to "not available", and the Marketplace looks broken for reasons that are not obvious. `/profile` diagnoses exactly this.
+2. **Every signed-in user is `all-staff` by default** (`CORTEX_DEFAULT_GROUPS`). A signed-in person is a member of staff; team-scoped and cleared groups still come only from Entra. Set it empty for strict mode.
+3. **An agent can never reach further than the person who built it.** The greyed-out checkbox is a courtesy; the server-side refusal on submit is the control, and it is tested.
 
 ## No number without a source
 
@@ -68,16 +69,17 @@ Usage, error rate and latency come from the API Management Reports API. **Cost p
 ## Layout
 
 ```
-docs/             HANDOVER.md · ARCHITECTURE.md · DEPLOY.md
+docs/             DEPLOY.md · HANDOVER.md · ARCHITECTURE.md
 infra/            Bicep. Every resource name and RG is a parameter.
-scripts/          Deploy-Cortex.ps1, Start-Local.ps1, Test-Cortex.ps1, bootstrap.js
+scripts/          Deploy-Cortex.ps1, Set-CortexAuth.ps1, Set-CortexEnv.ps1, Test-Cortex.ps1,
+                  Start-Local.ps1, bootstrap.js, purview-access.js
 bootstrap/        Defra content — INPUT to a script, not runtime data
 src/bff/          Backend for frontend. All Azure credentials live here.
   adapters/       purview, apim, foundry, keyvault, token
   services/       visibility, assurance, agents, publish, ask, requests, identity
 src/web/          Server-rendered GOV.UK pages
 src/purview-mcp/  Glue 1 — the Purview MCP server
-test/             127 tests, stubbed at the HTTP boundary
+test/             214 tests, stubbed at the HTTP boundary; smoke.test.js boots the real server
 .vscode/          Tasks, launch configs, extension recommendations
 ```
 
@@ -101,6 +103,7 @@ Zero `<script>` tags. The whole application works with JavaScript disabled.
 
 | | |
 |---|---|
-| **`docs/HANDOVER.md`** | Read first if you are picking this up. State of play, verified API facts, traps, next work. |
+| **`docs/DEPLOY.md`** | Deploy, check, iterate and troubleshoot — in the order you will need it. |
+| **`docs/HANDOVER.md`** | Read first if you are picking this up as a developer. State of play, verified API facts, traps, next work. |
 | **`docs/ARCHITECTURE.md`** | What it is, why it exists, how it is built, what was deliberately left out. |
-| **`docs/DEPLOY.md`** | Deploy to Azure and run locally, including every Key Vault secret. |
+| **`CHANGES.md`** | What the latest round changed, and why. |

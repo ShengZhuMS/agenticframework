@@ -147,6 +147,9 @@ param useKeyVault bool = true
 @description('Entra group id to name mapping, e.g. "<guid>=all-staff,<guid>=waste-crime". Passed to the app so it survives a re-provision.')
 param groupNames string = ''
 
+@description('Groups granted to every signed-in user on top of Entra. Default all-staff; empty string for strict mode.')
+param defaultGroups string = 'all-staff'
+
 @description('Entra app registration client id for sign-in. Optional.')
 param entraClientId string = ''
 
@@ -177,6 +180,9 @@ param mcpImageName string = ''
 
 @description('Minimum replicas for the MCP server. 1 avoids a cold start on the first agent call mid-demo.')
 param mcpMinReplicas int = 1
+
+@description('Maximum replicas for cortex-web. Keep at 1 while application state is held in memory.')
+param webMaxReplicas int = 1
 
 // ------------------------------------------------------------------ derived
 
@@ -294,10 +300,12 @@ module apimExisting 'modules/apim-existing.bicep' = if (!createApim) {
 }
 
 // ---------------------------------------------------------------- Purview
-// NOTE: Bicep can grant nothing useful on Purview. Its governance roles are
-// data-plane roles assigned in the Purview portal, and tenant-level role
-// groups do not accept service principals at all. Section 6 of the deployment
-// guide is a manual step for that reason, whether the account is new or yours.
+// Bicep grants the control-plane half: Reader on the account for the Cortex
+// identity. The Unified Catalog roles the app actually needs (Data Governance
+// Administrator, Global Catalog Reader, Governance Domain Owner) are
+// Purview-internal and are granted by `npm run bootstrap` through the Unified
+// Catalog Policies API — see scripts/purview-access.js. Deploy-Cortex.ps1
+// runs that for you; it is no longer a portal step.
 
 module purviewNew 'modules/purview.bicep' = if (createPurview) {
   name: 'purview-new'
@@ -306,6 +314,16 @@ module purviewNew 'modules/purview.bicep' = if (createPurview) {
     name: effectivePurviewName
     location: location
     tags: tags
+    principalId: identity.outputs.principalId
+  }
+}
+
+module purviewExisting 'modules/purview-existing.bicep' = if (!createPurview) {
+  name: 'purview-existing'
+  scope: resourceGroup(effectivePurviewRg)
+  params: {
+    name: purviewName
+    principalId: identity.outputs.principalId
   }
 }
 
@@ -390,6 +408,7 @@ module containerApps 'modules/containerapps.bicep' = {
     webImageName: webImageName
     mcpImageName: mcpImageName
     mcpMinReplicas: mcpMinReplicas
+    webMaxReplicas: webMaxReplicas
 
     // Direct configuration. Ignored when useKeyVault is true, so the same
     // values are computed once here and the mode decides which path uses them.
@@ -404,6 +423,7 @@ module containerApps 'modules/containerapps.bicep' = {
     entraTenantId: subscription().tenantId
     entraClientId: entraClientId
     groupNames: groupNames
+    defaultGroups: defaultGroups
 
     // The APIM subscription key and the App Insights connection string are
     // deliberately NOT passed. Deploy-Cortex.ps1 writes them onto the app after

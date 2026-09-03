@@ -84,6 +84,7 @@ function entryCard(e, ctx) {
           <span>${esc(e.sens)}</span>
           ${e.calls ? `<span>${Number(e.calls).toLocaleString('en-GB')} calls</span>` : ''}
           ${e._endpoints?.mcp ? '<span><strong>MCP</strong> endpoint</span>' : ''}
+          ${e.catalogueStatus && e.catalogueStatus !== 'Published' ? '<span><strong class="govuk-tag govuk-tag--grey">Draft in Purview</strong></span>' : ''}
         </div>
       </div>
       <div style="flex:0 0 230px">

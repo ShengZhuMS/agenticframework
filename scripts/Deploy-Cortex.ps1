@@ -53,6 +53,10 @@
   Move an existing model deployment onto the pinned model and version.
 
 .EXAMPLE
+  .\scripts\Deploy-Cortex.ps1 -GroupMap 'waste-crime=Waste Crime Observatory'
+  Full deployment, and map an Entra group onto the name the access rules use.
+
+.EXAMPLE
   .\scripts\Deploy-Cortex.ps1 -Reset
   Delete everything Cortex created and start clean. Prompts first.
 #>
@@ -95,9 +99,16 @@ param(
   [ValidateSet('auto','keyvault','direct')]
   [string]$ConfigSource         = 'auto',
 
+  # Sign-in. Set-CortexAuth.ps1 runs after provisioning unless -SkipAuth.
+  # "alias=Entra group display name" entries map groups onto the names the
+  # access rules use; -DefaultGroups is what every signed-in user is treated as.
+  [string[]]$GroupMap           = @(),
+  [string]$DefaultGroups        = 'all-staff',
+
   [switch]$WhatIfResources,
   [switch]$SkipProvision,
   [switch]$SkipBootstrap,
+  [switch]$SkipAuth,
   [switch]$SkipHealthCheck,
   [switch]$AppOnly,
   [switch]$UpgradeModel,
@@ -146,6 +157,18 @@ try {
   $nodeMajor = (node --version) -replace 'v(\d+)\..*','$1'
   if ([int]$nodeMajor -lt 20) { throw "Node 20 or later required. Found v$nodeMajor." }
   Ok "az, azd, node v$nodeMajor, npm"
+
+  # Source files that have travelled through a chat or a transfer tool can come
+  # back with anything shaped like a credential replaced by asterisks — this has
+  # happened to this repository once. It parses, deploys, and then every call
+  # to Azure is refused. Cheap to check, expensive to discover in production.
+  $masked = Get-ChildItem -Path (Join-Path $root 'src'), (Join-Path $root 'scripts'), (Join-Path $root 'infra') -Recurse -Include *.js,*.ps1,*.bicep -File |
+              Select-String -Pattern '[*]{6}' -List
+  if ($masked) {
+    foreach ($m in $masked) { Fail "$($m.Path):$($m.LineNumber) contains a masked value (a run of asterisks)" }
+    throw 'Masked credential placeholders found in the source. Restore those lines from git before deploying.'
+  }
+  Ok 'No masked placeholders in the source'
 
   # Docker not running is the single most common local failure, and azd only
   # reports it once it has already spent minutes provisioning.
@@ -751,6 +774,25 @@ try {
     }
   }
 
+  # ------------------------------------------------------------ 11b sign-in
+  #
+  # Entra sign-in, WITH the groups claim, plus the group mapping and the
+  # default group. All idempotent, all in Set-CortexAuth.ps1 so it can also be
+  # run on its own when the mapping changes. Container Apps authentication is
+  # outside the Bicep, so this survives a re-provision either way.
+  if (-not $SkipAuth) {
+    Step 10 'Switching on Entra sign-in with the groups claim'
+    $authArgs = @{ EnvironmentName = $EnvironmentName; DefaultGroups = $DefaultGroups; Quiet = $true }
+    if ($GroupMap.Count -gt 0) { $authArgs.GroupMap = $GroupMap }
+    & (Join-Path $root 'scripts/Set-CortexAuth.ps1') @authArgs
+    if ($LASTEXITCODE -ne 0) {
+      Warn2 'Sign-in could not be configured. The app will show "Sign-in is not configured" until it is.'
+      Info  'Re-run by hand:  .\scripts\Set-CortexAuth.ps1'
+    } else { Ok 'Sign-in configured' }
+  } else {
+    Step 10 'Skipping sign-in configuration'
+  }
+
   # ---------------------------------------------------------- 12 bootstrap
   #
   # BOOTSTRAP RUNS HERE, NOT IN THE CONTAINER.
@@ -766,8 +808,10 @@ try {
   # starts. `$env:` here is inherited by npm, which is exactly what is wanted;
   # nothing is written to disk.
   if (-not $SkipBootstrap) {
-    Step 10 'Creating the Defra content in Purview and API Management'
-    Warn2 'Needs the Purview roles from the deployment guide, section 7.'
+    Step 11 'Granting Purview access to the Cortex identity and creating the Defra content'
+    Info 'The roles are granted with YOUR signed-in account through the Unified Catalog Policies API.'
+    Info 'If Purview refuses you (403), add yourself as a Data Governance Administrator in the'
+    Info 'Purview portal (Settings → Solution settings → Unified Catalog → Roles and permissions).'
 
     # The app's azure-resource-group is the group holding API MANAGEMENT — it
     # exists to build APIM ARM resource ids. Not the Cortex group, which is
@@ -779,6 +823,9 @@ try {
     $env:FOUNDRY_PROJECT_ENDPOINT = $v['FOUNDRY_PROJECT_ENDPOINT']
     $env:PUBLIC_BASE_URL          = $webUrl
     $env:PURVIEW_MCP_URL          = if ($mcpUrl) { "$mcpUrl/mcp" } else { '' }
+    # The identity bootstrap grants the Purview roles to. Without it the roles
+    # step is skipped and the deployed app keeps answering 403 from Purview.
+    $env:CORTEX_IDENTITY_PRINCIPAL_ID = $v['CORTEX_IDENTITY_PRINCIPAL_ID']
     if ($apimKey) { $env:APIM_SUBSCRIPTION_KEY = $apimKey }
 
     # Only point bootstrap at the vault when the vault is actually usable from
@@ -793,12 +840,21 @@ try {
       Info  '    . .\scripts\Set-CortexEnv.ps1'
       Info  '    npm run bootstrap'
       Info  'Without that first line the values above are gone and every one is reported missing.'
-    } else { Ok 'Domains and data products created' }
+    } else { Ok 'Purview access granted; domains and data products created' }
+
+    # The app refreshes its register every 15 minutes. Ask it to do so now, so
+    # the Marketplace shows the content the moment this script finishes. The
+    # identity's new roles can take a minute to propagate, so a refresh that
+    # still reports Purview errors is retried by the health check below.
+    try {
+      $null = Invoke-RestMethod -Method Post -Uri "$webUrl/api/index/refresh" -TimeoutSec 120
+      Ok 'Register refreshed'
+    } catch { Warn2 "Could not refresh the register now — it refreshes itself within 15 minutes ($($_.Exception.Message))" }
   }
 
   # ------------------------------------------------------------- 13 check
   if (-not $SkipHealthCheck) {
-    Step 11 'Checking the deployment'
+    Step 12 'Checking the deployment'
     # A container app that has just taken a new revision needs a moment. Three
     # attempts with a short back-off turns a spurious red into a real signal.
     foreach ($p in @('/api/health','/api/health/keyvault','/api/health/purview','/api/health/apim','/api/health/foundry')) {
@@ -838,12 +894,16 @@ try {
     Write-Host " Contributor on the app. Fine for a sandbox, not for production." -ForegroundColor Yellow
     Write-Host " docs/DEPLOY.md section 5 has the route back to Key Vault.`n" -ForegroundColor Yellow
   }
-  Write-Host " Two steps remain. Neither can be automated.`n"
-  Write-Host "  1. Purview roles — BOTH planes. Identity: $($v['CORTEX_IDENTITY_PRINCIPAL_ID'])"
-  Write-Host "     Deployment guide, section 6."
-  Write-Host "  2. Entra sign-in, WITH the groups claim."
-  Write-Host "     Without it everyone appears to be in no groups and sees almost nothing."
-  Write-Host "     Deployment guide, section 5.`n"
+  Write-Host " What was automated this run:"
+  Write-Host "  - Purview: the Cortex identity ($($v['CORTEX_IDENTITY_PRINCIPAL_ID'])) holds its Unified Catalog roles"
+  Write-Host "    (granted by bootstrap). If the Help page still shows Purview as unavailable, wait a minute and reload."
+  Write-Host "  - Sign-in: Entra, with the groups claim. Every signed-in user is treated as: $DefaultGroups"
+  if ($GroupMap.Count -eq 0) {
+    Write-Host "    To map real Entra groups onto access-rule names:  .\scripts\Set-CortexAuth.ps1 -GroupMap 'waste-crime=<group name>'"
+  }
+  Write-Host ""
+  Write-Host " Check it:  .\scripts\Test-Cortex.ps1   then open $webUrl/profile"
+  Write-Host ""
   Write-Host " Re-running this script is safe. For a code-only change use -AppOnly.`n" -ForegroundColor DarkGray
 }
 catch { Fail $_.Exception.Message; exit 1 }

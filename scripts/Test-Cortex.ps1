@@ -83,11 +83,24 @@ try {
       $r = Invoke-RestMethod -Uri "$Url$($c.Path)" -TimeoutSec 30
       if ($r.ok) {
         Write-Host ("  OK    {0}" -f $c.Name) -ForegroundColor Green
+        if ($c.Path -eq '/api/health/purview') {
+          Write-Host ("        {0} domains, {1} data products ({2} published)" -f $r.domains, $r.dataProducts, $r.published)
+        }
       } else {
         $failed++
         Write-Host ("  FAIL  {0}" -f $c.Name) -ForegroundColor Red
+        if ($r.error)           { Write-Host ("        {0}" -f $r.error) }
         if ($r.missingRequired) { Write-Host ("        missing: {0}" -f ($r.missingRequired -join ', ')) }
         if ($r.sourceErrors)    { Write-Host ("        errors:  {0}" -f ($r.sourceErrors | ConvertTo-Json -Compress)) }
+        # The one Purview failure that is not an app fault, and the one people
+        # hit first. Say what it is and what fixes it.
+        $text = "$($r.error) $($r.sourceErrors | ConvertTo-Json -Compress)"
+        if ($text -match 'Not authorized to access account|failed 403') {
+          Write-Host '        The Cortex identity holds no Unified Catalog role yet. Grant it:' -ForegroundColor Yellow
+          Write-Host '            . .\scripts\Set-CortexEnv.ps1' -ForegroundColor Yellow
+          Write-Host '            node scripts/bootstrap.js --only=roles' -ForegroundColor Yellow
+          Write-Host '        then wait a minute and run this again.' -ForegroundColor Yellow
+        }
       }
       if ($c.Path -eq '/api/health') {
         Write-Host ("        {0} entries across {1} domains" -f $r.entries, $r.domains)

@@ -15,7 +15,7 @@
  */
 
 import { resolveSecrets, setPath, SECRET_CATALOGUE } from './adapters/keyvault.js';
-import { parseGroupNames } from './services/identity.js';
+import { parseGroupNames, parseDefaultGroups } from './services/identity.js';
 
 const env = process.env;
 
@@ -34,7 +34,9 @@ export const config = {
     apiVersion: env.PURVIEW_API_VERSION || '2026-03-20-preview',
     scope: 'https://purview.azure.net/.default',
     dataMapEndpoint: env.PURVIEW_DATAMAP_ENDPOINT || '',
-    dataMapApiVersion: env.PURVIEW_DATAMAP_API_VERSION || '2023-09-01'
+    dataMapApiVersion: env.PURVIEW_DATAMAP_API_VERSION || '2023-09-01',
+    /** No outbound call may hang a page or the index refresh. */
+    timeoutMs: Number(env.PURVIEW_TIMEOUT_MS || 30_000)
   },
 
   apim: {
@@ -58,10 +60,32 @@ export const config = {
     scope: 'https://ai.azure.com/.default',
     model: env.FOUNDRY_MODEL || 'gpt-5-mini',
     /**
+     * Further deployments the approved catalogue may offer, comma-separated.
+     * Only deployments that exist in the project belong here — an agent built
+     * on a model that is not deployed fails at creation, not at selection.
+     */
+    extraModels: (env.FOUNDRY_MODELS || '').split(',').map((m) => m.trim()).filter(Boolean),
+    /**
      * Project connection of kind 'remote-tool' carrying the APIM subscription
      * key, so an agent can call an APIM MCP server.
      */
-    mcpConnection: env.FOUNDRY_MCP_CONNECTION || ''
+    mcpConnection: env.FOUNDRY_MCP_CONNECTION || '',
+    timeoutMs: Number(env.FOUNDRY_TIMEOUT_MS || 30_000),
+    /** A model answer takes longer than a listing. Bounded all the same. */
+    responseTimeoutMs: Number(env.FOUNDRY_RESPONSE_TIMEOUT_MS || 90_000)
+  },
+
+  ask: {
+    /** The Foundry agent that answers the Ask page. Created on first use. */
+    agentName: env.ASK_AGENT_NAME || 'cortex-ask',
+    /**
+     * Attach the Cortex Purview MCP server to the Ask agent as a tool, so the
+     * model can look the catalogue up itself. Off by default: the answer is
+     * grounded by passing the reachable entries inline, which is faster and has
+     * one failure mode fewer in front of an audience. Turn on to demonstrate an
+     * agent calling the catalogue live.
+     */
+    usePurviewMcp: bool(env.ASK_USE_PURVIEW_MCP, false)
   },
 
   /**
@@ -86,6 +110,12 @@ export const config = {
      *   CORTEX_GROUP_NAMES="<guid>=waste-crime,<guid>=all-staff"
      */
     groupNames: parseGroupNames(env.CORTEX_GROUP_NAMES),
+    /**
+     * Groups every signed-in person is treated as holding, on top of Entra.
+     * Default `all-staff`: a signed-in user is a member of staff. Set to an
+     * empty string for strict mode, where only Entra groups count.
+     */
+    defaultGroups: parseDefaultGroups(env.CORTEX_DEFAULT_GROUPS),
     /**
      * Allow running without platform authentication in front of the app —
      * for local development against real Azure back ends, where there is no

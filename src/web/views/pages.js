@@ -179,7 +179,16 @@ export function profilePage(ctx, { counts }) {
     ${
       realGroups.length
         ? `<ul class="govuk-list govuk-list--bullet">
-             ${realGroups.map((g) => `<li>${esc(g)}</li>`).join('')}
+             ${realGroups
+               .map(
+                 (g) =>
+                   `<li>${esc(g)}${
+                     (u.defaultGroups || []).includes(g)
+                       ? ' <span class="cortex-src">granted to every signed-in user by configuration, not by Entra</span>'
+                       : ''
+                   }</li>`
+               )
+               .join('')}
            </ul>`
         : `<div class="govuk-warning-text">
              <span class="govuk-warning-text__icon" aria-hidden="true">!</span>

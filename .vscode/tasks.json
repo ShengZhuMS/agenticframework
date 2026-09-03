@@ -23,7 +23,7 @@
     },
     {
       "label": "Cortex: Deploy to Azure",
-      "detail": "Full deployment — provision, deploy, onboard secrets, bootstrap, verify. Safe to run repeatedly.",
+      "detail": "Full deployment — provision, deploy, onboard secrets, sign-in, Purview access, bootstrap, verify. Safe to run repeatedly.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -56,6 +56,44 @@
         "-File",
         "${workspaceFolder}/scripts/Deploy-Cortex.ps1",
         "-AppOnly"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Configure sign-in",
+      "detail": "Entra app registration, the groups claim, Container Apps authentication and the default group. Idempotent.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Set-CortexAuth.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Grant Purview access",
+      "detail": "Give the Cortex identity its Unified Catalog roles. Fixes 'Purview UNAVAILABLE — 403'. Idempotent.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        ". ./scripts/Set-CortexEnv.ps1 -Quiet; node scripts/bootstrap.js --only=roles"
       ],
       "problemMatcher": [],
       "presentation": {
@@ -187,7 +225,7 @@
     },
     {
       "label": "Cortex: Bootstrap content",
-      "detail": "Create the Defra governance domains and data products in Purview. Loads config first. Idempotent.",
+      "detail": "Grant Purview access, then create the Defra governance domains and data products in Purview. Loads config first. Idempotent.",
       "type": "shell",
       "command": "pwsh",
       "args": [

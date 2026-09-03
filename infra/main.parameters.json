@@ -38,6 +38,7 @@
     "useKeyVault":            { "value": "${USE_KEYVAULT=true}" },
 
     "groupNames":             { "value": "${CORTEX_GROUP_NAMES=}" },
+    "defaultGroups":          { "value": "${CORTEX_DEFAULT_GROUPS=all-staff}" },
     "entraClientId":          { "value": "${ENTRA_CLIENT_ID=}" },
 
     "registryName":           { "value": "${REGISTRY_NAME=prdcoreamlacr001}" },
@@ -51,6 +52,7 @@
 
     "webImageName":           { "value": "${SERVICE_WEB_IMAGE_NAME=}" },
     "mcpImageName":           { "value": "${SERVICE_PURVIEW_MCP_IMAGE_NAME=}" },
-    "mcpMinReplicas":         { "value": "${MCP_MIN_REPLICAS=1}" }
+    "mcpMinReplicas":         { "value": "${MCP_MIN_REPLICAS=1}" },
+    "webMaxReplicas":         { "value": "${WEB_MAX_REPLICAS=1}" }
   }
 }

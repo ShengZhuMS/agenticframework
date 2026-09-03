@@ -1,9 +1,8 @@
 #!/bin/sh
-# Runs after `azd up` provisions. Two things it CANNOT do, by design:
-#   - assign Purview governance roles (portal-only, and tenant-level role
-#     groups do not accept service principals at all)
-#   - create the Entra app registration for sign-in
-# Both are documented as manual steps in the deployment guide.
+# Runs after `azd up` provisions on a POSIX shell. Kept for completeness — the
+# supported path is scripts/Deploy-Cortex.ps1 from PowerShell 7, which also
+# onboards the APIM key, switches on sign-in with the groups claim, grants the
+# Cortex identity its Purview roles and creates the content.
 set -e
 
 echo ""
@@ -12,24 +11,18 @@ echo " Cortex provisioned."
 echo "======================================================================"
 echo ""
 echo " Web app:  ${CORTEX_WEB_URL}"
+echo " MCP:      ${CORTEX_MCP_URL}"
 echo ""
-echo " TWO MANUAL STEPS REMAIN — see docs section 4 and 5:"
+echo " Three steps remain, all scripted:"
 echo ""
-echo " 1. Purview roles (portal only)."
-echo "    Identity principal ID: ${CORTEX_IDENTITY_PRINCIPAL_ID}"
-echo "    Purview portal > Unified Catalog > Catalog management >"
-echo "      Governance domains > [domain] > Roles"
-echo "        add as Data Product Owner AND Governance Domain Reader"
-echo "    Purview portal > Data Map > Domains and collections > [collection]"
-echo "      > Role assignments"
-echo "        add as Data reader"
-echo ""
-echo "    BOTH PLANES ARE REQUIRED. A Data Product Owner without Data Map"
-echo "    read cannot see the underlying assets — they silently vanish,"
-echo "    including from search. This is the most common setup mistake."
-echo ""
-echo " 2. Entra sign-in. Skip entirely if demoing with DEMO_MODE=true."
+echo " 1. APIM subscription key onto the app"
+echo "      pwsh ./scripts/Deploy-Cortex.ps1 -SkipProvision -SkipBootstrap -SkipAuth -SkipHealthCheck"
+echo " 2. Entra sign-in, WITH the groups claim"
+echo "      pwsh ./scripts/Set-CortexAuth.ps1"
+echo " 3. Purview access for the Cortex identity (${CORTEX_IDENTITY_PRINCIPAL_ID}) and the content"
+echo "      . ./scripts/Set-CortexEnv.ps1   (dot-sourced, in pwsh)"
+echo "      npm run bootstrap"
 echo ""
 echo " Then verify:"
-echo "    curl \${CORTEX_WEB_URL}/api/health"
+echo "    curl ${CORTEX_WEB_URL}/api/health"
 echo ""
