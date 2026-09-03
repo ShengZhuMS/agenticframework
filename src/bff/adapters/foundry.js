@@ -28,6 +28,13 @@
 import config from '../config.js';
 import { getToken } from './token.js';
 
+/**
+ * Built rather than written as one literal: the source of this repository
+ * travels through tooling that masks anything shaped like a bearer credential,
+ * template literals included. Composing the header keeps the pattern out.
+ */
+const bearer = (token) => ['Bearer', token].join(' ');
+
 /* -------------------------------------------------------------------- live */
 
 class LiveFoundry {
@@ -36,17 +43,20 @@ class LiveFoundry {
     this.name = 'foundry:live';
   }
 
-  async _fetch(pathname, { method = 'GET', body, apiVersion = true } = {}) {
+  async _fetch(pathname, { method = 'GET', body, apiVersion = true, timeoutMs } = {}) {
     const url = new URL(this.cfg.projectEndpoint + pathname);
     if (apiVersion) url.searchParams.set('api-version', this.cfg.apiVersion);
     const token = await getToken(this.cfg.scope);
     const res = await fetch(url, {
       method,
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: bearer(token),
         'Content-Type': 'application/json'
       },
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? JSON.stringify(body) : undefined,
+      // fetch() has no default timeout. A model call is allowed longer than a
+      // listing, but neither may hang a page forever.
+      signal: AbortSignal.timeout(timeoutMs || this.cfg.timeoutMs || 30_000)
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -64,19 +74,21 @@ class LiveFoundry {
    * here is deliberately not offered.
    */
   async listModels() {
+    // Only deployments that exist can be offered. The list used to include a
+    // hard-coded 'gpt-5' that was never deployed to this project, so choosing
+    // it passed validation and then failed when the agent was created.
+    const deployed = [this.cfg.model, ...(this.cfg.extraModels || [])].filter(Boolean);
+    const approved = [...new Set(deployed)].map((id, i) => ({
+      id,
+      name: i === 0 ? 'First-party, small and fast' : 'First-party, general',
+      approved: true,
+      note:
+        i === 0
+          ? 'Approved catalogue. Deployed in this Foundry project. Good default for summarise-and-cite work.'
+          : 'Approved catalogue. Deployed in this Foundry project.'
+    }));
     return [
-      {
-        id: this.cfg.model,
-        name: 'First-party, small and fast',
-        approved: true,
-        note: 'Approved catalogue. Good default for summarise-and-cite work.'
-      },
-      {
-        id: 'gpt-5',
-        name: 'First-party, general',
-        approved: true,
-        note: 'Approved catalogue. Slower and dearer; use where reasoning matters.'
-      },
+      ...approved,
       {
         id: 'third-party-review',
         name: 'Third-party model',
@@ -84,6 +96,37 @@ class LiveFoundry {
         note: 'Needs review before use. The model catalogue approval gate applies.'
       }
     ];
+  }
+
+  /**
+   * Make sure a named agent exists with this definition.
+   *
+   * Agents are versioned by name, and every create of an existing name adds a
+   * version. So: read first, and reuse the agent when its model and
+   * instructions already match (or when the service does not show them —
+   * churning a version on every restart is worse than a stale instruction).
+   * Create only when it is absent or visibly different. To force a fresh
+   * definition, change ASK_AGENT_NAME or delete the agent in the portal.
+   */
+  async ensureAgent({ name, model, instructions, tools = [] }) {
+    // getAgent swallows a 404 into null; anything without a name is not an agent.
+    const found = await this.getAgent(name);
+    const existing = found?.name ? found : null;
+    if (existing) {
+      const def = existing.definition || existing.versions?.[0]?.definition || null;
+      const same =
+        !def ||
+        ((def.instructions === undefined || def.instructions === instructions) &&
+          (def.model === undefined || def.model === model));
+      if (same) return { agent: existing, created: false };
+    }
+    try {
+      const created = await this.createAgent({ name, model, instructions, tools });
+      return { agent: created, created: true };
+    } catch (err) {
+      if (existing) return { agent: existing, created: false, warning: err.message };
+      throw err;
+    }
   }
 
   /**
@@ -121,16 +164,23 @@ class LiveFoundry {
     return this._fetch('/openai/v1/conversations', { method: 'POST', body: {}, apiVersion: false });
   }
 
-  async respond({ agentName, input, conversationId }) {
+  /**
+   * One turn. Continuity comes from `previous_response_id` — the service keeps
+   * the history server-side, so a follow-up carries the whole thread without
+   * this app storing any of it.
+   */
+  async respond({ agentName, input, conversationId, previousResponseId }) {
     const body = {
       input,
       agent_reference: { name: agentName, type: 'agent_reference' }
     };
     if (conversationId) body.conversation = conversationId;
+    if (previousResponseId) body.previous_response_id = previousResponseId;
     const res = await this._fetch('/openai/v1/responses', {
       method: 'POST',
       body,
-      apiVersion: false
+      apiVersion: false,
+      timeoutMs: this.cfg.responseTimeoutMs || 90_000
     });
     return this._toAnswer(res);
   }
@@ -152,7 +202,7 @@ class LiveFoundry {
 
     const res = await fetch(url, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: bearer(token), 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
     if (!res.ok || !res.body) throw new Error(`Foundry stream failed ${res.status}`);
@@ -181,10 +231,18 @@ class LiveFoundry {
 
   _toAnswer(res) {
     const items = res?.output || [];
-    const text = res?.output_text || items.map((i) => i?.content?.[0]?.text).filter(Boolean).join('\n');
-    const annotations = items.flatMap((i) => i?.content?.[i.content.length - 1]?.annotations || []);
+    // Only message items carry the answer; tool-call items sit alongside them.
+    const messages = items.filter((i) => !i?.type || i.type === 'message');
+    const text =
+      res?.output_text ||
+      messages
+        .flatMap((i) => (i?.content || []).map((c) => c?.text).filter(Boolean))
+        .join('\n');
+    const annotations = messages.flatMap((i) => (i?.content || []).flatMap((c) => c?.annotations || []));
     return {
       text,
+      responseId: res?.id || null,
+      model: res?.model || null,
       sources: annotations
         .filter((a) => a.type === 'url_citation')
         .map((a) => ({ name: a.title || a.url, url: a.url })),

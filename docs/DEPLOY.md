@@ -1,47 +1,95 @@
-# Cortex — Deploy and Run
+# Cortex — Deploy, run and iterate
 
 **Windows 11 · VS Code · PowerShell 7.** Everything is live — there is no demo mode and no offline path.
 
-Cortex **reuses your existing Azure estate**. It creates only the container apps and its own managed identity.
+Read in order the first time. Afterwards you will mostly need §4 (iterating) and §6 (troubleshooting).
+
+| § | | When you need it |
+|---|---|---|
+| 1 | [Before you start](#1-before-you-start) | Once |
+| 2 | [Deploy](#2-deploy) | First deploy, and any infrastructure change |
+| 3 | [After the first deploy](#3-after-the-first-deploy) | Once, then whenever you change who can see what |
+| 4 | [Iterating](#4-iterating--which-command-for-which-change) | Every day |
+| 5 | [How it fits together](#5-how-it-fits-together) | When something surprises you |
+| 6 | [Troubleshooting](#6-troubleshooting) | When it does not work |
+| 7 | [Reference](#7-reference) | Switches, settings, teardown, demo day |
 
 ---
 
-## 1. Install the tools
+## What one command does
+
+```powershell
+.\scripts\Deploy-Cortex.ps1
+```
+
+Cortex **reuses your existing Azure estate** — API Management, Purview, Foundry, Key Vault, the container registry and monitoring — and creates only two container apps and a managed identity of its own. The script then:
+
+1. checks your tools and that no source file has been damaged in transit;
+2. signs you in to Azure;
+3. reports what will be **reused** and what will be **created**;
+4. checks the pinned model version is still deployable;
+5. registers resource providers, installs dependencies and vendors GOV.UK Frontend;
+6. provisions with `azd up` (Bicep in `infra/`) and pushes both container images;
+7. reconciles the live apps (image, ingress port);
+8. puts the API Management subscription key onto the web app as a secret;
+9. **switches on Entra sign-in with the groups claim** (`Set-CortexAuth.ps1`);
+10. **grants the Cortex identity its Purview roles** and creates the Defra content (`npm run bootstrap`);
+11. refreshes the app's register and health-checks everything.
+
+Nothing is left for the portal. Steps 9 and 10 used to be manual — they are the two things that most often made a working deployment look broken, so they are scripted now and re-run safely.
+
+---
+
+## 1. Before you start
+
+### Tools
 
 ```powershell
 winget install Microsoft.PowerShell Microsoft.AzureCLI Microsoft.Azd OpenJS.NodeJS.LTS Docker.DockerDesktop Git.Git
 ```
 
-Reopen your terminal, then check:
+Reopen the terminal, then check:
 
 ```powershell
 pwsh --version; az version; azd version; node --version; docker --version
 ```
 
-If PowerShell blocks the scripts:
+Node **20 or later**. Docker Desktop must be **running** when you deploy (the script checks before it starts provisioning). If PowerShell refuses to run scripts:
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
-In VS Code, accept the recommended extensions prompt (Azure Dev CLI, Container Apps, Bicep, PowerShell).
+In VS Code, accept the recommended extensions (Azure Dev CLI, Container Apps, Bicep, PowerShell). Every command in this guide is also a task: **Ctrl+Shift+P → Tasks: Run Task → Cortex: …**
 
-### Permissions you need
+### Permissions *you* need
 
-| Scope | Role | Why |
+| Where | Role | Why |
 |---|---|---|
-| Subscription | **Contributor** | Create the container apps |
-| Subscription | **User Access Administrator** | Create role assignments on your existing resources |
-| Key Vault `prdcorekveus` | **Key Vault Secrets Officer** | Write the seeded values |
-| Registry `prdcoreamlacr001` | **AcrPush** | Push the two container images |
-| Entra | **Application Administrator** | Create the sign-in app registration |
-| Purview | **Data Governance Administrator** | Assign governance domain roles (section 6) |
+| Subscription | **Contributor** + **User Access Administrator** | Create the container apps; grant the Cortex identity roles on your existing resources |
+| Registry `prdcoreamlacr001` | **AcrPush** | Push the two images |
+| Entra | **Application Administrator** | Create the "Cortex" app registration for sign-in |
+| Purview portal | **Data Governance Administrator** | Bootstrap creates domains and grants the Cortex identity its roles *as you*. Settings → Solution settings → Unified Catalog → Roles and permissions → Data Governance Administrators |
+| Key Vault `prdcorekveus` | Key Vault Secrets Officer | Only if the vault is used (§5). Missing it is a warning, not a failure |
 
-The deploy script checks the Key Vault and registry roles up front and tells you which one is missing, rather than failing eight minutes into a provision.
+A sandbox Global Administrator has the first four. The Purview one is a Purview-internal role that Global Administrator does **not** confer automatically — if bootstrap answers `403` to *your* account, this is why (§6).
 
----
+### Permissions the *Cortex identity* gets — all automated
 
-## 2. Check what will be reused
+`id-cortex` is a user-assigned managed identity created by the Bicep. Everything it needs is granted for it:
+
+| Resource | Role | Granted by |
+|---|---|---|
+| API Management | API Management Service Contributor | Bicep (`apim-existing.bicep`) |
+| Foundry account | Foundry User, Foundry Agent Consumer | Bicep (`foundry-existing.bicep`) |
+| Purview account | Reader (control plane) | Bicep (`purview-existing.bicep`) |
+| **Purview Unified Catalog** | **Data Governance Administrator, Global Catalog Reader** (catalog level); **Governance Domain Owner** on each Cortex domain | **bootstrap** (`scripts/purview-access.js`), through the Unified Catalog Policies API |
+| Container registry | AcrPull | Bicep |
+| Key Vault | Key Vault Secrets User | Bicep (only matters in Key Vault mode) |
+
+The Purview row is the one that matters most. Without it the app authenticates and is then refused: `403 Not authorized to access account` — shown on the Help page as **Purview UNAVAILABLE**. Older notes in this repository said it could not be automated; it can, and bootstrap does it.
+
+### See what will happen
 
 ```powershell
 git clone <your-repo> cortex
@@ -49,7 +97,7 @@ cd cortex
 .\scripts\Deploy-Cortex.ps1 -WhatIfResources
 ```
 
-Changes nothing. Expect:
+Changes nothing. Expect every existing resource to be reported as `REUSE`, the two container apps and the identity as `CREATE`, and a line saying the pinned model is deployable:
 
 ```
 REUSE   API Management   prdcoreapimneu001 (PRDCOREAPIM001)
@@ -63,465 +111,288 @@ CREATE  Managed identity id-cortex (PRDCORECORTEX001)
 OK      gpt-5.4-mini 2026-03-17 is deployable (GenerallyAvailable)
 ```
 
-Anything reported as CREATE that you expected to REUSE means the name or resource group is wrong. Override it:
+Anything reported `CREATE` that you expected to `REUSE` means a name or resource group is wrong. Every one is a parameter:
 
 ```powershell
 .\scripts\Deploy-Cortex.ps1 -WhatIfResources -ApimName my-apim -ApimResourceGroup my-rg
 ```
 
-Every name and resource group is a parameter on both the script and the Bicep. Nothing is hardcoded.
-
 ---
 
-## 3. Deploy
+## 2. Deploy
 
 ```powershell
 .\scripts\Deploy-Cortex.ps1
 ```
 
-Or **Ctrl+Shift+P → Tasks: Run Task → Cortex: Deploy to Azure**.
+About 10 minutes when reusing the estate. The end of the run tells you what was automated and where to look next.
 
-Roughly 10 minutes when reusing your estate — the long poles are creating APIM or Purview, and you are doing neither.
+### Re-running is the design
 
-The script installs dependencies, vendors GOV.UK Frontend, provisions, onboards the APIM key, bootstraps the content and health-checks the result.
-
-### Re-running it
-
-**Designed for it.** Run the same command as many times as you like; it reconciles rather than recreates. Specifically:
-
-| What used to break | What happens now |
-|---|---|
-| A second provision reset both apps to the `mcr` placeholder image mid-deploy | The running image is read off the live app and fed back into the template. Your deployed code survives a re-provision |
-| An unpinned model version drifted onto a deprecated build | The model **and** version are pinned, and checked against the account's catalogue before anything is created |
-| A changed `-Location` collided with the existing resource group | The group's real location is read and reused. New resources still go to `-Location` |
-| Missing Key Vault Secrets Officer failed the whole deployment | Seeding is skipped with a warning; the app falls back to environment variables and still starts |
-| A soft-deleted name gave "already exists or is in a conflicting state" | Checked before the create is attempted, with the recover/purge command printed |
-| `azd env new` failed silently on an existing environment | The environment list is checked first |
-
-### The switches
-
-| Switch | Use it when |
-|---|---|
-| `-WhatIfResources` | You want the plan. Changes nothing |
-| `-AppOnly` | Code changed, infrastructure did not. Builds and pushes both images, nothing else. This is the fast loop |
-| `-UpgradeModel` | An existing model deployment should move onto the pinned model and version |
-| `-SkipProvision` | Provisioning already succeeded and you are re-running the steps after it |
-| `-SkipBootstrap` | You do not want to touch Purview content this run |
-| `-SkipHealthCheck` | You are deploying into something that is not up yet |
-| `-ForceSeedKeyVault` | The role check is wrong and you know you can write secrets |
-| `-ConfigSource` | `auto` (default), `keyvault` or `direct`. See section 5 |
-| `-Reset` | Start clean. Deletes the Cortex resource group and the local azd environment, after prompting |
-
-`-Reset` is deliberately narrow. It does **not** remove the Key Vault secrets, the `cortex` product in APIM, the role assignments for the Cortex identity, or the Purview domains and data products — those live on shared resources and are removed by hand.
-
-### When it fails
-
-| Failure | Fix |
-|---|---|
-| `ServiceModelDeprecating` | The pinned version is no longer deployable. See section 4 |
-| `AuthorizationFailed` on a role assignment | You lack User Access Administrator. Ask your admin, then re-run with `-SkipProvision` |
-| Docker errors | Start Docker Desktop. The script now checks the daemon before provisioning |
-| `RoleAssignmentExists` | Harmless |
-| `A resource with this name already exists or is in a conflicting state` | Usually a soft-deleted resource holding the name. `-WhatIfResources` reports it and prints the recover command |
-
-Nothing in the script is destructive except `-Reset`. Fix the cause and run the same command again.
-
----
-
-## 4. The model, and why it is pinned
-
-The first live deployment failed here, so it is worth understanding.
-
-```
-ServiceModelDeprecating: The model 'Format:OpenAI,Name:gpt-4o-mini,Version:2024-07-18'
-is in deprecating state and cannot be used for new deployments.
-```
-
-The template asked for `gpt-4o-mini` and named **no version**, so ARM resolved the account's current default — which had moved to `2024-07-18`. That version is in the Deprecated lifecycle stage: existing deployments keep serving, new ones are refused. The template had not changed; the default underneath it had.
-
-The fix is in two parts:
-
-1. **Both the model and its version are parameters, and both are pinned.** Default: `gpt-5.4-mini` version `2026-03-17`.
-2. **`versionUpgradeOption` is `OnceCurrentVersionExpired`.** The pinned version is held until Azure retires it, then moved forward automatically — rather than the deployment starting to fail on a re-run.
-
-Before provisioning, the script reads `az cognitiveservices account list-models` and refuses to proceed if the pinned version is deprecating, listing what the account will accept instead.
-
-To change model:
-
-```powershell
-.\scripts\Deploy-Cortex.ps1 -ModelName gpt-5-mini -ModelVersion 2025-08-07 -UpgradeModel
-```
-
-To see what the account offers:
-
-```powershell
-az cognitiveservices account list-models -g PRDCOREFDRY001 -n prdcorefdryeus001 `
-  --query "[].{name:name, version:version, status:lifecycleStatus}" -o table
-```
-
-> The deployment name and the model name are separate parameters. Leave `-ModelDeploymentName` empty and the deployment is named after the model, which is the simple case. Set it when you want the application to keep asking for one name while the model underneath changes.
-
----
-
-## 5. Configuration: Key Vault, or straight onto the apps
-
-**Cortex runs either way. The deploy script picks, and tells you which.**
-
-### The distinction that decides it
-
-Key Vault firewall rules apply to the **data plane only**. A vault with
-`publicNetworkAccess: Disabled` still accepts the secrets this template writes,
-because an ARM deployment is a control-plane operation and the ARM deployment
-service is a Key Vault trusted service. What it refuses is being **read** over
-the public internet.
-
-**Azure Container Apps is not on the trusted-services list**, and never will be
-— that list covers services where Microsoft controls all the running code.
-So in a locked-down subscription the vault seeds perfectly and is then
-unreadable by the app: every lookup fails, the app falls back to environment
-variables exactly as designed, and the marketplace is empty for reasons that
-look like an application fault and are not.
-
-| Operation | Plane | Blocked by a locked-down vault? |
-|---|---|---|
-| Bicep seeding the config values | Control | No |
-| `az keyvault secret set` | Data | Yes |
-| Opening the vault in the portal | Data | Yes |
-| The app reading secrets at startup | Data | **Yes** |
-
-### The two modes
-
-| `-ConfigSource` | What happens |
-|---|---|
-| `auto` (default) | Probes the vault. Public access disabled, or no data-plane answer → `direct`. Otherwise `keyvault` |
-| `keyvault` | Force the vault path. Use once a private endpoint is in place |
-| `direct` | Skip the vault. Configuration goes onto the container apps, sensitive values as Container Apps secrets |
-
-In `direct` mode `KEYVAULT_NAME` is deliberately **not** set on the apps. An
-empty vault name makes the adapter skip cleanly rather than spend its 15-second
-timeout budget failing at every start.
-
-Confirm which mode is live:
-
-```powershell
-.\scripts\Test-Cortex.ps1
-```
-
-```
-  OK    Key Vault
-        Direct configuration — 14 values from the environment, no vault in use
-```
-
-`0 from Key Vault, 14 from environment` **with** a vault configured means the
-app is still pointed at a vault it cannot reach. Re-run the deploy script.
-
-### The security trade in direct mode
-
-A Container Apps secret is encrypted at rest and stays out of the deployment
-history, but it is readable by anyone with Contributor on the app:
-
-```powershell
-az containerapp secret list -n cortex-web -g PRDCORECORTEX001 --show-values
-```
-
-Key Vault behind a private endpoint is stronger — separate RBAC plane, access
-logging, rotation. Direct mode is a reasonable trade for a sandbox and should
-not go to production. See §5c for the way back.
-
-### 5b. Key Vault secrets
-
-
-**17 values. Bicep writes 12. You set one.**
-
-### What you set by hand
-
-| Secret | Required | Really secret | Where from |
-|---|---|---|---|
-| `apim-subscription-key` | **Yes** | **Yes** | Portal → APIM → Subscriptions → Cortex → primary key. The deploy script usually does this for you. |
-| `entra-client-secret` | No | **Yes** | Sign-in app registration. Skip it if you use a federated credential. |
-| `entra-client-id` | No | No | Only for real sign-in |
-| `foundry-mcp-connection` | No | No | See below |
-| `purview-datamap-endpoint` | No | No | Only if the default does not match yours |
-
-```powershell
-$kv = 'prdcorekveus'
-az keyvault secret set --vault-name $kv --name apim-subscription-key --value "<primary key>"
-```
-
-### What Bicep writes
-
-`azure-subscription-id`, `azure-resource-group`, `apim-service-name`, `apim-gateway-url`, `foundry-project-endpoint`, `foundry-model`, `purview-endpoint`, `purview-mcp-url`, `public-base-url`, `appinsights-connection-string`, `entra-tenant-id`, `cortex-environment-name`.
-
-> **Only 3 of the 17 are genuinely secret** — the APIM key, the Entra client secret, and the App Insights connection string (which embeds an instrumentation key). The rest are endpoints and names that are already in the portal. Keeping them in the vault buys one real thing: a single place to change configuration per environment. It is not a security control, and it is worth not mistaking it for one.
-
-### One vault, one environment
-
-`cortex-environment-name` records which azd environment last seeded the vault. Two environments pointing at the same vault will overwrite each other's endpoints, and the symptom — an app talking to the wrong container — is not obvious. The deploy script reads this marker and warns before it takes the vault over. If you genuinely need two environments, give the second one its own vault with `-KeyVaultName`.
-
-### Foundry → APIM connection
-
-So an agent can call an APIM MCP server:
-
-```powershell
-azd ai connection create cortex-apim --kind remote-tool `
-  --target "$(az keyvault secret show --vault-name $kv --name purview-mcp-url --query value -o tsv)" `
-  --auth-type custom-keys `
-  --custom-key "Ocp-Apim-Subscription-Key=<the APIM key>"
-
-az keyvault secret set --vault-name $kv --name foundry-mcp-connection --value "<connection id>"
-```
-
-### 5c. The route back to Key Vault
-
-Once a private endpoint exists, in this order:
-
-1. VNet with a subnet delegated to `Microsoft.App/environments`.
-2. **Recreate the Container Apps environment inside it.** A managed environment
-   cannot be VNet-joined after creation, so `cae-cortex` and both apps must be
-   destroyed and rebuilt. This is the expensive step — plan it.
-3. Private endpoint on the vault, plus a `privatelink.vaultcore.azure.net`
-   private DNS zone linked to the VNet.
-4. `.\scripts\Deploy-Cortex.ps1 -ConfigSource keyvault`
-
-This does not restore *your own* access — you are still outside the VNet, so
-`az keyvault secret set` and the portal stay blocked without a jumpbox, Bastion
-or VPN. The deploy script works around that by reading the APIM key from ARM
-rather than expecting you to paste it.
-
-If the vault sits behind a **Network Security Perimeter** rather than a plain
-firewall, the trusted-services bypass is overridden and even ARM is blocked —
-you need an explicit inbound access rule on the perimeter.
-
-### If the vault uses access policies
-
-`prdcorekveus` must have RBAC enabled or the role assignment is silently ignored. The deploy script warns. To fix:
-
-```powershell
-az keyvault update -n prdcorekveus -g PRDCOREPVW001 --enable-rbac-authorization true
-```
-
-### Behaviour when the vault misbehaves
+Run the same command as often as you like. Every step reconciles rather than recreates:
 
 | Situation | What happens |
 |---|---|
-| Unreachable | Falls back to environment variables, logs what is missing, **starts anyway** (~570ms) |
-| Accepts then never replies | Bounded at 5s per secret, 15s total, then falls back |
-| Secret missing | Falls back to environment. A 404 is normal, not a fault |
-| 403 | Falls back, and the error names the fix: **Key Vault Secrets User** |
+| The apps are already running your code | The live image is read back and fed into the template, so a re-provision never rolls them back to the placeholder |
+| The model version has been retired | Checked before provisioning; the account's deployable versions are listed |
+| The resource group is in a different region from `-Location` | Its real location is read and reused |
+| You lack Key Vault Secrets Officer | Seeding is skipped with a warning; the app runs on direct configuration |
+| A name is soft-deleted | Detected first, recover/purge command printed |
+| Sign-in is already configured | Reused; no new client secret is minted |
+| The Cortex identity already holds its Purview roles | Reported as held; nothing is written |
+| The domains and data products already exist | Updated in place, never duplicated |
 
-Secrets cache for 10 minutes, so a rotated key is picked up without a restart.
+### If it fails
 
----
-
-## 6. Entra sign-in — and the GROUPS claim
-
-**Read this twice. Getting it half-right is the most likely reason a working deployment looks broken.**
-
-Cortex has no personas and no anonymous browsing. Every visibility decision is made against Entra group membership. A token with no groups claim means the user appears to be in no groups, almost every entry correctly resolves to "not available", and the Marketplace looks empty for reasons that are not obvious.
-
-```powershell
-$v = @{}; azd env get-values | % { if ($_ -match '^(\w+)="?([^"]*)"?$') { $v[$Matches[1]] = $Matches[2] } }
-
-# a. App registration
-$app = az ad app create --display-name "Cortex" `
-  --web-redirect-uris "$($v.CORTEX_WEB_URL)/.auth/login/aad/callback" `
-  --enable-id-token-issuance true | ConvertFrom-Json
-
-# b. THE GROUPS CLAIM — do not skip
-az ad app update --id $app.appId --set groupMembershipClaims=SecurityGroup
-
-# c. Turn on authentication
-$secret = (az ad app credential reset --id $app.appId --append | ConvertFrom-Json).password
-az containerapp auth microsoft update --name cortex-web -g $v.AZURE_RESOURCE_GROUP `
-  --client-id $app.appId --client-secret $secret `
-  --tenant-id (az account show --query tenantId -o tsv) --yes
-az containerapp auth update --name cortex-web -g $v.AZURE_RESOURCE_GROUP `
-  --unauthenticated-client-action RedirectToLoginPage
-```
-
-Container Apps authentication settings live outside the Bicep, so they survive a re-provision. You do this once.
-
-### d. Map group ids to names
-
-Entra sends group **object ids**; access rules read against names.
-
-```powershell
-$map = @(
-  "$(az ad group show --group 'All Staff' --query id -o tsv)=all-staff",
-  "$(az ad group show --group 'Waste Crime' --query id -o tsv)=waste-crime"
-) -join ','
-az containerapp update --name cortex-web -g $v.AZURE_RESOURCE_GROUP --set-env-vars "CORTEX_GROUP_NAMES=$map"
-```
-
-> `az containerapp update --set-env-vars` is additive on the live app, but the Bicep does not know about `CORTEX_GROUP_NAMES`, so a later `azd provision` drops it. Re-run this line after any provision, or move the mapping into `infra/modules/containerapps.bicep` once it settles.
-
-### e. Check
-
-Sign in and open **`/profile`**. It lists your groups and how many entries fall into each state. If it warns you are in no named groups, step b or d is wrong.
+The script stops at the failing step and says what to check. Nothing it does is destructive except `-Reset`. Fix the cause and run the same command again — or, if provisioning succeeded and a later step failed, `-SkipProvision` resumes from step 8. §6 has the specific failures.
 
 ---
 
-## 7. Purview roles — BOTH planes
+## 3. After the first deploy
 
-**Cannot be automated.** These are data-plane roles assigned in the Purview portal, and tenant-level role groups do not accept service principals at all.
-
-```powershell
-azd env get-values | Select-String CORTEX_IDENTITY_PRINCIPAL_ID
-```
-
-1. **Purview portal → Unified Catalog → Catalog management → Governance domains → [domain] → Roles**
-   Add the Cortex identity as **Data Product Owner** and **Governance Domain Reader**.
-
-2. **Data Map → Domains and collections → [collection] → Role assignments**
-   Add the same identity as **Data reader**.
-
-> 🔴 **Both are required.** A Data Product Owner without Data Map read cannot see the underlying assets — they silently do not appear, including in search. This is the most common failure and it fails quietly.
-
-Domains do not exist until you bootstrap, so:
-
-```powershell
-. .\scripts\Set-CortexEnv.ps1             # load config into this session — see section 8
-node scripts/bootstrap.js --only=purview   # creates the domains
-# ... assign roles in the portal ...
-npm run bootstrap                          # creates and publishes the data products
-```
-
-> **The leading dot on the first line is load-bearing.** Without it bootstrap
-> has no configuration and stops before it reaches Purview. See section 8.
-
-The Cortex identity is stable across re-deployments — it is created once and reused — so you assign these roles once, not on every deploy. `-Reset` destroys it, and you will need to assign them again.
-
----
-
-## 8. Bootstrap the content
-
-```powershell
-. .\scripts\Set-CortexEnv.ps1
-npm run bootstrap
-```
-
-Creates 9 governance domains and 14 data products in your real Purview, and a REST API plus MCP server per skill in your APIM. Idempotent.
-
-### Why the first line is needed
-
-`bootstrap.js` reads configuration the same way the app does — Key Vault first, environment variables second. **But bootstrap runs on your machine, not in the container.** The deployed apps get their configuration from provisioning; this local Node process has neither that nor a readable vault, because public network access is disabled and a secret read is a data-plane operation.
-
-Without it you get:
-
-```
-Missing required configuration:
-  - azure-subscription-id
-  - azure-resource-group
-  - apim-service-name
-  - apim-gateway-url
-  - apim-subscription-key
-  - foundry-project-endpoint
-  - purview-mcp-url
-  - public-base-url
-```
-
-That is not a Purview problem, a roles problem or a network problem. It is the eight entries marked `required` in `SECRET_CATALOGUE` resolving to nothing, and bootstrap stopping before it makes a single call.
-
-`Set-CortexEnv.ps1` reads what provisioning published into the azd environment, fetches the APIM subscription key from API Management's ARM endpoint — a control-plane call, so the Key Vault firewall does not apply — and sets both for the session. **Nothing is written to disk**; the key lives in that window's memory and goes when you close it.
-
-**It must be dot-sourced.** `.\scripts\Set-CortexEnv.ps1` runs in a child scope and its variables are discarded on exit. The script detects this and refuses rather than appearing to work.
-
-`Deploy-Cortex.ps1` does the same thing in-process, so bootstrap during a full deployment needs no preparation. This is only for running bootstrap by hand.
-
-```powershell
-node scripts/bootstrap.js --dry-run   # validate payloads, no Azure and no config needed
-```
-
-> ⚠️ **Publishing is the least certain step in the deployment.** The Unified Catalog API has no publish operation — it is a status transition on a full-replace PUT, and the portal enforces preconditions Microsoft does not document. If publishing is refused the script creates the product as `DRAFT` and tells you; publish those by hand.
-
----
-
-## 9. Verify
+### a. Check it
 
 ```powershell
 .\scripts\Test-Cortex.ps1
 ```
 
 ```
+  OK    cortex-web  web-cortex:azd-deploy-...
+  OK    cortex-purview-mcp  purview-mcp-cortex:azd-deploy-...
   OK    App and register
         23 entries across 9 domains
   OK    Key Vault
+        Direct configuration — 14 values from the environment, no vault in use
   OK    Purview
+        9 domains, 14 data products (14 published)
   OK    API Management
   OK    Foundry
-  OK    Purview MCP server (4 tools)
+  OK    Purview MCP server (5 tools)
 ```
 
-All six green means the golden path will run. **Run this the morning of a demo.**
+Purview roles can take a minute to propagate after bootstrap grants them. If Purview alone is red straight after a deploy, wait a minute and run it again.
 
-`entries: 0` means bootstrap has not run, or the Purview roles in section 7 are missing.
+### b. Sign in
 
-A 404 from the MCP server means that app is still on the placeholder image — run `.\scripts\Deploy-Cortex.ps1 -AppOnly`.
+Open the web URL. You are redirected to Microsoft sign-in, then to the Marketplace. Open **`/profile`** ("What can I see?" in the header): it lists your groups and how many entries fall into each visibility state.
+
+Every signed-in user is treated as a member of **`all-staff`** — the default group. That is what makes "Open to all staff" entries available to you on a tenant with no group mapping. The profile page marks it as coming from configuration, not Entra.
+
+> Signed in *before* the groups claim was switched on? Your token predates it. Sign out and back in.
+
+### c. Map your Entra groups (optional, but it is the demo)
+
+Access rules read group **names** (`waste-crime`, `analysts`, `cortex-official-sensitive`); Entra sends group **object ids**. Map one to the other once:
+
+```powershell
+.\scripts\Set-CortexAuth.ps1 -GroupMap 'waste-crime=Waste Crime Observatory','analysts=Data Analysts'
+```
+
+The mapping is written to the azd environment (so a re-provision keeps it) and to the live app (so it applies now). To create the groups and add yourself — for the "same page, different eyes" moment — add `-CreateGroups`. To turn the default group off and rely on Entra alone: `-DefaultGroups ''`.
+
+The special group names the rules understand:
+
+| Group name | Effect |
+|---|---|
+| `all-staff` | Covers "Internal only" licences and "Open to all staff" entries |
+| `cortex-official-sensitive` | Clearance to Official–Sensitive |
+| `cortex-commercial-licence` | Covers seat-limited and commercial licences |
+| `cortex-team-<name>` | Display team name only; no access effect |
+| anything else | Matches an entry whose allowed groups name it (e.g. `waste-crime`) |
+
+### d. Walk the golden path once
+
+Marketplace → an entry → Build an agent → test it → publish → it reappears in the Marketplace. Then **Ask a question** — the answer is written by the `cortex-ask` agent in Foundry from the catalogue entries you can reach, with the provenance panel underneath. Ask is live: if the model cannot be reached the page says so and falls back to the register's own summary.
 
 ---
 
-## 10. The two container apps
+## 4. Iterating — which command for which change
 
-Cortex deploys two images from one source tree:
+| You changed | Run | Time |
+|---|---|---|
+| Application code (`src/`) | `.\scripts\Deploy-Cortex.ps1 -AppOnly` | ~2 min. Builds and pushes both images, touches nothing else |
+| Content (`bootstrap/*.json`) | `. .\scripts\Set-CortexEnv.ps1` then `npm run bootstrap` | ~1 min. Idempotent |
+| Only Purview permissions | `. .\scripts\Set-CortexEnv.ps1` then `node scripts/bootstrap.js --only=roles` | seconds |
+| Who can see what (groups) | `.\scripts\Set-CortexAuth.ps1 -GroupMap ...` | seconds |
+| Infrastructure (`infra/`) | `.\scripts\Deploy-Cortex.ps1` | ~10 min |
+| A setting the Bicep reads (`azd env set X y`) | `.\scripts\Deploy-Cortex.ps1 -SkipBootstrap` | ~5 min |
+| The model | `.\scripts\Deploy-Cortex.ps1 -ModelName gpt-5-mini -ModelVersion 2025-08-07 -UpgradeModel` | ~5 min |
 
-| App | Image | Serves | Why separate |
-|---|---|---|---|
-| `cortex-web` | `Dockerfile` | The GOV.UK front end and the BFF, port 3000 | The front door |
-| `cortex-purview-mcp` | `Dockerfile.mcp` | `/mcp` and `/health`, port 3000 | A Foundry agent cannot reach the catalogue any other way. It is called by the agent, not by a browser |
+Two rules that keep iteration safe:
 
-Both are declared as services in `azure.yaml`, so `azd deploy` builds and pushes both. Before that they shared one declaration, and the MCP app ran the placeholder image permanently — the app existed, answered on its URL, and returned nothing an agent could use.
+- **The leading dot on `Set-CortexEnv.ps1` is load-bearing.** It loads the deployment's configuration into *your* session so a local `node` process can talk to your Azure resources. Without it bootstrap stops with "Missing required configuration".
+- **`npm test` before you push.** 214 tests, no Azure needed, about 15 seconds. `node scripts/bootstrap.js --dry-run` validates content changes the same way.
 
-The MCP app runs `minReplicas: 1` for the same reason the web app does: an MCP client gives up long before a cold container finishes starting, and it is called mid-answer. Set `MCP_MIN_REPLICAS=0` in the azd environment if you are only testing.
-
----
-
-## 11. Run locally
-
-Local means *your machine, real Azure*. There is no offline mode.
+Running the app on your machine against the real back ends:
 
 ```powershell
 .\scripts\Start-Local.ps1 -Groups all-staff,waste-crime,analysts
 ```
 
-Or **F5** in VS Code to attach the debugger.
-
-Nothing terminates sign-in in front of a local process, so `ALLOW_UNAUTHENTICATED=true` simulates an identity with the groups you pass. The app logs a loud warning when it is set. **Never set it on a deployed environment.**
-
-```powershell
-npm test                              # 127 tests, no Azure needed
-node scripts/bootstrap.js --dry-run   # validate content, no Azure needed
-```
-
-> Anything you publish locally is published for real. There is no sandbox.
+Or **F5** in VS Code. There is no Easy Auth in front of a local process, so `ALLOW_UNAUTHENTICATED=true` simulates an identity with the groups you pass. Never set it on a deployed app. Anything you publish locally is published for real.
 
 ---
 
-## 12. Demo day
+## 5. How it fits together
 
-- [ ] `.\scripts\Test-Cortex.ps1` — six green
+### The two container apps
+
+| App | Image | Serves | Why separate |
+|---|---|---|---|
+| `cortex-web` | `Dockerfile` | The GOV.UK front end and the BFF on port 3000 | The front door |
+| `cortex-purview-mcp` | `Dockerfile.mcp` | `/mcp` and `/health` on port 3000 | A Foundry agent cannot reach the catalogue any other way. Called by agents, not browsers |
+
+Both are declared as services in `azure.yaml`, so `azd deploy` builds and pushes both. Both run `minReplicas: 1` — an MCP client, or a CTO, gives up long before a cold container starts. `cortex-web` also runs **`maxReplicas: 1`**, deliberately: requests, Ask threads and the record of what an agent was built from live in memory, and a second replica would not share them. That is the first item of real next work in `HANDOVER.md`.
+
+### Identity and configuration
+
+One user-assigned managed identity, `id-cortex`, holds every permission (table in §1). No secrets in code.
+
+Configuration reaches the apps one of two ways, and the deploy script picks:
+
+| `-ConfigSource` | What happens |
+|---|---|
+| `auto` (default) | Probes the vault. Public access disabled, or no data-plane answer → `direct`. Otherwise `keyvault` |
+| `direct` | Endpoints and names go onto the container apps as environment variables; the three sensitive values (APIM key, App Insights connection string, Entra client secret) as Container Apps secrets |
+| `keyvault` | The apps read `KEYVAULT_NAME` at startup |
+
+Your sandbox vault has public network access disabled, and Azure Container Apps is not a Key Vault trusted service, so `auto` chooses **`direct`** — the vault is still *seeded* (an ARM deployment is a control-plane write) but never *read*. `Test-Cortex.ps1` prints which mode is live. Direct mode is fine for a sandbox and should not go to production; §7 has the route back to the vault.
+
+`SECRET_CATALOGUE` in `src/bff/adapters/keyvault.js` is the contract between the two modes. Add a value there **and** in `infra/modules/containerapps.bicep`, or it works in one mode and not the other.
+
+### Sign-in
+
+Container Apps built-in authentication terminates Entra sign-in before a request reaches the process and injects the claims as headers. `Set-CortexAuth.ps1` configures it: the app registration, the **groups claim** (`groupMembershipClaims = SecurityGroup`), a client secret minted once, redirect for anonymous visitors. It lives outside the Bicep, so a re-provision does not touch it.
+
+Four paths are **excluded** from sign-in because machines call them: `/api/health*` (the deploy and test scripts), `/api/index/refresh` (bootstrap) and `/shim/*` (API Management, on behalf of a published agent). Everything a person sees is behind sign-in. The shim trusts API Management's subscription key rather than checking one itself — acceptable for a proof of concept, listed in `HANDOVER.md` for the full build.
+
+Group membership is the whole governance model. `CORTEX_GROUP_NAMES` maps ids to names; `CORTEX_DEFAULT_GROUPS` (default `all-staff`) is what every signed-in user is treated as holding. Both are Bicep parameters, so a re-provision keeps them.
+
+### Purview
+
+The app talks to the **Unified Catalog** at `https://api.purview-service.microsoft.com` (the `{account}.purview.azure.com` host is the legacy form) with api-version `2026-03-20-preview` — there is no GA version. Bootstrap writes the nine governance domains and fourteen data products there, and reads them back through the same API.
+
+Data products are created **published**. If the catalogue refuses (it enforces preconditions the API does not document — an owner is required, and bootstrap now names you as one), the product is created as a **draft** instead and the Marketplace shows it with a "Draft in Purview" tag rather than hiding it. Publish those by hand in the portal when you want the tag gone.
+
+Roles are assigned through the Unified Catalog *Policies* API by bootstrap, as you (§1). The Data Map plane (collection roles such as Data reader) is **not** granted: it only matters once data products carry real data assets, and this proof of concept has none.
+
+### The model
+
+Pinned: `gpt-5.4-mini` version `2026-03-17`, with `versionUpgradeOption: OnceCurrentVersionExpired`. The first live deployment failed because the template named a model with **no version**, ARM resolved the account's current default, and that default had moved onto a deprecating build (`ServiceModelDeprecating`). Both are now parameters, and the script checks the account's catalogue before provisioning.
+
+The approved model catalogue the Build page offers is the deployment(s) that exist: `FOUNDRY_MODEL`, plus any in `FOUNDRY_MODELS` (comma-separated). A model that is not deployed is not offered, because choosing it would fail at agent creation.
+
+---
+
+## 6. Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Help page: **Purview UNAVAILABLE — 403 Not authorized to access account** | The Cortex identity holds no Unified Catalog role | `. .\scripts\Set-CortexEnv.ps1` then `node scripts/bootstrap.js --only=roles`. Wait a minute, reload |
+| Bootstrap: **403** on `businessdomains` or `policies` to *you* | Your account is not a Data Governance Administrator in Purview | Purview portal → Settings → Solution settings → Unified Catalog → Roles and permissions → add yourself. Re-run |
+| Bootstrap: `No catalog-level policy (dgpolicy_datagovernanceapp_*) was returned` | Same as above, or the tenant is not on the new Purview portal | Same fix; check the portal shows "Unified Catalog" |
+| Bootstrap: `created as DRAFT — publish refused` | The catalogue's publish preconditions were not met | Expected sometimes. Products still show, tagged Draft. Publish in the portal |
+| Bootstrap: **Missing required configuration** listing eight values | You ran it without loading config into the session | `. .\scripts\Set-CortexEnv.ps1` — with the leading dot — then `npm run bootstrap` |
+| `/profile` says **no named groups** | The token predates the groups claim, or the group ids are unmapped | Sign out and in. Map ids with `Set-CortexAuth.ps1 -GroupMap` |
+| Marketplace looks almost empty; entries say "Licence does not cover you" | Strict mode with no group mapping | `Set-CortexAuth.ps1 -DefaultGroups all-staff`, or map groups |
+| Page says **Sign-in is not configured** | Authentication is not on in front of the app | `.\scripts\Set-CortexAuth.ps1` |
+| Ask shows **The model could not be reached** | Foundry refused or timed out; the reason is on the page | Check `/api/health/foundry`; the identity needs Foundry User on the account (Bicep grants it) |
+| Build → create agent fails | The model chosen is not deployed | Only deployed models are offered now; check `FOUNDRY_MODEL` matches a deployment |
+| An app serves the Container Apps welcome page or a 502 | Placeholder image, or ingress port ≠ 3000 | `.\scripts\Deploy-Cortex.ps1 -AppOnly`; the script also corrects the port |
+| **ServiceModelDeprecating** | The pinned model version is no longer deployable | `-WhatIfResources` lists what the account accepts; pin one with `-ModelVersion` |
+| **AuthorizationFailed** on a role assignment | You lack User Access Administrator | Get the role, then re-run with `-SkipProvision` |
+| `A resource with this name already exists or is in a conflicting state` | Usually a soft-deleted Key Vault or Foundry account | The script prints the recover/purge command |
+| **Masked credential placeholders found in the source** | A file came back from a chat or transfer tool with a run of `*` where a value was | Restore the file from git. The pattern to look for is six asterisks |
+| `spawn az ENOENT` / `spawn EINVAL` locally | Windows CLI spawn traps | Fixed in `token.js`; if you see it, you have an old copy |
+| Docker errors mid-provision | Docker Desktop not running | Start it. The script now checks first |
+| `RoleAssignmentExists` | — | Harmless |
+
+Where to look: `/api/health`, `/api/health/purview`, `/api/health/apim`, `/api/health/foundry`, `/api/health/keyvault` return JSON with the underlying error text. `Test-Cortex.ps1` reads them for you.
+
+---
+
+## 7. Reference
+
+### Deploy-Cortex.ps1 switches
+
+| Switch | Use it when |
+|---|---|
+| `-WhatIfResources` | You want the plan. Changes nothing |
+| `-AppOnly` | Code changed, infrastructure did not. The fast loop |
+| `-SkipProvision` | Provisioning already succeeded; resume from step 8 |
+| `-SkipBootstrap` | Do not touch Purview content or roles this run |
+| `-SkipAuth` | Do not touch sign-in this run |
+| `-SkipHealthCheck` | Deploying into something not up yet |
+| `-GroupMap 'alias=Group name',...` | Map Entra groups onto access-rule names (passed to `Set-CortexAuth.ps1`) |
+| `-DefaultGroups 'all-staff'` | What every signed-in user is treated as. `''` for strict mode |
+| `-ConfigSource auto\|keyvault\|direct` | See §5 |
+| `-ModelName`, `-ModelVersion`, `-ModelDeploymentName`, `-ModelSku`, `-ModelCapacity`, `-UpgradeModel` | The model. See §5 |
+| `-ForceSeedKeyVault` | The role check is wrong and you know you can write secrets |
+| `-Reset` | Delete the Cortex resource group and the local azd environment, after typing the group name |
+
+Every resource name and group is also a parameter: `-ApimName`, `-ApimResourceGroup`, `-PurviewName`, `-PurviewResourceGroup`, `-FoundryAccountName`, `-FoundryProjectName`, `-FoundryResourceGroup`, `-KeyVaultName`, `-KeyVaultResourceGroup`, `-RegistryName`, `-RegistryResourceGroup`, `-LogAnalyticsName`, `-AppInsightsName`, `-MonitoringResourceGroup`, `-CortexResourceGroup`, `-EnvironmentName`, `-Location`.
+
+### The other scripts
+
+| Script | Does |
+|---|---|
+| `Set-CortexAuth.ps1` | Sign-in, groups claim, group mapping, default group. Idempotent. `-RotateSecret` mints a new client secret |
+| `Set-CortexEnv.ps1` | **Dot-source it.** Loads the deployment's configuration into the session for running bootstrap by hand. Nothing written to disk |
+| `bootstrap.js` | `npm run bootstrap`. `--only=roles\|purview\|apim`, `--principal=<oid>`, `--skip-roles`, `--dry-run`, `--no-adopt` |
+| `Test-Cortex.ps1` | Health-check a deployment. `-Local` runs the unit tests instead |
+| `Start-Local.ps1` | Run on your machine against real Azure. `-Groups a,b,c` |
+| `Preprovision-Check.ps1` | azd hook: guards a bare `azd up` against the model and placeholder-image traps |
+
+### Application settings
+
+Set on the container apps by the Bicep (direct mode) or read from Key Vault. Change a value with `azd env set NAME value` and re-provision, or `az containerapp update --set-env-vars` for an immediate, non-durable change.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `PURVIEW_ENDPOINT` | `https://api.purview-service.microsoft.com` | Unified Catalog host |
+| `PURVIEW_API_VERSION` | `2026-03-20-preview` | Pinned |
+| `PURVIEW_TIMEOUT_MS` | `30000` | Per call |
+| `APIM_API_VERSION` | `2025-09-01-preview` | MCP server management needs the preview |
+| `FOUNDRY_PROJECT_ENDPOINT` | from Bicep | `https://<account>.services.ai.azure.com/api/projects/<project>` |
+| `FOUNDRY_MODEL` | deployment name | The default model; the first entry of the approved catalogue |
+| `FOUNDRY_MODELS` | — | Further deployed models to offer, comma-separated |
+| `FOUNDRY_RESPONSE_TIMEOUT_MS` | `90000` | A model answer |
+| `ASK_AGENT_NAME` | `cortex-ask` | The Foundry agent that answers the Ask page. Created on first use |
+| `ASK_USE_PURVIEW_MCP` | `false` | Attach the Purview MCP server to the Ask agent as a tool, instead of grounding inline |
+| `CORTEX_GROUP_NAMES` | — | `<guid>=name,...` |
+| `CORTEX_DEFAULT_GROUPS` | `all-staff` | Granted to every signed-in user. Empty for strict mode |
+| `INDEX_REFRESH_MINUTES` | `15` | How often the register re-reads the three back ends. `POST /api/index/refresh` forces one |
+| `WEB_MAX_REPLICAS` (azd env) | `1` | Keep at 1 while state is in memory |
+| `MCP_MIN_REPLICAS` (azd env) | `1` | 0 if only testing |
+
+### Key Vault: the route back
+
+Once a private endpoint exists, in this order:
+
+1. VNet with a subnet delegated to `Microsoft.App/environments`.
+2. **Recreate the Container Apps environment inside it.** A managed environment cannot be VNet-joined after creation, so `cae-cortex` and both apps are destroyed and rebuilt.
+3. Private endpoint on the vault, plus a `privatelink.vaultcore.azure.net` private DNS zone linked to the VNet.
+4. `.\scripts\Deploy-Cortex.ps1 -ConfigSource keyvault`
+
+The vault must use RBAC (`az keyvault update -n prdcorekveus -g PRDCOREPVW001 --enable-rbac-authorization true`) or the role assignment is silently ignored. Two azd environments must not share one vault: `cortex-environment-name` records the owner and the script warns before taking it over.
+
+### Demo day
+
+- [ ] `.\scripts\Test-Cortex.ps1` — all green, the morning of
 - [ ] Sign in, open `/profile`, confirm your groups
 - [ ] Walk the golden path once end to end
 - [ ] Delete the rehearsal agent so the demo creates it fresh
 - [ ] Have a second account in different groups ready — the same page through different eyes is the most persuasive moment
-- [ ] `cortex-web` has `minReplicas: 1`, so nobody waits on a cold start
-- [ ] Do not deploy on the day. If you must, use `-AppOnly` — it does not touch infrastructure
+- [ ] Do not deploy on the day. If you must, `-AppOnly` — it does not touch infrastructure
 
-> **There is no fallback if a back end is down.** That is the trade for everything being real. Record a walkthrough as insurance.
+> There is no fallback if a back end is down. That is the trade for everything being real. Record a walkthrough as insurance.
 
----
-
-## 13. Teardown
+### Teardown
 
 ```powershell
 .\scripts\Deploy-Cortex.ps1 -Reset
 ```
 
-Or by hand:
+Removes only what Cortex created: the resource group `PRDCORECORTEX001` (both apps, the environment, the identity) and the local azd environment. Your APIM, Purview, Foundry, Key Vault, registry and monitoring are untouched.
 
-```powershell
-az group delete --name PRDCORECORTEX001 --yes
-```
-
-Removes only what Cortex created. Your APIM, Purview, Foundry, Key Vault, registry and monitoring are untouched.
-
-To also remove what Cortex added to your existing resources: the `cortex` product in APIM, the role assignments for `id-cortex`, the Key Vault secrets, and the governance domains and data products created by bootstrap.
+Left behind on shared resources, remove by hand if you want a clean tenant: the `cortex` product in APIM and the skills' APIs, the role assignments for `id-cortex` (they dangle harmlessly once the identity is gone), the Key Vault secrets, the "Cortex" app registration, the `cortex-ask` agent in Foundry, and the governance domains and data products in Purview.

@@ -197,7 +197,7 @@ export async function createAgent(def, user) {
       server_label: 'purview_catalogue',
       server_url: config.purviewMcpUrl,
       require_approval: 'always',
-      allowed_tools: ['search_data_products', 'get_data_product', 'get_lineage', 'get_schema']
+      allowed_tools: ['list_governance_domains', 'search_data_products', 'get_data_product', 'get_lineage', 'get_schema']
     });
   }
 

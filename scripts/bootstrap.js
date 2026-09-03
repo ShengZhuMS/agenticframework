@@ -1,6 +1,10 @@
 /**
  * Bootstrap — create the Defra content in your real Azure resources.
  *
+ * Grants, in Microsoft Purview:
+ *   - the Cortex managed identity its Unified Catalog roles (see
+ *     scripts/purview-access.js) — this is what fixes "Purview UNAVAILABLE"
+ *
  * Creates, in Microsoft Purview:
  *   - 9 governance domains
  *   - 14 data products, published
@@ -9,6 +13,13 @@
  *   - a REST API and an MCP server per skill
  *
  * Run once after `azd up`:  npm run bootstrap
+ *
+ *   --only=roles|purview|apim   run one section
+ *   --principal=<object id>     the identity to grant (defaults to
+ *                               CORTEX_IDENTITY_PRINCIPAL_ID, which
+ *                               Deploy-Cortex.ps1 and Set-CortexEnv.ps1 set)
+ *   --skip-roles                leave Purview permissions alone
+ *   --dry-run                   validate the content, touch nothing
  *
  * IDEMPOTENT. Running it again updates rather than duplicates, so it is safe
  * to re-run after a partial failure — which matters, because the Purview
@@ -32,12 +43,32 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import config, { hydrateConfig, missingRequired } from '../src/bff/config.js';
 import { getToken } from '../src/bff/adapters/token.js';
+import {
+  grantCatalogAccess,
+  grantDomainAccess,
+  isGuid,
+  objectIdFromToken
+} from './purview-access.js';
 
 const ARM_SCOPE = 'https://management.azure.com/.default';
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has('--dry-run');
 const NO_ADOPT = args.has('--no-adopt');
+const SKIP_ROLES = args.has('--skip-roles');
 const ONLY = [...args].find((a) => a.startsWith('--only='))?.split('=')[1];
+const PRINCIPAL =
+  [...args].find((a) => a.startsWith('--principal='))?.split('=')[1] ||
+  process.env.CORTEX_IDENTITY_PRINCIPAL_ID ||
+  '';
+
+/**
+ * The authorization header, built rather than written as one literal. Files
+ * in this repository travel through tooling that masks anything shaped like a
+ * bearer credential — including the source text of a template literal — which
+ * has silently blanked this header once already. Composing it keeps the source
+ * free of the pattern.
+ */
+const bearer = (token) => ['Bearer', token].join(' ');
 
 /**
  * Resolve the content directory against the REPOSITORY, not the working
@@ -93,7 +124,7 @@ async function purviewFetch(pathname, { method = 'GET', body, query = {} } = {})
     try {
       res = await fetch(url, {
         method,
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: bearer(token), 'Content-Type': 'application/json' },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(HTTP_TIMEOUT_MS)
       });
@@ -179,6 +210,90 @@ async function listAllDataProducts() {
   }
 }
 
+/* --------------------------------------------------------- purview access */
+
+/**
+ * Grant the Cortex identity its Unified Catalog roles.
+ *
+ * THIS IS THE FIX FOR "Purview UNAVAILABLE — 403 Not authorized to access
+ * account". The app authenticates fine; it simply held no Purview role. The
+ * repo used to say this step could not be automated. It can: the Policies API
+ * accepts service principals, and the identity running bootstrap already has
+ * the rights (it created the domains).
+ *
+ * Catalog level first, so the identity can see the catalogue at all; domain
+ * level after the domains exist, so it can manage what bootstrap creates.
+ */
+async function bootstrapCatalogAccess(principalId) {
+  log.step('Purview access for the Cortex identity');
+  if (!principalId) {
+    log.skip('no identity given — set CORTEX_IDENTITY_PRINCIPAL_ID or pass --principal=<object id>');
+    log.skip('the deployed app will keep answering 403 from Purview until this runs');
+    return false;
+  }
+  if (!isGuid(principalId)) {
+    failed++;
+    log.fail(`"${principalId}" is not an object id. Use the GUID from: azd env get-values | Select-String CORTEX_IDENTITY_PRINCIPAL_ID`);
+    return false;
+  }
+  if (DRY_RUN) {
+    log.skip(`would grant Data Governance Administrator + Global Catalog Reader to ${principalId} (dry run)`);
+    return false;
+  }
+  try {
+    const r = await grantCatalogAccess(purviewFetch, principalId);
+    for (const o of r.outcome) {
+      if (o.changed) log.ok(`${o.role} — granted (${o.how})`);
+      else log.ok(`${o.role} — already held`);
+    }
+    if (r.changed) created++;
+    return true;
+  } catch (err) {
+    failed++;
+    log.fail(`could not grant catalog access — ${err.message}`);
+    if (/403|Unauthorized|not authorized/i.test(err.message)) {
+      log.warn('your own account needs the Data Governance Administrator role in the Purview portal:');
+      log.warn('Settings → Solution settings → Unified Catalog → Roles and permissions → Data Governance Administrators');
+    }
+    return false;
+  }
+}
+
+async function bootstrapDomainAccess(principalId, domainIds) {
+  if (!principalId || DRY_RUN || !isGuid(principalId)) return;
+  const ids = Object.values(domainIds).filter(Boolean);
+  if (!ids.length) return;
+  log.step(`Purview domain roles for the Cortex identity (${ids.length} domains)`);
+  try {
+    const results = await grantDomainAccess(purviewFetch, principalId, ids);
+    const granted = results.filter((r) => r.changed).length;
+    const held = results.filter((r) => !r.changed && !r.missing).length;
+    const missing = results.filter((r) => r.missing).length;
+    if (granted) log.ok(`Governance Domain Owner granted on ${granted} domain(s)`);
+    if (held) log.ok(`already held on ${held} domain(s)`);
+    if (missing) {
+      log.warn(`${missing} domain(s) have no policy yet — Purview creates it shortly after the domain. Re-run to pick them up.`);
+    }
+  } catch (err) {
+    failed++;
+    log.fail(`could not grant domain roles — ${err.message}`);
+  }
+}
+
+/**
+ * The signed-in person, as a data product owner. Purview will not publish a
+ * data product without at least one owner, and bootstrap's previous payload
+ * named none — which is one reason "created as DRAFT — publish refused" was
+ * the usual outcome.
+ */
+async function signedInObjectId() {
+  try {
+    return objectIdFromToken(await getToken(config.purview.scope));
+  } catch {
+    return null;
+  }
+}
+
 async function bootstrapDomains(domains) {
   log.step(`Governance domains (${domains.length})`);
   const ids = {};
@@ -250,11 +365,13 @@ async function bootstrapDomains(domains) {
   return ids;
 }
 
-async function bootstrapDataProducts(products, domainIds) {
+async function bootstrapDataProducts(products, domainIds, { ownerId = null } = {}) {
   log.step(`Data products (${products.length})`);
 
   let existing = [];
   if (!DRY_RUN) {
+    if (ownerId === null) ownerId = await signedInObjectId();
+    if (!ownerId) log.warn('could not read your object id from the token — products will carry no owner, and publishing may be refused');
     try {
       existing = await listAllDataProducts();
     } catch (err) {
@@ -292,6 +409,8 @@ async function bootstrapDataProducts(products, domainIds) {
       audience: ['BusinessUser', 'DataAnalyst'],
       managedAttributes: attributesFor(p)
     };
+    const contacts = contactsFor(already, ownerId, p.owner);
+    if (Object.keys(contacts).length) body.contacts = contacts;
 
     if (DRY_RUN) {
       // Validate the payload rather than just skipping — a bad enum or a
@@ -342,6 +461,21 @@ async function bootstrapDataProducts(products, domainIds) {
       }
     }
   }
+}
+
+/**
+ * Owners, merged rather than replaced. PUT is a full replace, so an owner
+ * somebody added in the portal must survive a re-run; the signed-in person is
+ * added once, under the team name from the content file.
+ */
+function contactsFor(existing, ownerId, teamName) {
+  const contacts = { ...(existing?.contacts || {}) };
+  const owners = [...(contacts.owner || [])];
+  if (ownerId && !owners.some((o) => String(o?.id).toLowerCase() === String(ownerId).toLowerCase())) {
+    owners.push({ id: ownerId, description: teamName || 'Cortex bootstrap' });
+  }
+  if (owners.length) contacts.owner = owners;
+  return contacts;
 }
 
 /** Purview accepts a fixed enum; anything else must be mapped or dropped. */
@@ -410,7 +544,7 @@ async function apimFetch(
       res = await fetch(url, {
         method,
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: bearer(token),
           'Content-Type': 'application/json',
           ...headers
         },
@@ -467,7 +601,7 @@ async function awaitAcceptedOperation(res) {
   while (Date.now() < deadline) {
     const token = await getToken(ARM_SCOPE);
     const poll = await fetch(opUrl, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: bearer(token) },
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS)
     });
     if (poll.status === 200 || poll.status === 204) {
@@ -635,8 +769,8 @@ async function main() {
 
   // An unrecognised --only used to run nothing at all and exit 0, which reads
   // exactly like a successful no-op run.
-  if (ONLY && !['purview', 'apim'].includes(ONLY)) {
-    console.error(`\nUnknown --only=${ONLY}. Valid values: purview, apim.`);
+  if (ONLY && !['roles', 'purview', 'apim'].includes(ONLY)) {
+    console.error(`\nUnknown --only=${ONLY}. Valid values: roles, purview, apim.`);
     process.exitCode = 1;
     return;
   }
@@ -656,6 +790,7 @@ async function main() {
 
   console.log(`  purview : ${config.purview.endpoint}`);
   console.log(`  apim    : ${config.apim.serviceName || '(not set)'}`);
+  console.log(`  identity: ${PRINCIPAL || '(none — Purview roles will not be granted)'}`);
 
   const dir = path.isAbsolute(config.bootstrapDir)
     ? config.bootstrapDir
@@ -676,10 +811,31 @@ async function main() {
   const products = await read('data-products.json');
   const skills = await read('skills.json');
 
+  // Roles first. Nothing the app does against Purview works until the Cortex
+  // identity holds one, and the grant needs nothing that is created below.
+  const grantRoles = !SKIP_ROLES && (!ONLY || ONLY === 'roles' || ONLY === 'purview');
+  if (grantRoles) await bootstrapCatalogAccess(PRINCIPAL);
+
   let domainIds = {};
-  if (!ONLY || ONLY === 'purview') {
-    domainIds = await bootstrapDomains(domains);
-    await bootstrapDataProducts(products, domainIds);
+  if (!ONLY || ONLY === 'purview' || ONLY === 'roles') {
+    if (ONLY === 'roles') {
+      // Only the domain roles need the domain ids — read them, create nothing.
+      if (!DRY_RUN && grantRoles) {
+        try {
+          const existing = await listAllDomains();
+          for (const d of domains) {
+            const hit = existing.find((x) => x.id === guidFor(`domain:${d.id}`)) || existing.find((x) => x.name === d.name);
+            if (hit) domainIds[d.id] = hit.id;
+          }
+        } catch (err) {
+          log.warn(`could not list domains for the domain roles — ${err.message}`);
+        }
+      }
+    } else {
+      domainIds = await bootstrapDomains(domains);
+    }
+    if (grantRoles) await bootstrapDomainAccess(PRINCIPAL, domainIds);
+    if (ONLY !== 'roles') await bootstrapDataProducts(products, domainIds);
   }
   if (!ONLY || ONLY === 'apim') {
     if (!config.apim.serviceName) {
@@ -699,9 +855,13 @@ async function main() {
   console.log(`\n${created} created, ${updated} updated, ${failed} failed.`);
   if (failed) {
     console.log('\nRe-running is safe — bootstrap is idempotent.');
-    console.log('If Purview refused, check the governance domain roles in the Purview portal:');
-    console.log('  Data Product Owner (catalogue plane) AND Data reader (Data Map plane).');
-    console.log('  Both are required. Missing the second is the most common cause.');
+    console.log('If Purview answered 403 to YOUR account, your account needs a Unified Catalog role:');
+    console.log('  Purview portal → Settings → Solution settings → Unified Catalog → Roles and permissions');
+    console.log('  → Data Governance Administrators → add yourself, then run this again.');
+    console.log('The Cortex identity itself is granted by this script — see the "Purview access" step above.');
+  } else if (!DRY_RUN && PRINCIPAL) {
+    console.log('\nThe deployed app refreshes its register every 15 minutes. To see the content now:');
+    console.log(`  curl -X POST ${config.publicBaseUrl || '<web url>'}/api/index/refresh`);
   }
 
   // process.exit() truncates stdout when it is a pipe — which it always is
@@ -731,9 +891,12 @@ export {
   apimFetch,
   listAllDomains,
   listAllDataProducts,
+  bootstrapCatalogAccess,
+  bootstrapDomainAccess,
   bootstrapDomains,
   bootstrapDataProducts,
   bootstrapSkills,
+  contactsFor,
   skillSpec,
   mapFrequency,
   attributesFor,

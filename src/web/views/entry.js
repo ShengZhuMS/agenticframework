@@ -249,6 +249,20 @@ ${
         e.ownerState === 'confirmed' ? 'a human, once' : 'nobody yet'
       )}
       ${row('Cluster', esc(cluster?.name || e.cluster), 'Assigned', 'a human')}
+      ${
+        e.catalogueStatus
+          ? row(
+              'Catalogue status',
+              e.catalogueStatus === 'Published'
+                ? 'Published'
+                : `${esc(e.catalogueStatus)}
+                   <strong class="govuk-tag govuk-tag--grey" style="margin-left:8px">Draft</strong>
+                   <span class="cortex-src">Registered, but not yet published in the Purview portal. Shown so the register is honest about what exists.</span>`,
+              'Purview Unified Catalog',
+              'a human, in Purview'
+            )
+          : ''
+      }
       ${row('Freshness', esc(e.fresh), 'Lineage', 'agent')}
       ${row('Sensitivity', esc(e.sens), 'Purview classification', 'agent')}
       ${row('Access route', esc(e.access), 'Derived from the permissions model', 'agent')}

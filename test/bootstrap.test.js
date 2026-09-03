@@ -26,6 +26,7 @@ const {
   apimFetch,
   waitForOperation,
   attributesFor,
+  contactsFor,
   mapFrequency,
   guidFor,
   __counters
@@ -336,5 +337,43 @@ describe('payload mapping', () => {
     assert.match(a, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.equal(a, guidFor('domain:water'), 'must be stable across runs');
     assert.notEqual(a, guidFor('domain:air'));
+  });
+});
+
+/* ------------------------------------------------------- owners */
+
+describe('data product owners', () => {
+  const ME = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+
+  test('the signed-in person is named as owner, under the team from the content file', () => {
+    // Purview will not publish a data product with no owner. The old payload
+    // named none, which is one reason every product came back as a draft.
+    const c = contactsFor(undefined, ME, 'EA Water Quality');
+    assert.deepEqual(c, { owner: [{ id: ME, description: 'EA Water Quality' }] });
+  });
+
+  test('an owner somebody added in the portal survives a re-run', () => {
+    const existing = { contacts: { owner: [{ id: '11111111-1111-1111-1111-111111111111', description: 'Portal owner' }], expert: [{ id: ME }] } };
+    const c = contactsFor(existing, ME, 'Team');
+    assert.equal(c.owner.length, 2, 'merged, not replaced');
+    assert.equal(c.expert.length, 1, 'other contact types are untouched');
+  });
+
+  test('is idempotent — the same person is not added twice', () => {
+    const existing = { contacts: { owner: [{ id: ME.toUpperCase(), description: 'x' }] } };
+    assert.equal(contactsFor(existing, ME, 'Team').owner.length, 1);
+  });
+
+  test('the product payload carries the owner', async () => {
+    const products = [{ id: 'wq', name: 'WQ', domain: 'water', owner: 'EA Water Quality', updateFrequency: 'daily' }];
+    stubFetch((url, init) => {
+      if (url.pathname.endsWith('/dataProducts/query')) return json({ value: [] });
+      if (init.method === 'POST') return json({ id: 'new' }, 201);
+      return json({ value: [] });
+    });
+    await bootstrapDataProducts(products, { water: 'domain-guid' }, { ownerId: ME });
+    const create = calls.find((c) => c.method === 'POST' && c.url.pathname.endsWith('/dataProducts'));
+    assert.deepEqual(create.body.contacts.owner, [{ id: ME, description: 'EA Water Quality' }]);
+    assert.equal(create.body.status, 'PUBLISHED');
   });
 });

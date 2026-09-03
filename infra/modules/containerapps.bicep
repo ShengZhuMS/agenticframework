@@ -72,6 +72,12 @@ param entraClientId string = ''
 @description('Group id to name mapping, e.g. "<guid>=all-staff,<guid>=waste-crime".')
 param groupNames string = ''
 
+// Every signed-in person is a member of staff. Granting `all-staff` to every
+// authenticated user is what lets a tenant with no group mapping render "Open
+// to all staff" entries as available. Empty string = strict mode (Entra only).
+@description('Groups granted to every signed-in user on top of Entra, comma-separated. Default all-staff. Empty for strict mode.')
+param defaultGroups string = 'all-staff'
+
 // ---------------------------------------------------------------- secrets
 // Supplied only if you choose to pass them through the deployment. Left empty,
 // the `secrets` property is omitted from the template entirely rather than
@@ -115,6 +121,14 @@ param mcpImageName string = ''
 // recoverable in front of an audience. Set to 0 if you are only testing.
 @description('Minimum replicas for the MCP server. 1 avoids a cold start on the first agent call.')
 param mcpMinReplicas int = 1
+
+// ONE REPLICA, ON PURPOSE. Requests, Ask threads, access requests and the
+// record of what an agent was built from live in the web app's memory (see
+// docs/HANDOVER.md, next work). With several replicas a person publishes an
+// agent on one and the next page load lands on another where it does not
+// exist. Until there is a store, the web app must not scale out.
+@description('Maximum replicas for the web app. Keep at 1 while application state is in memory.')
+param webMaxReplicas int = 1
 
 // Placeholder image, used only until `azd deploy` pushes the real one.
 var bootstrapImage = 'mcr.microsoft.com/k8se/quickstart:latest'
@@ -215,7 +229,10 @@ var mcpDirectEnv = useKeyVault ? [] : [
 
 var optionalEnv = concat(
   empty(entraClientId) ? [] : [ { name: 'ENTRA_CLIENT_ID', value: entraClientId } ],
-  empty(groupNames) ? [] : [ { name: 'CORTEX_GROUP_NAMES', value: groupNames } ]
+  empty(groupNames) ? [] : [ { name: 'CORTEX_GROUP_NAMES', value: groupNames } ],
+  // Always set, even when empty: an absent variable means "default to
+  // all-staff" in config.js, so strict mode needs the empty string written.
+  [ { name: 'CORTEX_DEFAULT_GROUPS', value: defaultGroups } ]
 )
 
 // A secretRef pointing at a secret that does not exist stops the container
@@ -286,9 +303,10 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        // Never zero. Cold start is the top demo risk.
+        // Never zero. Cold start is the top demo risk. Never more than one
+        // either, while state is in memory — see webMaxReplicas.
         minReplicas: 1
-        maxReplicas: 3
+        maxReplicas: webMaxReplicas
       }
     }
   }

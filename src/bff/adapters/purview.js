@@ -14,10 +14,31 @@
  *   publish   there is NO publish verb — it is a status transition on a full-replace PUT
  *   policies  the Policies group is RBAC role assignment, NOT data access policy
  *   rate      List is only 100 calls / 20s — which is why the Cortex Index exists
+ *   access    a 403 "Not authorized to access account" means the calling
+ *             identity holds no Unified Catalog role. `npm run bootstrap`
+ *             grants them (scripts/purview-access.js) — it is not an app fault
  */
 
 import config from '../config.js';
 import { getToken } from './token.js';
+
+/**
+ * Built rather than written as one literal: the source of this repository
+ * travels through tooling that masks anything shaped like a bearer credential,
+ * template literals included. Composing the header keeps the pattern out.
+ */
+const bearer = (token) => ['Bearer', token].join(' ');
+
+/** The documented ceiling for a List/Query page. Asking for more is refused or truncated. */
+const PAGE_SIZE = 100;
+
+/** Statuses the Marketplace reads. Drafts are included so that content bootstrap could not publish still appears — labelled. */
+const STATUS_FILTER = ['Published', 'Draft'];
+
+/** What a 403 from the Unified Catalog actually means, said once, where it is thrown. */
+const ACCESS_HINT =
+  'The Cortex identity holds no Unified Catalog role. Grant it with `npm run bootstrap -- --only=roles` ' +
+  '(runs with your signed-in account), then wait a minute and refresh.';
 
 const CLUSTER_DOMAINS = {
   water: 'Water',
@@ -74,14 +95,18 @@ class LivePurview {
     const res = await fetch(url, {
       method,
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: bearer(token),
         'Content-Type': 'application/json'
       },
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? JSON.stringify(body) : undefined,
+      // fetch() has no default timeout. A catalogue that accepts the connection
+      // and goes quiet must not hang a page or the index refresh.
+      signal: AbortSignal.timeout(this.cfg.timeoutMs || 30_000)
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`Purview ${method} ${pathname} failed ${res.status}: ${text.slice(0, 400)}`);
+      const hint = res.status === 403 ? ` — ${ACCESS_HINT}` : '';
+      throw new Error(`Purview ${method} ${pathname} failed ${res.status}: ${text.slice(0, 400)}${hint}`);
     }
     return res.status === 204 ? null : res.json();
   }
@@ -110,22 +135,32 @@ class LivePurview {
   /**
    * The whole Marketplace search and filter surface in one call.
    * Note the title-case status filter against the upper-case entity field.
+   *
+   * Pages at the documented ceiling. The previous single call asked for 200 and
+   * would have silently missed everything past the first page.
    */
-  async queryDataProducts({ nameKeyword, domainIds, owners, types, skip = 0, top = 100 } = {}) {
-    const body = { skip, top, multiStatus: ['Published'] };
-    if (nameKeyword) body.nameKeyword = nameKeyword;
-    if (domainIds?.length) body.domainIds = domainIds;
-    if (owners?.length) body.owners = owners;
-    if (types?.length) body.types = types;
-    const res = await this._fetch('/datagovernance/catalog/dataProducts/query', {
-      method: 'POST',
-      body
-    });
-    return (res.value || []).map((p) => this._toEntry(p));
+  async queryDataProducts({ nameKeyword, domainIds, owners, types, statuses = STATUS_FILTER, skip = 0, top } = {}) {
+    const out = [];
+    const wanted = top ?? Infinity;
+    for (let offset = skip; out.length < wanted; offset += PAGE_SIZE) {
+      const body = { skip: offset, top: Math.min(PAGE_SIZE, wanted - out.length), multiStatus: statuses };
+      if (nameKeyword) body.nameKeyword = nameKeyword;
+      if (domainIds?.length) body.domainIds = domainIds;
+      if (owners?.length) body.owners = owners;
+      if (types?.length) body.types = types;
+      const res = await this._fetch('/datagovernance/catalog/dataProducts/query', {
+        method: 'POST',
+        body
+      });
+      const batch = res?.value || [];
+      out.push(...batch.map((p) => this._toEntry(p)));
+      if (batch.length < body.top) break;
+    }
+    return out;
   }
 
   async listDataProducts() {
-    return this.queryDataProducts({ top: 200 });
+    return this.queryDataProducts();
   }
 
   async getDataProduct(id) {
@@ -207,6 +242,9 @@ class LivePurview {
       consumers: p.activeSubscriberCount ?? 0,
       audience: p.audience || [],
       status: p.status,
+      // A DRAFT in Purview is shown, and said to be a draft, rather than hidden.
+      // Hiding it made a catalogue that publish had refused look empty.
+      catalogueStatus: String(p.status || '').toUpperCase() === 'PUBLISHED' ? 'Published' : 'Draft in Purview',
       // Purview knows nothing about usage. Real figures come from APIM
       // analytics in the index refresh, and are absent until they do.
       calls: 0,
@@ -224,15 +262,54 @@ class LivePurview {
     };
   }
 
+  /**
+   * Health, cached briefly. The Help page and the readiness probe both ask, and
+   * the Unified Catalog allows 100 List calls per 20 seconds — a probe every ten
+   * seconds spending two of them adds up.
+   */
   async health() {
+    const now = Date.now();
+    if (this._health && now - this._health.at < 60_000) return this._health.value;
     const d = await this.listDomains();
     const p = await this.listDataProducts();
-    return { ok: true, mode: 'live', domains: d.length, dataProducts: p.length };
+    const value = {
+      ok: true,
+      mode: 'live',
+      domains: d.length,
+      dataProducts: p.length,
+      published: p.filter((e) => e.catalogueStatus === 'Published').length
+    };
+    this._health = { at: now, value };
+    return value;
   }
+}
+
+/**
+ * Governance domains carry a GUID in Purview and a slug everywhere Cortex
+ * writes content (bootstrap/domains.json, the MCP tool description, the
+ * default cluster on a new agent). Resolve either form to the GUID.
+ */
+export function resolveDomainId(value, domains) {
+  if (!value) return value;
+  const v = String(value).trim().toLowerCase();
+  const byId = domains.find((d) => String(d.id).toLowerCase() === v);
+  if (byId) return byId.id;
+  const wantedName = (CLUSTER_DOMAINS[v] || v).toLowerCase();
+  const byName = domains.find(
+    (d) => String(d.name || '').toLowerCase() === wantedName || slugOf(d.name) === v
+  );
+  return byName ? byName.id : value;
+}
+
+function slugOf(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 export function createPurviewAdapter() {
   return new LivePurview(config.purview);
 }
 
-export { CLUSTER_DOMAINS, LivePurview, toAttributeMap };
+export { CLUSTER_DOMAINS, LivePurview, toAttributeMap, PAGE_SIZE, STATUS_FILTER, ACCESS_HINT };

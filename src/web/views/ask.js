@@ -89,12 +89,25 @@ function answerBlock(a, ctx) {
 
 <p class="govuk-body" style="white-space:pre-wrap">${esc(a.text)}</p>
 
+${
+  a.engine === 'register-fallback'
+    ? `<div class="govuk-warning-text">
+         <span class="govuk-warning-text__icon" aria-hidden="true">!</span>
+         <strong class="govuk-warning-text__text">
+           <span class="govuk-visually-hidden">Warning</span>
+           The model could not be reached, so this is the register's own summary rather than a written answer.
+         </strong>
+       </div>`
+    : ''
+}
+
 <div class="govuk-inset-text">
   <h3 class="govuk-heading-s govuk-!-margin-bottom-0">Where this answer came from</h3>
   <p class="govuk-body-s">
     Searched ${esc(a.searched)} registered entries · ${esc(a.matched)} mentioned your terms ·
     ${esc(a.sources.length)} used · confidence <strong>${esc(a.confidence)}</strong>
   </p>
+  ${a.engineDetail ? `<p class="govuk-body-s">${esc(a.engineDetail)}</p>` : ''}
   ${sourceList(a.sources, ctx)}
   ${couldNotReachList(a.couldNotReach, ctx)}
 </div>

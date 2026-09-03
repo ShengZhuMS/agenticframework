@@ -20,14 +20,15 @@ Cortex is a single front door to Microsoft Purview, Azure API Management and Mic
 |---|---|
 | Marketplace, entry standard, map | Working |
 | Build an agent → gates → test → publish → reappears | Working, end to end |
-| Ask, with provenance | Working |
+| Ask, with provenance | **Live against Foundry** since 3 Sep — the `cortex-ask` agent writes the answer from the entries the asker can reach; the register-only text it used to show (which said "demo mode is on") is now only the fallback when the model cannot be reached |
 | Requests lifecycle | Working |
 | Share your data | Working |
-| Key Vault configuration | Working |
-| Entra sign-in | Working |
+| Key Vault configuration | Working (direct mode in the sandbox — see DEPLOY.md §5) |
+| Entra sign-in, groups claim, group mapping | **Scripted** — `Set-CortexAuth.ps1`, run by the deploy script |
+| Purview roles for the Cortex identity | **Scripted** — bootstrap grants them through the Unified Catalog Policies API. This was the cause of "Purview UNAVAILABLE — 403" |
 | **Verified against real Azure** | **Partly — see §8** |
 
-163 unit tests and a 23-step end-to-end script pass against HTTP stubs shaped like real Azure responses.
+214 unit tests pass against HTTP stubs shaped like real Azure responses, including a smoke test that boots the real server and opens every page.
 
 ---
 
@@ -50,12 +51,17 @@ infra/                Bicep. Reuses existing Azure resources; creates only what 
   main.bicep          Subscription scope. Every resource name and RG is a parameter.
   modules/*-existing  Grant access to a resource you already own. Create nothing.
 scripts/
-  Deploy-Cortex.ps1     Probes what exists, sets create* flags, deploys, bootstraps, verifies.
+  Deploy-Cortex.ps1     Probes what exists, sets create* flags, deploys, configures sign-in,
+                        grants Purview access, bootstraps, verifies. 12 steps, all re-runnable.
+  Set-CortexAuth.ps1    Entra app registration + groups claim + Container Apps auth + group
+                        mapping + default group. Idempotent.
   Preprovision-Check.ps1 azd hook. Guards a bare `azd up` against the two known provision failures.
   Set-CortexEnv.ps1     Dot-source to load config into a session, for running bootstrap by hand.
   Start-Local.ps1       Run on your machine against real Azure.
   Test-Cortex.ps1       Health check a deployment, including the MCP server.
-  bootstrap.js          Writes the Defra content into real Purview + APIM. Idempotent.
+  bootstrap.js          Grants the Cortex identity its Purview roles, then writes the Defra
+                        content into real Purview + APIM. Idempotent. --only=roles|purview|apim
+  purview-access.js     The Unified Catalog Policies API mutation, as pure functions + grants.
 bootstrap/            Domains, data products, skills. INPUT to the script, not runtime data.
 Dockerfile            cortex-web.
 Dockerfile.mcp        cortex-purview-mcp. Same tree, different entry point.
@@ -125,9 +131,12 @@ These cost real time to establish. They were correct in August 2026 and several 
 - Scope `https://purview.azure.net/.default` — one token also covers Data Map
 - `businessdomains` is lowercase; `dataProducts` is camelCase
 - **Publishing is a status transition, not an operation.** No publish verb. `PUT` the whole object with `status: 'PUBLISHED'`. PUT is a **full replace** — read-modify-write. Casing differs between planes: entity reads `PUBLISHED`, query filters use `Published`
-- The `Policies` group is **RBAC role assignment**, not data access policy
+- A data product needs at least one **owner** (`contacts.owner[].id` = an Entra object id) before it will publish. Bootstrap names the signed-in person
+- The `Policies` group is **RBAC role assignment**, not data access policy — and it is how roles are automated. `GET /datagovernance/catalog/policies` returns one policy per scope (`dgpolicy_datagovernanceapp_<id>` for the catalogue, `dgpolicy_businessdomain_<id>` per domain); each role is an `attributeRules[]` entry `purviewdatagovernancerole_builtin_<role>:<scope>` whose `principal.microsoft.id` condition lists the object ids. `PUT` the whole policy back with the same `version`. **Service principals and managed identities are accepted** — the older note here saying roles could not be automated was wrong
+- **`403 {"code":"Unauthorized","message":"Not authorized to access account"}`** from any Unified Catalog call means the caller holds no Unified Catalog role. Not an Azure RBAC problem, not a network problem
+- Roles the app needs: catalog-level **Data Governance Administrator** + **Global Catalog Reader**; **Governance Domain Owner** on each Cortex domain. Data Map (collection) roles only matter once data products carry real assets
 - 🔴 **No access-request API of any kind** — not submit, approve, read or configure. Cortex owns that workflow, deliberately
-- Rate limits per 20s: List 100, Query 800, Get 1500. This is *why* the Cortex Index exists
+- Rate limits per 20s: List 100, Query 800, Get 1500. This is *why* the Cortex Index exists, and why `purview.js` and the MCP server cache health and listings
 
 ---
 
@@ -140,7 +149,11 @@ These cost real time to establish. They were correct in August 2026 and several 
 | **Container App declared in Bicep but not in `azure.yaml`** | The app exists, answers on its URL, and serves the placeholder. Nothing errors | Every `azd-service-name` tag needs a matching service in `azure.yaml` |
 | **Hardcoded `azd-env-name` tag** | azd locates its resources by that tag. A second environment claims the first one's resources | Tag from `environmentName`, never a literal |
 | **Missing groups claim** | Everyone appears to be in no groups; Marketplace looks empty and broken | Add the groups claim to the app registration. `/profile` diagnoses it |
-| **Purview roles in one plane only** | Assets silently invisible, including in search | Data Product Owner **and** Data reader. Both |
+| **Cortex identity with no Purview role** | Help page: Purview UNAVAILABLE, `403 Not authorized to access account`. APIM and Foundry fine | `node scripts/bootstrap.js --only=roles` (after `. .\scripts\Set-CortexEnv.ps1`). Deploy-Cortex.ps1 does it |
+| **Your own account not a Data Governance Administrator** | Bootstrap gets 403 from Purview | Purview portal → Settings → Solution settings → Unified Catalog → Roles and permissions |
+| **Source masked in transit** | A file that passed through a chat or transfer tool has a run of asterisks where a credential-shaped value was — including the authorization header template literal (scheme word plus token). It parses; every Azure call then fails | Deploy-Cortex.ps1 step 1 refuses to deploy it. The adapters compose the header with `bearer(token)` so the pattern never appears in source |
+| **More than one web replica** | A user publishes an agent, the next page load hits another replica where it does not exist | `webMaxReplicas` is 1 until there is a store. Do not raise it |
+| **A model in the catalogue that is not deployed** | Passes validation, fails at agent creation | `listModels()` offers only `FOUNDRY_MODEL` and `FOUNDRY_MODELS` |
 | **Key Vault on access policies** | RBAC assignment silently ignored | `--enable-rbac-authorization true`. Deploy script warns |
 | **Two azd environments, one Key Vault** | The last one provisioned owns every endpoint in the vault; the other app talks to the wrong container | `cortex-environment-name` records the owner and the deploy script warns. Give the second environment its own vault |
 | **Key Vault with public access disabled** | The vault seeds fine and is then unreadable at runtime, because KV firewall rules are data-plane only and Container Apps is not a trusted service. App starts, falls back to environment, marketplace is empty — looks like an app fault | `-ConfigSource direct` passes configuration to the apps instead. Only a private endpoint restores the vault path |
@@ -157,27 +170,34 @@ These cost real time to establish. They were correct in August 2026 and several 
 
 **One live provision has now run.** It reached Azure, created the resource group, the Container Apps environment and both container apps, and failed on the model deployment — which is the trap at the top of §7. The infrastructure path is real; the model, image and idempotency fixes in this repo came out of that run.
 
-**Still unverified:** bootstrap against real Purview, the publish status transition, the APIM MCP server creation, and the end-to-end golden path.
+**Verified against Azure since:** provisioning end to end (both apps on real images), APIM and Foundry health from the deployed app, the Purview domain creation as a signed-in user (nine domains exist).
 
-**A note on the Purview roles.** They are assigned against governance domains, and the domains do not exist until bootstrap has successfully created them. If bootstrap has been failing at the configuration check, it never reached Purview, so no Cortex domains exist and any roles assigned so far are on pre-existing domains — not the ones Cortex will use. Assign them again, on the Cortex domains, after the first successful bootstrap.
+**Seen against Azure and now fixed:** the deployed app's `403 Not authorized to access account` from Purview — the identity had no Unified Catalog role (§7). Data products had not been created (the managed-attribute shape and the missing owner).
+
+**Still unverified — the 3 Sep round was written against the documented API shapes and stubs, not a live run:**
+- the Policies API grant itself (`scripts/purview-access.js`) — the documented request and response shapes are pinned in `test/purview-access.test.js`;
+- the data product create/publish with `contacts.owner` set;
+- `ensureAgent` for `cortex-ask` and a `previous_response_id` follow-up;
+- `Set-CortexAuth.ps1` on your tenant.
 
 **Do these in order:**
 
-1. `.\scripts\Deploy-Cortex.ps1 -WhatIfResources` — confirms the resource mapping and that the pinned model is deployable. Changes nothing.
-2. `node scripts/bootstrap.js --dry-run` — validates the content payloads. No Azure needed.
-3. Deploy. Then check `cortex-purview-mcp` is serving `/health` and not a placeholder — `Test-Cortex.ps1` does this.
-4. Bootstrap. **Watch the Purview publish transition** — it is the least certain call in the codebase. If it is refused the script falls back to `DRAFT` and says so.
-5. `npm install` fetches `govuk-frontend`. The app falls back to a bundled stylesheet with the same class names, so it renders either way, but verify the vendored path works.
+1. `npm test` — 214 green, no Azure.
+2. `.\scripts\Deploy-Cortex.ps1 -WhatIfResources` — confirms the resource mapping and the model. Changes nothing.
+3. `.\scripts\Deploy-Cortex.ps1` — the full run. Watch step 11: the **Purview access** step should report the two catalog roles granted and Governance Domain Owner on nine domains, then the products created (published, or as drafts with the reason).
+4. `.\scripts\Test-Cortex.ps1` — six green. If Purview alone is red straight after the deploy, wait a minute; the roles propagate.
+5. Sign in, open `/profile`, then Ask a question — the panel should say "Answered by the Foundry agent cortex-ask".
 
 ---
 
 ## 9. Next work, in priority order
 
-1. **Persistence.** Requests, methods, threads and access requests are all in memory and die on restart. Cosmos was removed from the Bicep because nothing used it — add it back and implement a store when you do this. This is the biggest real gap.
+1. **Persistence.** Requests, methods, threads and access requests are all in memory and die on restart, and `cortex-web` is pinned to one replica because of it. Cosmos was removed from the Bicep because nothing used it — add it back (or a small JSON store on a mounted share) and implement a store when you do this. This is the biggest real gap.
 2. **Purview access policies.** Cortex owns the request workflow; it does not yet call anything to actually *grant* access. Approval currently updates the register only.
 3. **Streaming for Ask.** `LiveFoundry.stream()` exists and is unused; the UI posts and re-renders.
 4. **Recurring requests.** Cadence is captured and approved methods are stored, but nothing issues them on a schedule.
 5. **Skill invocation shim.** `bootstrap.js` publishes skills pointing at `/shim/skills/:id`, which is not implemented. Either implement it or stop publishing those APIs.
+5b. **The shim trusts the gateway.** `/shim/*` and `/api/health*` are excluded from Easy Auth so API Management and the scripts can reach them; the shim does not verify that a call came through API Management. Add a shared header check (APIM policy sets it, the shim requires it) before this leaves the sandbox.
 6. **Data Map lineage.** `getAssets()` exists; lineage on the entry page comes from managed attributes, not real lineage.
 7. **Get Key Vault back in the runtime path.** The sandbox vault has public network access disabled, so the apps run on direct configuration with three Container Apps secrets. That is weaker than a vault — the secrets are readable by anyone with Contributor on the app. Fixing it means a VNet-integrated Container Apps environment and a private endpoint, and the environment cannot be VNet-joined after creation, so it has to be rebuilt. `docs/DEPLOY.md` §5c has the order.
 
@@ -193,3 +213,6 @@ These cost real time to establish. They were correct in August 2026 and several 
 - **Business language in the UI.** No jargon, no product names in user-facing copy where a plain word will do.
 - **Infrastructure must survive a re-run.** Assume every template is applied many times. Anything that only works the first time is a bug, not a limitation.
 - **Configuration has two supported sources, and the app must not care which.** Key Vault when it is reachable, the environment otherwise. `SECRET_CATALOGUE` in `adapters/keyvault.js` is the contract between them: add a value there and to `containerapps.bicep`, or it will work in one mode and not the other.
+- **Never write a bearer header as one literal.** Use the `bearer(token)` helper each adapter defines. Source that travels through a chat or transfer tool comes back with credential-shaped text masked — including template literals — and the result parses and then fails every call. Deploy-Cortex.ps1 step 1 checks for it.
+- **Bound every outbound call.** `AbortSignal.timeout` on every `fetch`; the adapters have per-call and per-answer budgets in config. A hanging back end must degrade a page, not hang it.
+- **Cortex decides what the model may see; the model decides what to say.** Ask passes catalogue metadata for entries the asker can reach and nothing else. Keep that boundary — it is the governance story.
