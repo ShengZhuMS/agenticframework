@@ -47,6 +47,7 @@ Twelve minutes. Everything live.
 | 4-6 | **Build an agent** | Approved models; knowledge checklist with **unavailable items greyed out and explained**; permitted actions |
 | 7 | **Assurance gates** | Seven gates, computed from what the agent reads and does, each stating why it applies |
 | 8 | **Test it** | Live Foundry agent, answering with sources and freshness named |
+| 8b | **Ask** | The `cortex-ask` Foundry agent answers from the catalogue entries the asker can reach; the provenance panel names what it could not |
 | 9 | **Publish** | Glue 2 runs: OpenAPI → APIM API → MCP server → endpoint written back |
 | 10 | **Loop closes** | The agent is now a Marketplace entry another agent can consume |
 
@@ -96,7 +97,7 @@ That last state is the deck's problem rendered as a UI state rather than a dead 
 
 ### The two pieces of glue
 
-**Glue 1 — Purview MCP server.** Exposes the catalogue as MCP tools (`search_data_products`, `get_data_product`, `get_lineage`, `get_schema`), published through APIM and attached to agents as an ordinary MCP tool. **Catalogue metadata only, never the underlying data** — it answers "what exists, who owns it, what does it mean", never "give me the rows". That keeps the access-control story clean and is exactly the thin slice Defra's deck asks for.
+**Glue 1 — Purview MCP server.** Exposes the catalogue as MCP tools (`list_governance_domains`, `search_data_products`, `get_data_product`, `get_lineage`, `get_schema`), published through APIM and attached to agents as an ordinary MCP tool. **Catalogue metadata only, never the underlying data** — it answers "what exists, who owns it, what does it mean", never "give me the rows". That keeps the access-control story clean and is exactly the thin slice Defra's deck asks for.
 
 **Glue 2 — publish an agent as MCP.** Cortex hosts a generic invocation shim, generates an OpenAPI operation per agent, imports it into APIM, projects an MCP server over it, and writes the endpoint back onto the entry. All four steps use documented APIM management APIs; only the shim is ours.
 
@@ -150,9 +151,9 @@ The source backlog holds **190 capabilities across 359 rows**, and made no PoC d
 | Risk | Impact | Mitigation |
 |---|---|---|
 | **Purview publish transition behaves differently than inferred** | High | Least certain call in the codebase. Bootstrap falls back to `DRAFT` and reports it. Test in week one. |
-| **Groups claim missing from the app registration** | High | Everything looks broken for non-obvious reasons. `/profile` diagnoses it; the deploy guide calls it out twice. |
-| **Purview roles assigned in one plane only** | High | Assets silently invisible. The most common failure, and it fails quietly. |
-| **Nothing verified against real Azure** | High | Written to verified API shapes, tested against stubs. Deploy early, expect fixes. |
+| **Groups claim missing from the app registration** | High | `Set-CortexAuth.ps1` switches it on and the deploy script runs it. `/profile` diagnoses it. |
+| **Cortex identity without a Unified Catalog role** | High | Purview answers 403 to every call. Bootstrap grants the roles through the Policies API; `Test-Cortex.ps1` names the fix when it sees the error. |
+| **Only partly verified against real Azure** | High | Provisioning, APIM and Foundry verified live; the Purview grant, product publish and the Ask agent are written to the documented shapes and tested against stubs. Deploy early, expect small fixes. |
 | **Preview APIs shift** | Medium | Unified Catalog has no GA version. Isolated behind one adapter. Say so openly — it is a real platform-maturity point. |
 | **No persistence** | Medium | Requests and threads die on restart. First item on the next-work list. |
 | **Live demo back-end failure** | **Critical** | Accepted deliberately — everything is real, so there is no fallback that hides it. Per-source fault tolerance keeps the app up and names what failed. **Record a walkthrough as insurance.** |

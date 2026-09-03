@@ -17,7 +17,7 @@
  */
 
 import config from '../config.js';
-import { createPurviewAdapter } from '../adapters/purview.js';
+import { createPurviewAdapter, resolveDomainId } from '../adapters/purview.js';
 import { createApimAdapter } from '../adapters/apim.js';
 import { createFoundryAdapter } from '../adapters/foundry.js';
 
@@ -88,7 +88,10 @@ class CortexIndex {
       settle('foundry-agents', () => this.foundry.listAgents())
     ]);
 
-    if (domains) this.domains = domains;
+    if (domains) {
+      this.domains = domains;
+      for (const e of this.entries.values()) e.cluster = resolveDomainId(e.cluster, domains);
+    }
 
     if (products) {
       for (const p of products) this.upsert(this.normalise(p));
@@ -138,6 +141,8 @@ class CortexIndex {
     if (agents) {
       for (const a of agents) {
         if (!a?.name) continue;
+        // Cortex's own Ask agent is plumbing, not a part anyone builds with.
+        if (a.name === config.ask.agentName || a.name.startsWith('cortex-ask')) continue;
         const id = slug(a.name);
         const existing = this.entries.get(id);
         this.upsert({
@@ -198,6 +203,10 @@ class CortexIndex {
    */
   normalise(entry) {
     const e = { ...entry };
+    // Purview names a domain by GUID; content files, the MCP tool and a new
+    // agent's default name it by slug. One form in the register, or the map
+    // shows the same domain twice and an agent lands in "unclustered".
+    e.cluster = resolveDomainId(e.cluster, this.domains);
     if (!e.owner) {
       const domain = this.domains.find((d) => d.id === e.cluster);
       e.owner = domain?.owner || 'Not claimed';
@@ -211,6 +220,7 @@ class CortexIndex {
   upsert(entry) {
     const existing = this.entries.get(entry.id);
     const merged = existing ? { ...existing, ...prune(entry) } : this.normalise(entry);
+    merged.cluster = resolveDomainId(merged.cluster, this.domains);
     this.entries.set(entry.id, merged);
     return merged;
   }
@@ -229,7 +239,8 @@ class CortexIndex {
   }
 
   clusterById(id) {
-    return this.domains.find((c) => c.id === id) || null;
+    const resolved = resolveDomainId(id, this.domains);
+    return this.domains.find((c) => c.id === resolved) || null;
   }
 
   search({ q, cats, clusters, visStates, sort = 'name' } = {}, user = null) {

@@ -125,7 +125,10 @@ function multi(searchParams, key) {
  * set in a deployed environment and the startup log says so loudly if it is.
  */
 function resolveUser(req) {
-  const user = userFromRequest(req, { groupNames: config.entra.groupNames });
+  const user = userFromRequest(req, {
+    groupNames: config.entra.groupNames,
+    defaultGroups: config.entra.defaultGroups
+  });
   if (user) return user;
 
   if (config.entra.allowUnauthenticated) {
@@ -133,7 +136,7 @@ function resolveUser(req) {
       id: 'local-dev',
       name: config.entra.localUser || 'Local development',
       email: config.entra.localUser || null,
-      groups: config.entra.localGroups,
+      groups: [...new Set([...config.entra.localGroups, ...config.entra.defaultGroups])],
       roles: [],
       clearance: config.entra.localGroups.includes('cortex-official-sensitive')
         ? 'Official–Sensitive'

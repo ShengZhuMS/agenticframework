@@ -17,6 +17,13 @@
  * looks like a member of nothing, and the Marketplace correctly — but
  * uselessly — shows them almost nothing. See docs for the token configuration
  * step; it is the single most common reason a live deployment looks broken.
+ *
+ * DEFAULT GROUPS. Anyone who has signed in is, by definition, a member of
+ * staff — so CORTEX_DEFAULT_GROUPS (default `all-staff`) is granted to every
+ * authenticated user on top of whatever Entra says. This is what lets a PoC
+ * tenant with no group mapping render "Open to all staff" entries as available
+ * rather than as "Licence does not cover you". Team-scoped and cleared groups
+ * still come only from Entra. Set it empty to turn the default off.
  */
 
 const GROUP_CLAIM_TYPES = new Set([
@@ -64,7 +71,7 @@ function decodePrincipal(header) {
  * unauthenticated user has no group membership, so every entry would resolve
  * to "not available" and the page would be actively misleading.
  */
-export function userFromRequest(req, { groupNames = {} } = {}) {
+export function userFromRequest(req, { groupNames = {}, defaultGroups = [] } = {}) {
   const upn =
     req.headers['x-ms-client-principal-name'] ||
     req.headers['x-ms-client-principal-idp'] === undefined
@@ -85,7 +92,7 @@ export function userFromRequest(req, { groupNames = {} } = {}) {
    * match.
    */
   const named = rawGroups.map((g) => groupNames[g]).filter(Boolean);
-  const groups = [...new Set([...rawGroups, ...named])];
+  const groups = [...new Set([...rawGroups, ...named, ...(defaultGroups || [])])];
 
   const name =
     NAME_CLAIM_TYPES.map((t) => principal?.[t]).find(Boolean) || upn || 'Signed in user';
@@ -97,6 +104,8 @@ export function userFromRequest(req, { groupNames = {} } = {}) {
     objectId,
     groups,
     roles: principal?.roles || [],
+    /** Which of the groups came from configuration rather than from Entra. */
+    defaultGroups: (defaultGroups || []).filter((g) => !rawGroups.includes(g) && !named.includes(g)),
     /**
      * Clearance and licence entitlement are derived from group membership.
      * There is no separate store: if a person is in the cleared group they are
@@ -124,6 +133,18 @@ function teamFromGroups(groups) {
     .replace('cortex-team-', '')
     .replace(/-/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Parse the default-groups setting. Unset means `all-staff`; an explicit empty
+ * string means none, which is the strict mode.
+ */
+export function parseDefaultGroups(spec) {
+  if (spec === undefined || spec === null) return ['all-staff'];
+  return String(spec)
+    .split(',')
+    .map((g) => g.trim())
+    .filter(Boolean);
 }
 
 /**

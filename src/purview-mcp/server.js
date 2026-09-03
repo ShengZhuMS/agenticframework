@@ -25,7 +25,7 @@
 
 import http from 'node:http';
 import { hydrateConfig } from '../bff/config.js';
-import { createPurviewAdapter } from '../bff/adapters/purview.js';
+import { createPurviewAdapter, resolveDomainId } from '../bff/adapters/purview.js';
 
 const PORT = Number(process.env.PORT || 3000);
 
@@ -37,9 +37,46 @@ const purview = createPurviewAdapter();
 
 const PROTOCOL_VERSION = '2025-06-18';
 
+/**
+ * Governance domains, cached for a minute. Every tool call used to list the
+ * whole catalogue afresh; an agent that asks three questions in a row would
+ * spend six of the 100 List calls Purview allows per 20 seconds. The cache also
+ * lets a caller name a domain the way people do — "water", "Waste and
+ * resources" — rather than by the GUID Purview uses.
+ */
+const CACHE_MS = 60_000;
+let domainCache = { at: 0, value: [] };
+let productCache = { at: 0, value: [] };
+
+async function domains() {
+  if (Date.now() - domainCache.at > CACHE_MS) {
+    domainCache = { at: Date.now(), value: await purview.listDomains() };
+  }
+  return domainCache.value;
+}
+
+async function products() {
+  if (Date.now() - productCache.at > CACHE_MS) {
+    productCache = { at: Date.now(), value: await purview.listDataProducts() };
+  }
+  return productCache.value;
+}
+
+function domainName(id, all) {
+  return all.find((d) => d.id === id)?.name || id;
+}
+
 /* ---------------------------------------------------------------- tools */
 
 const TOOLS = [
+  {
+    name: 'list_governance_domains',
+    description:
+      'List the governance domains in the Defra data catalogue — the areas the estate is ' +
+      'organised into, such as Water or Waste and resources — with the number of registered ' +
+      'data products in each. Use this first when a question names a subject area.',
+    inputSchema: { type: 'object', properties: {} }
+  },
   {
     name: 'search_data_products',
     description:
@@ -95,11 +132,26 @@ const TOOLS = [
 
 async function callTool(name, args = {}) {
   switch (name) {
+    case 'list_governance_domains': {
+      const [all, prods] = await Promise.all([domains(), products()]);
+      return {
+        count: all.length,
+        domains: all.map((d) => ({
+          id: d.id,
+          name: d.name,
+          description: d.description,
+          dataProducts: prods.filter((p) => p.cluster === d.id).length
+        }))
+      };
+    }
+
     case 'search_data_products': {
-      const all = await purview.listDataProducts();
+      const [all, doms] = await Promise.all([products(), domains()]);
       const k = String(args.keyword || '').toLowerCase();
+      // Accept the GUID, the display name or the slug ("water") for a domain.
+      const wantedDomain = args.domain ? resolveDomainId(args.domain, doms) : null;
       const out = all.filter((e) => {
-        if (args.domain && e.cluster !== args.domain) return false;
+        if (wantedDomain && e.cluster !== wantedDomain) return false;
         if (args.owner && !String(e.owner || '').toLowerCase().includes(String(args.owner).toLowerCase()))
           return false;
         if (!k) return true;
@@ -110,23 +162,25 @@ async function callTool(name, args = {}) {
         dataProducts: out.map((e) => ({
           id: e.id,
           name: e.name,
-          domain: e.cluster,
+          domain: domainName(e.cluster, doms),
+          domainId: e.cluster,
           owner: e.owner,
           description: e.desc,
           freshness: e.fresh,
-          sensitivity: e.sens
+          sensitivity: e.sens,
+          catalogueStatus: e.catalogueStatus
         }))
       };
     }
 
     case 'get_data_product': {
-      const all = await purview.listDataProducts();
-      const e = all.find((x) => x.id === args.id);
+      const [all, doms] = await Promise.all([products(), domains()]);
+      const e = all.find((x) => x.id === args.id) || all.find((x) => x.name.toLowerCase() === String(args.id).toLowerCase());
       if (!e) return { error: `No data product with id ${args.id}` };
       return {
         id: e.id,
         name: e.name,
-        domain: e.cluster,
+        domain: domainName(e.cluster, doms),
         owner: e.owner,
         ownerConfirmed: e.ownerState === 'confirmed',
         description: e.desc,
@@ -144,7 +198,7 @@ async function callTool(name, args = {}) {
     }
 
     case 'get_lineage': {
-      const all = await purview.listDataProducts();
+      const all = await products();
       const e = all.find((x) => x.id === args.id);
       if (!e) return { error: `No data product with id ${args.id}` };
       const dependents = all.filter((x) => (x.deps || []).includes(e.id) || (x.deps || []).includes(e.name));
@@ -164,7 +218,7 @@ async function callTool(name, args = {}) {
     }
 
     case 'get_schema': {
-      const all = await purview.listDataProducts();
+      const all = await products();
       const e = all.find((x) => x.id === args.id);
       if (!e) return { error: `No data product with id ${args.id}` };
       if (typeof purview.getAssets === 'function') {
@@ -247,6 +301,8 @@ async function handleRpc(msg) {
 
 const server = http.createServer(async (req, res) => {
   if (req.url === '/health') {
+    // The adapter caches this for a minute, so the readiness probe every ten
+    // seconds does not spend the catalogue's rate limit.
     const h = await purview.health().catch((e) => ({ ok: false, error: e.message }));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, tools: TOOLS.length, purview: h }));

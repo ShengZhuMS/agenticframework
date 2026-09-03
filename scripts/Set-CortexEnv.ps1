@@ -94,6 +94,9 @@ try {
   $env:FOUNDRY_PROJECT_ENDPOINT = $v['FOUNDRY_PROJECT_ENDPOINT']
   $env:PUBLIC_BASE_URL          = $v['CORTEX_WEB_URL']
   $env:PURVIEW_MCP_URL          = if ($v['CORTEX_MCP_URL']) { "$($v['CORTEX_MCP_URL'])/mcp" } else { '' }
+  # The identity bootstrap grants the Purview roles to. This is what fixes
+  # "Purview UNAVAILABLE — 403 Not authorized to access account".
+  $env:CORTEX_IDENTITY_PRINCIPAL_ID = $v['CORTEX_IDENTITY_PRINCIPAL_ID']
 
   if ($v['FOUNDRY_MODEL_DEPLOYMENT']) { $env:FOUNDRY_MODEL = $v['FOUNDRY_MODEL_DEPLOYMENT'] }
   if ($v['APIM_PRODUCT_ID'])          { $env:APIM_PRODUCT_ID = $v['APIM_PRODUCT_ID'] }
@@ -127,6 +130,7 @@ try {
     Write-Host "    Foundry      : $($env:FOUNDRY_PROJECT_ENDPOINT)"
     Write-Host "    Web          : $($env:PUBLIC_BASE_URL)"
     Write-Host "    MCP          : $($env:PURVIEW_MCP_URL)"
+    Write-Host "    Identity     : $($env:CORTEX_IDENTITY_PRINCIPAL_ID)  (granted Purview roles by bootstrap)"
     Write-Host "    APIM key     : $(if ($env:APIM_SUBSCRIPTION_KEY) { 'loaded (not shown)' } else { 'NOT SET' })"
     Write-Host ''
     Write-Host '  This session only. Nothing was written to disk.' -ForegroundColor DarkGray
