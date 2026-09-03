@@ -27,7 +27,7 @@ Cortex is a single front door to Microsoft Purview, Azure API Management and Mic
 | Entra sign-in | Working |
 | **Verified against real Azure** | **Partly — see §8** |
 
-157 unit tests and a 23-step end-to-end script pass against HTTP stubs shaped like real Azure responses.
+163 unit tests and a 23-step end-to-end script pass against HTTP stubs shaped like real Azure responses.
 
 ---
 

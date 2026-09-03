@@ -31,6 +31,31 @@ const CLUSTER_DOMAINS = {
   corp: 'Corporate services'
 };
 
+/**
+ * Managed attributes come back as an ARRAY of { name, value } — the same shape
+ * the write path sends. Reading them as a plain dictionary returned undefined
+ * for every one, which is silent: the Marketplace simply showed the fallback
+ * for each field, so sensitivity read as Official, access as open to all
+ * staff, and — the one that matters — allowedGroups and askable came back
+ * empty. Empty allowedGroups is not a cosmetic default; it is an input to
+ * visibilityFor().
+ *
+ * Both shapes are accepted, because a tenant written by an older run of
+ * bootstrap may still hold the dictionary form.
+ */
+function toAttributeMap(managedAttributes) {
+  if (!managedAttributes) return {};
+  if (!Array.isArray(managedAttributes)) return managedAttributes;
+  const out = {};
+  for (const item of managedAttributes) {
+    if (!item || typeof item !== 'object') continue;
+    const name = item.name ?? item.attributeName;
+    if (!name) continue;
+    out[name] = item.value ?? item.attributeValue ?? '';
+  }
+  return out;
+}
+
 /* -------------------------------------------------------------------- live */
 
 class LivePurview {
@@ -145,7 +170,7 @@ class LivePurview {
    * alongside everything else, rather than only in this application.
    */
   _toEntry(p) {
-    const a = p.managedAttributes || {};
+    const a = toAttributeMap(p.managedAttributes);
     const attr = (k) => {
       const v = a[k];
       if (v === undefined || v === null || v === '') return null;
@@ -210,4 +235,4 @@ export function createPurviewAdapter() {
   return new LivePurview(config.purview);
 }
 
-export { CLUSTER_DOMAINS, LivePurview };
+export { CLUSTER_DOMAINS, LivePurview, toAttributeMap };

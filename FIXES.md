@@ -1,20 +1,22 @@
 # Fixes — 2 September 2026
 
-Bootstrap failed with `spawn EINVAL`. That is fixed, and so is everything else
-found on the path between `npm run bootstrap` and a successful Purview write.
+Round 1 fixed `spawn EINVAL`. The run then reached Azure, created all nine
+governance domains, and surfaced two further faults — both real, both now
+fixed. Round 2 is §4 and §5.
 
-**Five files changed, two added.** Every other file in this folder is
+**Six files changed, two added.** Every other file in this folder is
 byte-identical to yours.
 
 | File | Change |
 |---|---|
 | `src/bff/adapters/token.js` | Rewritten — the blocking fix, plus 4 more |
-| `scripts/bootstrap.js` | 11 fixes, listed below |
+| `scripts/bootstrap.js` | 13 fixes, listed below |
+| `src/bff/adapters/purview.js` | Managed attributes were read in the wrong shape |
 | `docs/HANDOVER.md` | Test count and repository map brought up to date |
 | `test/token.test.js` | **New** — 19 tests |
-| `test/bootstrap.test.js` | **New** — 11 tests |
+| `test/bootstrap.test.js` | **New** — 17 tests |
 
-157 tests pass, up from 127. `node --test test/*.test.js`.
+163 tests pass, up from 127. `node --test test/*.test.js`.
 
 ---
 
@@ -148,11 +150,78 @@ made the tests below possible at all.
 
 ---
 
+## 4. Managed attributes were the wrong shape, in both directions
+
+```
+400 {"errors":{"managedAttributes.cortexSensitivity.managedAttributes":[
+"Cannot deserialize the current JSON object ... into type
+'System.Collections.Generic.List`1[...ManagedAttribute]'
+because the type requires a JSON array"]}}
+```
+
+All 14 data products, every run. `managedAttributes` was being sent as a
+dictionary:
+
+```json
+"managedAttributes": { "cortexSensitivity": "Official" }
+```
+
+Verified against **Data Products - Create**, api-version `2026-03-20-preview`:
+the field is `CatalogModelManagedAttribute[]` — a JSON **array**, each element
+`{ name, value, isRequired? }`. Now:
+
+```json
+"managedAttributes": [ { "name": "cortexSensitivity", "value": "Official" } ]
+```
+
+**The read path had the same bug, and that one was silent.**
+`purview.js._toEntry()` indexed `p.managedAttributes` as a dictionary. Against
+the real array shape every lookup returns `undefined` — with no error. The
+Marketplace would simply have shown the fallback for each field: sensitivity as
+`Official`, access as `Open to all staff`, and **`allowedGroups` and `askable`
+as empty**. Empty `allowedGroups` is not a cosmetic default; it is an input to
+`visibilityFor()`. Both shapes are now accepted, so a tenant holding data from
+an earlier run still reads correctly.
+
+This one is pinned by a round-trip test: what `attributesFor()` writes is
+parsed back by `toAttributeMap()` and compared field by field. That coupling is
+what broke, so that is what the test asserts.
+
+## 5. API Management creation is asynchronous — and nothing waited
+
+```
+ok    Permit history lookup (API + MCP server created)
+FAIL  Catchment summariser — PUT /apis/catchment-summariser-mcp/tools/invoke → 500
+FAIL  ... and four more, all identical
+```
+
+One succeeded and five failed, which is the signature of a race rather than a
+broken request. The sequence is: import an OpenAPI document as a REST API →
+create an MCP server → create a tool that references an operation **inside that
+imported API, by full ARM resource id**.
+
+The import is asynchronous. It returns before the operations it defines exist.
+The documented failure for referencing a missing operation is a 400 — APIM
+actually returns **500**, which is why this read as a service fault. The first
+skill was slow enough to get away with it. The rest were not.
+
+Your own `HANDOVER.md` §6 already records this: *"Creation is async — poll
+`Azure-AsyncOperation`."* Nothing did. Now three things do:
+
+- Both API creations follow `Azure-AsyncOperation` / `Location` when ARM
+  returns 201 or 202, and wait for a terminal state.
+- Before the tool is created, `GET /apis/{id}/operations/invoke` is polled
+  until the operation is genuinely queryable.
+- The tool PUT retries a 5xx, which ordinary calls still do not.
+
+---
+
 ## Verified, and not
 
-**Verified here:** all 157 tests, including a stubbed CLI exercising the real
+**Verified here:** all 163 tests, including a stubbed CLI exercising the real
 `execFile` path, the pagination and DRAFT-idempotency rules against a stubbed
-HTTP boundary, and `--dry-run` from both the repository root and an unrelated
+HTTP boundary, the managed-attribute round trip, the APIM wait-and-retry
+sequencing, and `--dry-run` from both the repository root and an unrelated
 directory.
 
 One of the new tests failed on first run and was right to: the
@@ -189,14 +258,19 @@ az account get-access-token --resource https://purview.azure.net --output json
 
 If that returns a token, `token.js` will now get one the same way.
 
-From here the failures are Purview's own, and they are informative:
+**The nine governance domains now exist**, which they did not before. Per
+`HANDOVER.md` §8, the Purview roles are assigned *against domains* — so any
+roles granted earlier were on pre-existing domains, not the Cortex ones. Assign
+**Data Product Owner** and **Data reader** on the nine Cortex domains before
+this run, or expect 403s where you previously got 400s.
 
-- **`FAIL <domain> — 403`** — the roles. Both planes: Data Product Owner *and*
-  Data reader.
+The nine domains will report `updated` rather than `created` this time. That is
+the idempotency working, not a repeat.
+
+Remaining failures from here are Purview's own, and they are informative:
+
+- **`FAIL <domain> — 403`** — the roles. Both planes.
 - **`created as DRAFT — publish refused`** — expected. Publish by hand.
-- **Domains first, then roles.** The nine Cortex domains do not exist until a
-  run succeeds, so assign the roles on them afterwards and run once more.
-  Re-running is safe.
 
 ---
 

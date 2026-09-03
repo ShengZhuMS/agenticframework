@@ -63,6 +63,9 @@ const MAX_RETRIES = 3;
 /** Query page size. Kept at the documented List ceiling. */
 const PAGE_SIZE = 100;
 
+/** How long to wait for an asynchronous APIM creation to become real. */
+const ASYNC_TIMEOUT_MS = Number(process.env.APIM_ASYNC_TIMEOUT_MS || 60_000);
+
 let created = 0;
 let updated = 0;
 let failed = 0;
@@ -294,7 +297,7 @@ async function bootstrapDataProducts(products, domainIds) {
       // Validate the payload rather than just skipping — a bad enum or a
       // missing domain is exactly what a dry run should catch.
       const freq = mapFrequency(p.updateFrequency);
-      const attrs = Object.keys(attributesFor(p)).length;
+      const attrs = attributesFor(p).length;
       log.skip(`${p.name} → domain ${p.domain}, ${freq}, ${attrs} attributes`);
       continue;
     }
@@ -353,10 +356,24 @@ function mapFrequency(f) {
   return 'Daily';
 }
 
+/**
+ * Managed attributes are an ARRAY of { name, value }, not a dictionary.
+ *
+ * Sending `{ cortexSensitivity: 'Official' }` is rejected with a 400 whose
+ * message is pure .NET and says nothing useful:
+ *
+ *   Cannot deserialize the current JSON object ... into type
+ *   'System.Collections.Generic.List`1[...ManagedAttribute]' because the type
+ *   requires a JSON array
+ *
+ * Verified against the Data Products - Create reference for api-version
+ * 2026-03-20-preview: `managedAttributes` is CatalogModelManagedAttribute[],
+ * each element { name, value, isRequired? }.
+ */
 function attributesFor(p) {
-  const attrs = {};
-  const set = (k, v) => {
-    if (v !== null && v !== undefined && v !== '') attrs[k] = String(v);
+  const attrs = [];
+  const set = (name, v) => {
+    if (v !== null && v !== undefined && v !== '') attrs.push({ name, value: String(v) });
   };
   set('cortexSensitivity', p.sensitivity);
   set('cortexLicence', p.licence);
@@ -374,7 +391,10 @@ function attributesFor(p) {
 
 /* ---------------------------------------------------------------- apim */
 
-async function apimFetch(pathname, { method = 'GET', body, query = {}, headers = {} } = {}) {
+async function apimFetch(
+  pathname,
+  { method = 'GET', body, query = {}, headers = {}, retryOn5xx = false } = {}
+) {
   const base =
     `https://management.azure.com/subscriptions/${config.apim.subscriptionId}` +
     `/resourceGroups/${config.apim.resourceGroup}` +
@@ -404,7 +424,10 @@ async function apimFetch(pathname, { method = 'GET', body, query = {}, headers =
       throw err;
     }
 
-    if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+    // A 500 here is usually a resource that is not finished being created
+    // rather than a broken service, so it is worth one more look.
+    const transient = res.status === 429 || res.status === 503 || (retryOn5xx && res.status >= 500);
+    if (transient && attempt < MAX_RETRIES) {
       const retryAfter = Number(res.headers.get('retry-after'));
       const waitMs = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter * 1000 : 2000 * (attempt + 1);
       log.warn(`${res.status} from ARM — waiting ${Math.round(waitMs / 1000)}s and retrying`);
@@ -416,11 +439,70 @@ async function apimFetch(pathname, { method = 'GET', body, query = {}, headers =
       const text = await res.text().catch(() => '');
       throw new Error(`${method} ${pathname} → ${res.status} ${text.slice(0, 300)}`);
     }
-    const payload = res.status === 204 ? null : await res.json();
+    const payload = res.status === 204 ? null : await res.json().catch(() => null);
     // 201 means ARM created it, 200 means it replaced one that was there.
     // Returning the status is what lets the summary line tell the truth.
-    return { status: res.status, body: payload };
+    return { status: res.status, body: payload, headers: res.headers };
   }
+}
+
+/**
+ * APIM resource creation is ASYNCHRONOUS.
+ *
+ * A PUT that imports an OpenAPI document returns before the operations inside
+ * it exist. The tool created in the next breath references one of those
+ * operations by full ARM id, and if it is not there yet APIM answers 500 —
+ * not the documented 400 for a missing operation, which is what made this look
+ * like a service fault rather than a race. The first skill in the run happened
+ * to be slow enough to get away with it; the other five did not.
+ *
+ * When ARM hands back a 201/202 with a tracking header, follow it.
+ */
+async function awaitAcceptedOperation(res) {
+  const opUrl =
+    res.headers?.get?.('azure-asyncoperation') || res.headers?.get?.('location') || null;
+  if (!opUrl || (res.status !== 201 && res.status !== 202)) return;
+
+  const deadline = Date.now() + ASYNC_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const token = await getToken(ARM_SCOPE);
+    const poll = await fetch(opUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS)
+    });
+    if (poll.status === 200 || poll.status === 204) {
+      const body = await poll.json().catch(() => null);
+      const state = body?.status || body?.properties?.provisioningState;
+      if (!state || /succeeded/i.test(state)) return;
+      if (/failed|canceled|cancelled/i.test(state)) {
+        throw new Error(`async operation ${state}: ${JSON.stringify(body).slice(0, 200)}`);
+      }
+    }
+    await sleep(1500);
+  }
+  throw new Error(`async operation did not finish within ${ASYNC_TIMEOUT_MS}ms`);
+}
+
+/**
+ * Confirm the backing operation is really there before a tool points at it.
+ *
+ * Belt and braces alongside the async poll above: the tracking header is not
+ * always present, and this is the specific precondition that was being
+ * violated.
+ */
+async function waitForOperation(apiId, operationId) {
+  const deadline = Date.now() + ASYNC_TIMEOUT_MS;
+  let lastError = 'not found';
+  while (Date.now() < deadline) {
+    try {
+      await apimFetch(`/apis/${apiId}/operations/${operationId}`);
+      return true;
+    } catch (err) {
+      lastError = err.message;
+      await sleep(1500);
+    }
+  }
+  throw new Error(`operation ${apiId}/${operationId} never appeared — ${lastError.slice(0, 160)}`);
 }
 
 async function bootstrapSkills(skills) {
@@ -450,9 +532,11 @@ async function bootstrapSkills(skills) {
           }
         }
       });
+      // The import is async. Everything below depends on it having finished.
+      await awaitAcceptedOperation(api);
 
       // Then project it as an MCP server so an agent can call it.
-      await apimFetch(`/apis/${s.id}-mcp`, {
+      const mcp = await apimFetch(`/apis/${s.id}-mcp`, {
         method: 'PUT',
         headers: { 'If-Match': '*' },
         body: {
@@ -466,10 +550,17 @@ async function bootstrapSkills(skills) {
           }
         }
       });
+      await awaitAcceptedOperation(mcp);
+
+      // The tool references this operation by full ARM id. Do not create it
+      // until the operation the OpenAPI import was supposed to produce is
+      // actually queryable.
+      await waitForOperation(s.id, 'invoke');
 
       await apimFetch(`/apis/${s.id}-mcp/tools/invoke`, {
         method: 'PUT',
         headers: { 'If-Match': '*' },
+        retryOn5xx: true,
         body: {
           properties: {
             displayName: 'invoke',
@@ -646,7 +737,9 @@ export {
   skillSpec,
   mapFrequency,
   attributesFor,
-  guidFor
+  guidFor,
+  awaitAcceptedOperation,
+  waitForOperation
 };
 
 /** Counters, for tests. Not part of the script's behaviour. */

@@ -23,10 +23,15 @@ const {
   bootstrapDomains,
   bootstrapDataProducts,
   purviewFetch,
+  apimFetch,
+  waitForOperation,
+  attributesFor,
   mapFrequency,
   guidFor,
   __counters
 } = await import('../scripts/bootstrap.js');
+
+const { toAttributeMap } = await import('../src/bff/adapters/purview.js');
 
 const realFetch = globalThis.fetch;
 
@@ -223,6 +228,49 @@ describe('re-running does not duplicate', () => {
   });
 });
 
+/* ------------------------------------------------------- apim sequencing */
+
+describe('API Management creation is asynchronous', () => {
+  test('a tool waits for the operation the OpenAPI import must produce', async () => {
+    // THE 500. The tool references the backing operation by full ARM id. The
+    // import that creates that operation had not finished, so APIM answered
+    // 500 rather than the documented 400 for a missing operation — which is
+    // why five of six skills failed and the first, being slower, did not.
+    let attempts = 0;
+    stubFetch(() => {
+      attempts++;
+      return attempts < 3 ? json({ error: 'not there yet' }, 404) : json({ name: 'invoke' });
+    });
+
+    await waitForOperation('permit-history', 'invoke');
+    assert.equal(attempts, 3, 'should have polled until the operation appeared');
+  });
+
+  test('a 500 is retried only where that is asked for', async () => {
+    let attempts = 0;
+    stubFetch(() => {
+      attempts++;
+      return attempts === 1 ? json({ error: 'internal' }, 500) : json({ ok: true });
+    });
+    const res = await apimFetch('/apis/x-mcp/tools/invoke', {
+      method: 'PUT',
+      retryOn5xx: true
+    });
+    assert.equal(res.status, 200);
+    assert.equal(attempts, 2);
+  });
+
+  test('an ordinary 500 still fails immediately', async () => {
+    let attempts = 0;
+    stubFetch(() => {
+      attempts++;
+      return json({ error: 'internal' }, 500);
+    });
+    await assert.rejects(apimFetch('/apis/x'), /500/);
+    assert.equal(attempts, 1, 'must not retry by default');
+  });
+});
+
 /* ------------------------------------------------------- payload mapping */
 
 describe('payload mapping', () => {
@@ -232,6 +280,55 @@ describe('payload mapping', () => {
     assert.equal(mapFrequency('weekly'), 'Weekly');
     assert.equal(mapFrequency('annual'), 'Yearly');
     assert.equal(mapFrequency(undefined), 'Daily');
+  });
+
+  test('managed attributes are an ARRAY of name/value pairs, not a dictionary', () => {
+    // Purview rejects the dictionary form with a 400 whose message is pure
+    // .NET: "requires a JSON array". Nothing in the payload hints at which
+    // field, so this is worth pinning by shape.
+    const attrs = attributesFor({
+      sensitivity: 'Official-Sensitive',
+      allowedGroups: ['waste-crime', 'all-staff'],
+      askable: ['how many permits', 'which sites']
+    });
+
+    assert.ok(Array.isArray(attrs), 'must be an array');
+    for (const a of attrs) {
+      assert.equal(typeof a.name, 'string');
+      assert.equal(typeof a.value, 'string');
+    }
+    const byName = Object.fromEntries(attrs.map((a) => [a.name, a.value]));
+    assert.equal(byName.cortexSensitivity, 'Official-Sensitive');
+    assert.equal(byName.cortexAllowedGroups, 'waste-crime,all-staff');
+  });
+
+  test('what bootstrap writes is what the adapter reads back', () => {
+    // The read path used to index managedAttributes as a dictionary. Against
+    // the real array shape every lookup returned undefined — silently, so the
+    // Marketplace just showed defaults. allowedGroups coming back empty feeds
+    // straight into visibilityFor(), so this is a governance bug, not cosmetic.
+    const product = {
+      sensitivity: 'Official',
+      licence: 'OGL v3',
+      owner: 'Water Quality Team',
+      allowedGroups: ['waste-crime'],
+      askable: ['how many permits'],
+      location: 'North East'
+    };
+    const roundTripped = toAttributeMap(attributesFor(product));
+    assert.equal(roundTripped.cortexSensitivity, 'Official');
+    assert.equal(roundTripped.cortexLicence, 'OGL v3');
+    assert.equal(roundTripped.cortexOwnerTeam, 'Water Quality Team');
+    assert.equal(roundTripped.cortexAllowedGroups, 'waste-crime');
+    assert.equal(roundTripped.cortexLocation, 'North East');
+  });
+
+  test('the reader still understands the old dictionary shape', () => {
+    // A tenant written by an earlier run may still hold it.
+    assert.deepEqual(toAttributeMap({ cortexSensitivity: 'Official' }), {
+      cortexSensitivity: 'Official'
+    });
+    assert.deepEqual(toAttributeMap(undefined), {});
   });
 
   test('the deterministic id is a well-formed v4-shaped GUID and is stable', () => {
