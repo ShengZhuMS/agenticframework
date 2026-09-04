@@ -71,8 +71,8 @@ Usage, error rate and latency come from the API Management Reports API. **Cost p
 ```
 docs/             DEPLOY.md · HANDOVER.md · ARCHITECTURE.md
 infra/            Bicep. Every resource name and RG is a parameter.
-scripts/          Deploy-Cortex.ps1, Set-CortexAuth.ps1, Set-CortexEnv.ps1, Test-Cortex.ps1,
-                  Start-Local.ps1, bootstrap.js, purview-access.js
+scripts/          Deploy-Cortex.ps1, Set-CortexAuth.ps1, Add-CortexUser.ps1, Set-CortexEnv.ps1,
+                  Test-Cortex.ps1, Start-Local.ps1, bootstrap.js, purview-access.js
 bootstrap/        Defra content — INPUT to a script, not runtime data
 src/bff/          Backend for frontend. All Azure credentials live here.
   adapters/       purview, apim, foundry, keyvault, token

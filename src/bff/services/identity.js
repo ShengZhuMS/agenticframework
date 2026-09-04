@@ -97,10 +97,21 @@ export function userFromRequest(req, { groupNames = {}, defaultGroups = [] } = {
   const name =
     NAME_CLAIM_TYPES.map((t) => principal?.[t]).find(Boolean) || upn || 'Signed in user';
 
+  /**
+   * A GUEST (Entra B2B) carries a synthetic UPN in this tenant —
+   * name_home.com#EXT#@tenant.onmicrosoft.com — which is not an address
+   * anybody uses. Their real address is in the email or preferred_username
+   * claim, so show that. Members keep their UPN, which IS their address.
+   */
+  const isGuest = Boolean(upn && /#EXT#/i.test(upn));
+  const email =
+    (isGuest ? principal?.email || principal?.preferred_username || null : null) || upn || null;
+
   return {
     id: objectId || upn,
     name,
-    email: upn || null,
+    email,
+    isGuest,
     objectId,
     groups,
     roles: principal?.roles || [],

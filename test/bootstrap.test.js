@@ -29,6 +29,7 @@ const {
   contactsFor,
   mapFrequency,
   guidFor,
+  retryDelayMs,
   __counters
 } = await import('../scripts/bootstrap.js');
 
@@ -40,7 +41,8 @@ const realFetch = globalThis.fetch;
 let calls = [];
 
 function json(body, status = 200, headers = {}) {
-  return new Response(JSON.stringify(body), {
+  // A 204 may not carry a body — Response throws if it does.
+  return new Response(status === 204 ? null : JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json', ...headers }
   });
@@ -253,12 +255,82 @@ describe('API Management creation is asynchronous', () => {
       attempts++;
       return attempts === 1 ? json({ error: 'internal' }, 500) : json({ ok: true });
     });
-    const res = await apimFetch('/apis/x-mcp/tools/invoke', {
+    const res = await apimFetch('/apis/x-mcp', {
       method: 'PUT',
       retryOn5xx: true
     });
     assert.equal(res.status, 200);
     assert.equal(attempts, 2);
+  });
+
+  test('an MCP server is ONE PUT carrying type mcp AND its tools inline — never a child /tools resource', async () => {
+    // THE 500 THAT SURVIVED THE RETRY TUNING. Sent without mcpTools, API
+    // Management silently drops type 'mcp' and a later PUT to /tools/{id}
+    // answers InternalServerError. It was never a race.
+    const { bootstrapSkills } = await import('../scripts/bootstrap.js');
+    const skills = [{ id: 'catchment-summariser', name: 'Catchment summariser', description: 'Summarise a catchment.' }];
+    const { default: config } = await import('../src/bff/config.js');
+    config.apim.subscriptionId = 'sub'; config.apim.resourceGroup = 'rg'; config.apim.serviceName = 'apim';
+    config.apim.gatewayUrl = 'https://apim.azure-api.net'; config.apim.productId = 'cortex'; config.publicBaseUrl = 'https://cortex.test';
+
+    const apis = new Map();
+    stubFetch((url, init) => {
+      const one = /\/products\//.test(url.pathname) ? null : url.pathname.match(/\/apis\/([^/]+)$/);
+      if (one && init.method === 'PUT') {
+        const props = { ...init.body.properties, provisioningState: 'Succeeded' };
+        if (props.type === 'mcp' && !(props.mcpTools || []).length) props.type = null;
+        apis.set(one[1], { name: one[1], properties: props });
+        return json(apis.get(one[1]), 201);
+      }
+      if (one && (init.method || 'GET') === 'GET') return apis.has(one[1]) ? json(apis.get(one[1])) : json({}, 404);
+      if (/\/operations\/invoke$/.test(url.pathname)) return json({ name: 'invoke' });
+      if (/\/products\//.test(url.pathname)) return json({});
+      return json({}, 404);
+    });
+
+    await bootstrapSkills(skills);
+
+    const toolPuts = calls.filter((c) => /\/tools\//.test(c.url.pathname));
+    assert.equal(toolPuts.length, 0, 'the child tools resource must never be used');
+
+    const mcpPut = calls.find((c) => c.method === 'PUT' && c.url.pathname.endsWith('/apis/catchment-summariser-mcp'));
+    assert.ok(mcpPut, 'the MCP server is created with a PUT on the API');
+    assert.equal(mcpPut.body.properties.type, 'mcp');
+    assert.equal(mcpPut.body.properties.mcpTools.length, 1);
+    assert.equal(mcpPut.body.properties.mcpTools[0].name, 'invoke');
+    assert.equal(
+      mcpPut.body.properties.mcpTools[0].operationId,
+      '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ApiManagement/service/apim/apis/catchment-summariser/operations/invoke',
+      'the tool points at the backing operation by FULL ARM id'
+    );
+    assert.equal(__counters.failed, 0);
+    assert.equal(__counters.created, 1);
+  });
+
+  test('a leftover plain API under the -mcp name is replaced, because it can never become an MCP server in place', async () => {
+    const { bootstrapSkills } = await import('../scripts/bootstrap.js');
+    const skills = [{ id: 'magic-map', name: 'MAGIC map browser', description: 'Browse MAGIC.' }];
+    const apis = new Map([['magic-map-mcp', { name: 'magic-map-mcp', properties: { type: null, path: 'magic-map-mcp', provisioningState: 'Succeeded' } }]]);
+    stubFetch((url, init) => {
+      const one = /\/products\//.test(url.pathname) ? null : url.pathname.match(/\/apis\/([^/]+)$/);
+      if (one && init.method === 'PUT') {
+        const props = { ...init.body.properties, provisioningState: 'Succeeded' };
+        if (props.type === 'mcp' && !(props.mcpTools || []).length) props.type = null;
+        apis.set(one[1], { name: one[1], properties: props });
+        return json(apis.get(one[1]), 201);
+      }
+      if (one && init.method === 'DELETE') { apis.delete(one[1]); return json(null, 204); }
+      if (one && (init.method || 'GET') === 'GET') return apis.has(one[1]) ? json(apis.get(one[1])) : json({}, 404);
+      if (/\/operations\/invoke$/.test(url.pathname)) return json({ name: 'invoke' });
+      if (/\/products\//.test(url.pathname)) return json({});
+      return json({}, 404);
+    });
+
+    await bootstrapSkills(skills);
+    const del = calls.find((c) => c.method === 'DELETE' && c.url.pathname.endsWith('/apis/magic-map-mcp'));
+    assert.ok(del, 'the type-null leftover is deleted first');
+    assert.equal(apis.get('magic-map-mcp').properties.type, 'mcp', 'and recreated as a real MCP server');
+    assert.equal(__counters.failed, 0);
   });
 
   test('an ordinary 500 still fails immediately', async () => {
@@ -375,5 +447,33 @@ describe('data product owners', () => {
     const create = calls.find((c) => c.method === 'POST' && c.url.pathname.endsWith('/dataProducts'));
     assert.deepEqual(create.body.contacts.owner, [{ id: ME, description: 'EA Water Quality' }]);
     assert.equal(create.body.status, 'PUBLISHED');
+  });
+});
+
+/* ------------------------------------------------------- retry timing */
+
+describe('how long a retry waits', () => {
+  test('a missing Retry-After header is NOT a zero-second wait', () => {
+    // headers.get() returns null when absent; Number(null) is 0, and 0 is a
+    // finite non-negative number — so the old code waited zero seconds and the
+    // "retry" was three identical requests inside one second.
+    assert.ok(retryDelayMs(null, 0) >= 2000);
+    assert.ok(retryDelayMs(undefined, 1) >= 4000);
+    assert.ok(retryDelayMs('', 0) >= 2000);
+  });
+
+  test('a real Retry-After is honoured, in seconds', () => {
+    assert.equal(retryDelayMs('7', 0), 7000);
+    assert.equal(retryDelayMs('0', 0), 0);
+  });
+
+  test('a floor lifts a short or absent header to a useful pause', () => {
+    assert.equal(retryDelayMs(null, 0, { min: 10_000 }), 10_000);
+    assert.equal(retryDelayMs('1', 2, { min: 10_000 }), 10_000);
+    assert.equal(retryDelayMs(null, 2, { base: 2000, min: 0 }), 6000);
+  });
+
+  test('a non-numeric header falls back to the growing wait', () => {
+    assert.equal(retryDelayMs('Wed, 21 Oct 2026 07:28:00 GMT', 0), 2000);
   });
 });

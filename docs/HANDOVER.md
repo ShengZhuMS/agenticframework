@@ -119,8 +119,11 @@ These cost real time to establish. They were correct in August 2026 and several 
 
 ### API Management
 - MCP server support is **GA**, but the management **api-version is `2025-09-01-preview`** — pin it
-- **MCP servers are not a distinct resource type.** They are APIs with `properties.type === 'mcp'`. List with `GET /apis?$filter=type eq 'mcp'`
-- A tool's `properties.operationId` is a **full ARM resource id**, not a short name. Most common mistake here.
+- **MCP servers are not a distinct resource type.** They are APIs with `properties.type === 'mcp'`. List all APIs and filter on that field
+- 🔴 **The tools are INLINE. One PUT, carrying BOTH `type: 'mcp'` AND a non-empty `mcpTools: [{ name, description, operationId }]`.** Without `mcpTools`, ARM silently drops the type: the API is created as a plain HTTP API, a later GET shows `type: null`, and anything treating it as an MCP server answers **500 InternalServerError**. The child resource `…/apis/{id}/tools/{tool}` that the TypeSpec describes **does not work via PUT** in this api-version. The earlier note here that "tools are a child resource" was wrong, and it cost two rounds of retry tuning for what was never a race
+- `mcpTools[].operationId` is the **full ARM resource id** of the backing operation, with **no `;rev=N` suffix**. The operation must exist before the PUT (an OpenAPI import is async — wait for it)
+- A type-null leftover cannot be converted in place: delete it (`If-Match: *`) and recreate. `apim.js` and `bootstrap.js` do this
+- The MCP endpoint is `https://{gateway}/{path}/mcp` — APIM adds `/mcp`. `serviceUrl` is **null** on an MCP API; never read the endpoint from it
 - Creation is async — poll `Azure-AsyncOperation`. Deletes need `If-Match: *` or return 412
 - Not supported in APIM **workspaces**. **Consumption tier not supported**
 - Analytics: `GET /reports/byApi` on api-version `2024-05-01` (stable, not the preview one)
@@ -154,6 +157,9 @@ These cost real time to establish. They were correct in August 2026 and several 
 | **Source masked in transit** | A file that passed through a chat or transfer tool has a run of asterisks where a credential-shaped value was — including the authorization header template literal (scheme word plus token). It parses; every Azure call then fails | Deploy-Cortex.ps1 step 1 refuses to deploy it. The adapters compose the header with `bearer(token)` so the pattern never appears in source |
 | **More than one web replica** | A user publishes an agent, the next page load hits another replica where it does not exist | `webMaxReplicas` is 1 until there is a store. Do not raise it |
 | **A model in the catalogue that is not deployed** | Passes validation, fails at agent creation | `listModels()` offers only `FOUNDRY_MODEL` and `FOUNDRY_MODELS` |
+| **MCP server PUT without `mcpTools`** | Type silently dropped; every later call about it answers 500 | One PUT with type AND tools inline, then verify the GET shows `type: mcp`. Never `/tools/{id}` |
+| **`Number(headers.get('retry-after'))`** | `Number(null)` is 0, so an absent header meant a zero-second wait — three "retries" in one second | `retryDelayMs()` honours only a present numeric header, else backs off with a floor |
+| **Stale CLI token after a directory role change** | `TokenCreatedWithOutdatedPolicies … InteractionRequired`, reads like a missing permission; on Windows a plain `az login` hands back the same token via the broker | `az account clear` → `az login --use-device-code`. Both scripts do this automatically |
 | **Key Vault on access policies** | RBAC assignment silently ignored | `--enable-rbac-authorization true`. Deploy script warns |
 | **Two azd environments, one Key Vault** | The last one provisioned owns every endpoint in the vault; the other app talks to the wrong container | `cortex-environment-name` records the owner and the deploy script warns. Give the second environment its own vault |
 | **Key Vault with public access disabled** | The vault seeds fine and is then unreadable at runtime, because KV firewall rules are data-plane only and Container Apps is not a trusted service. App starts, falls back to environment, marketplace is empty — looks like an app fault | `-ConfigSource direct` passes configuration to the apps instead. Only a private endpoint restores the vault path |
@@ -170,15 +176,14 @@ These cost real time to establish. They were correct in August 2026 and several 
 
 **One live provision has now run.** It reached Azure, created the resource group, the Container Apps environment and both container apps, and failed on the model deployment — which is the trap at the top of §7. The infrastructure path is real; the model, image and idempotency fixes in this repo came out of that run.
 
-**Verified against Azure since:** provisioning end to end (both apps on real images), APIM and Foundry health from the deployed app, the Purview domain creation as a signed-in user (nine domains exist).
+**Verified against Azure (3 Sep, live runs):** provisioning end to end; the Purview grant through the Policies API — Data Governance Administrator + Global Catalog Reader at catalogue level, Governance Domain Owner on all nine domains; **all fourteen data products created and published** once they carried an owner; the nine domains adopted and updated idempotently; Entra sign-in through `Set-CortexAuth.ps1` after a device-code re-login.
 
-**Seen against Azure and now fixed:** the deployed app's `403 Not authorized to access account` from Purview — the identity had no Unified Catalog role (§7). Data products had not been created (the managed-attribute shape and the missing owner).
+**Seen against Azure and now fixed:** the deployed app's `403 Not authorized to access account` from Purview (§7); data products never created (managed-attribute shape, then the missing owner); five of six skills failing with 500 in API Management (the MCP request shape — see §6, not a race).
 
-**Still unverified — the 3 Sep round was written against the documented API shapes and stubs, not a live run:**
-- the Policies API grant itself (`scripts/purview-access.js`) — the documented request and response shapes are pinned in `test/purview-access.test.js`;
-- the data product create/publish with `contacts.owner` set;
+**Still unverified — written against the verified shapes and stubs, not yet a live run:**
+- the inline-`mcpTools` MCP server creation for the five skills and for Publish (`apim.js`, `bootstrap.js`);
 - `ensureAgent` for `cortex-ask` and a `previous_response_id` follow-up;
-- `Set-CortexAuth.ps1` on your tenant.
+- `Set-CortexAuth.ps1 -MapMyGroups`.
 
 **Do these in order:**
 

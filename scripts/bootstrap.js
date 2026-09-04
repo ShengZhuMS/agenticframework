@@ -111,6 +111,22 @@ const log = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * How long to wait before retrying.
+ *
+ * THE BUG THIS REPLACES: `Number(headers.get('retry-after'))` is `Number(null)`
+ * when the header is absent, which is 0 — a finite number, so the code took it
+ * as an instruction to wait zero seconds. Every 500 from API Management was
+ * therefore retried three times inside the same second, which is no retry at
+ * all. Only a header that is genuinely present and numeric is honoured; anything
+ * else falls back to a growing wait with a floor the caller chooses.
+ */
+export function retryDelayMs(retryAfterHeader, attempt, { base = 2000, min = 0 } = {}) {
+  const header = retryAfterHeader === null || retryAfterHeader === undefined ? '' : String(retryAfterHeader).trim();
+  if (header !== '' && /^\d+(\.\d+)?$/.test(header)) return Math.max(min, Number(header) * 1000);
+  return Math.max(min, base * (attempt + 1));
+}
+
 /* ------------------------------------------------------------- purview */
 
 async function purviewFetch(pathname, { method = 'GET', body, query = {} } = {}) {
@@ -137,8 +153,7 @@ async function purviewFetch(pathname, { method = 'GET', body, query = {} } = {})
 
     // Throttled or transiently unavailable: wait the advertised time and retry.
     if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
-      const retryAfter = Number(res.headers.get('retry-after'));
-      const waitMs = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter * 1000 : 2000 * (attempt + 1);
+      const waitMs = retryDelayMs(res.headers.get('retry-after'), attempt);
       log.warn(`${res.status} from Purview — waiting ${Math.round(waitMs / 1000)}s and retrying`);
       await sleep(waitMs);
       continue;
@@ -527,7 +542,7 @@ function attributesFor(p) {
 
 async function apimFetch(
   pathname,
-  { method = 'GET', body, query = {}, headers = {}, retryOn5xx = false } = {}
+  { method = 'GET', body, query = {}, headers = {}, retryOn5xx = false, maxRetries = MAX_RETRIES, minWaitMs = 0 } = {}
 ) {
   const base =
     `https://management.azure.com/subscriptions/${config.apim.subscriptionId}` +
@@ -559,12 +574,13 @@ async function apimFetch(
     }
 
     // A 500 here is usually a resource that is not finished being created
-    // rather than a broken service, so it is worth one more look.
+    // rather than a broken service, so it is worth another look — after a
+    // real pause. API Management needs tens of seconds, not milliseconds, to
+    // make a freshly created MCP server accept tools.
     const transient = res.status === 429 || res.status === 503 || (retryOn5xx && res.status >= 500);
-    if (transient && attempt < MAX_RETRIES) {
-      const retryAfter = Number(res.headers.get('retry-after'));
-      const waitMs = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter * 1000 : 2000 * (attempt + 1);
-      log.warn(`${res.status} from ARM — waiting ${Math.round(waitMs / 1000)}s and retrying`);
+    if (transient && attempt < maxRetries) {
+      const waitMs = retryDelayMs(res.headers.get('retry-after'), attempt, { base: 2000, min: minWaitMs * (attempt + 1) });
+      log.warn(`${res.status} from ARM — waiting ${Math.round(waitMs / 1000)}s and retrying (${attempt + 1}/${maxRetries})`);
       await sleep(waitMs);
       continue;
     }
@@ -639,6 +655,44 @@ async function waitForOperation(apiId, operationId) {
   throw new Error(`operation ${apiId}/${operationId} never appeared — ${lastError.slice(0, 160)}`);
 }
 
+/** One API, or null when it does not exist. Any other failure still throws. */
+async function getApiOrNull(apiId) {
+  try {
+    return (await apimFetch(`/apis/${apiId}`)).body;
+  } catch (err) {
+    if (/→ 404/.test(err.message)) return null;
+    throw err;
+  }
+}
+
+async function waitForApiGone(apiId) {
+  const deadline = Date.now() + ASYNC_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (!(await getApiOrNull(apiId))) return true;
+    await sleep(1500);
+  }
+  throw new Error(`API ${apiId} was deleted but is still listed`);
+}
+
+/** The API resource itself reads back — created, and no longer mid-provision. */
+async function waitForApi(apiId) {
+  const deadline = Date.now() + ASYNC_TIMEOUT_MS;
+  let lastError = 'not found';
+  while (Date.now() < deadline) {
+    try {
+      const res = await apimFetch(`/apis/${apiId}`);
+      const state = res.body?.properties?.provisioningState;
+      if (!state || /succeeded/i.test(state)) return true;
+      if (/failed/i.test(state)) throw new Error(`provisioning ${state}`);
+      lastError = `provisioningState ${state}`;
+    } catch (err) {
+      lastError = err.message;
+    }
+    await sleep(1500);
+  }
+  throw new Error(`API ${apiId} never became ready — ${lastError.slice(0, 160)}`);
+}
+
 async function bootstrapSkills(skills) {
   log.step(`API Management — skills and apps (${skills.length})`);
 
@@ -670,6 +724,27 @@ async function bootstrapSkills(skills) {
       await awaitAcceptedOperation(api);
 
       // Then project it as an MCP server so an agent can call it.
+      //
+      // ONE PUT, TOOLS INLINE. Verified against 2025-09-01-preview: the API
+      // must carry BOTH `type: 'mcp'` AND a non-empty `mcpTools` array. Sent
+      // without mcpTools, ARM silently drops the type — the "server" is a plain
+      // HTTP API, a later GET shows type null, and the child
+      // `/tools/{id}` PUT the previous code relied on answers 500. That 500
+      // was chased as a race for two rounds; it was the request shape.
+      //
+      // The tool's operationId is the FULL ARM id of the backing operation,
+      // which must exist first — hence the wait on the import above.
+      await waitForOperation(s.id, 'invoke');
+
+      // A leftover from an earlier run may exist under this name WITHOUT the
+      // mcp type. It can never become an MCP server in place, so replace it.
+      const leftover = await getApiOrNull(`${s.id}-mcp`);
+      if (leftover && leftover.properties?.type !== 'mcp') {
+        log.warn(`${s.name} — ${s.id}-mcp exists as a plain API (type ${leftover.properties?.type ?? 'null'}); replacing it`);
+        await apimFetch(`/apis/${s.id}-mcp`, { method: 'DELETE', headers: { 'If-Match': '*' } });
+        await waitForApiGone(`${s.id}-mcp`);
+      }
+
       const mcp = await apimFetch(`/apis/${s.id}-mcp`, {
         method: 'PUT',
         headers: { 'If-Match': '*' },
@@ -680,33 +755,32 @@ async function bootstrapSkills(skills) {
             description: s.description,
             path: `${s.id}-mcp`,
             protocols: ['https'],
-            subscriptionRequired: true
+            subscriptionRequired: true,
+            mcpTools: [
+              {
+                name: 'invoke',
+                description: s.description,
+                operationId:
+                  `/subscriptions/${config.apim.subscriptionId}` +
+                  `/resourceGroups/${config.apim.resourceGroup}` +
+                  `/providers/Microsoft.ApiManagement/service/${config.apim.serviceName}` +
+                  `/apis/${s.id}/operations/invoke`
+              }
+            ]
           }
         }
       });
       await awaitAcceptedOperation(mcp);
+      await waitForApi(`${s.id}-mcp`);
 
-      // The tool references this operation by full ARM id. Do not create it
-      // until the operation the OpenAPI import was supposed to produce is
-      // actually queryable.
-      await waitForOperation(s.id, 'invoke');
-
-      await apimFetch(`/apis/${s.id}-mcp/tools/invoke`, {
-        method: 'PUT',
-        headers: { 'If-Match': '*' },
-        retryOn5xx: true,
-        body: {
-          properties: {
-            displayName: 'invoke',
-            description: s.description,
-            operationId:
-              `/subscriptions/${config.apim.subscriptionId}` +
-              `/resourceGroups/${config.apim.resourceGroup}` +
-              `/providers/Microsoft.ApiManagement/service/${config.apim.serviceName}` +
-              `/apis/${s.id}/operations/invoke`
-          }
-        }
-      });
+      // Verify rather than trust — the failure mode is silent.
+      const check = await getApiOrNull(`${s.id}-mcp`);
+      if (check?.properties?.type !== 'mcp' || !(check.properties?.mcpTools || []).length) {
+        throw new Error(
+          `API Management accepted ${s.id}-mcp but recorded type ${check?.properties?.type ?? 'null'} ` +
+            `with ${(check?.properties?.mcpTools || []).length} tools — it is not an MCP server`
+        );
+      }
 
       // Association with the product is not fatal — but swallowing the reason
       // meant a skill that never appeared for subscribers gave no clue why.
@@ -717,9 +791,9 @@ async function bootstrapSkills(skills) {
         log.warn(`${s.name} — not added to product "${config.apim.productId}": ${err.message.slice(0, 120)}`);
       });
 
-      if (api.status === 201) {
+      if (api.status === 201 || mcp.status === 201) {
         created++;
-        log.ok(`${s.name} (API + MCP server created)`);
+        log.ok(`${s.name} (API + MCP server created — tool "invoke", endpoint ${config.apim.gatewayUrl}/${s.id}-mcp/mcp)`);
       } else {
         updated++;
         log.ok(`${s.name} (API + MCP server updated)`);
@@ -902,7 +976,9 @@ export {
   attributesFor,
   guidFor,
   awaitAcceptedOperation,
-  waitForOperation
+  waitForOperation,
+  waitForApi,
+  getApiOrNull
 };
 
 /** Counters, for tests. Not part of the script's behaviour. */

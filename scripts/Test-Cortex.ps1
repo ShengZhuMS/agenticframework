@@ -68,6 +68,19 @@ try {
     Write-Host ''
   }
 
+  # GET a JSON endpoint WITHOUT following redirects. When sign-in guards a
+  # machine path, Easy Auth answers 302 to login.microsoftonline.com; following
+  # it returns an HTML page that reads as "ok=false" for every check at once.
+  function Get-CortexJson {
+    param([string]$Uri)
+    try {
+      $r = Invoke-WebRequest -Uri $Uri -MaximumRedirection 0 -SkipHttpErrorCheck -TimeoutSec 60 -ErrorAction Stop
+    } catch { return @{ ok = $false; error = $_.Exception.Message } }
+    if ($r.StatusCode -in 301,302,303,307,308,401) { return @{ ok = $false; behindSignIn = $true } }
+    try { $j = $r.Content | ConvertFrom-Json } catch { return @{ ok = $false; error = "not JSON (HTTP $($r.StatusCode))" } }
+    return @{ ok = [bool]$j.ok; json = $j }
+  }
+
   Write-Host "Checking $Url`n"
   $checks = @(
     @{ Path = '/api/health';          Name = 'App and register' },
@@ -78,9 +91,17 @@ try {
   )
 
   $failed = 0
+  $behindSignIn = $false
   foreach ($c in $checks) {
     try {
-      $r = Invoke-RestMethod -Uri "$Url$($c.Path)" -TimeoutSec 30
+      $probe = Get-CortexJson -Uri "$Url$($c.Path)"
+      if ($probe.behindSignIn) {
+        $failed++; $behindSignIn = $true
+        Write-Host ("  FAIL  {0} — redirected to sign-in" -f $c.Name) -ForegroundColor Red
+        continue
+      }
+      if ($probe.error) { throw $probe.error }
+      $r = $probe.json
       if ($r.ok) {
         Write-Host ("  OK    {0}" -f $c.Name) -ForegroundColor Green
         if ($c.Path -eq '/api/health/purview') {
@@ -132,6 +153,11 @@ try {
       $failed++
       Write-Host ("  FAIL  {0} — {1}" -f $c.Name, $_.Exception.Message) -ForegroundColor Red
     }
+  }
+
+  if ($behindSignIn) {
+    Write-Host '        Sign-in is guarding the health endpoints, so they cannot be checked from here.' -ForegroundColor Yellow
+    Write-Host '        Set-CortexAuth.ps1 excludes /api/health*, /api/index/refresh and /shim/* from sign-in. Run it, then this again.' -ForegroundColor Yellow
   }
 
   # The MCP server is a separate container app on a separate image. It was

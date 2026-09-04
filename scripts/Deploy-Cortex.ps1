@@ -146,6 +146,20 @@ function Test-AzResource {
   return ($LASTEXITCODE -eq 0)
 }
 
+# GET a JSON endpoint WITHOUT following redirects. When sign-in guards a machine
+# path, Easy Auth answers 302 to login.microsoftonline.com; following that
+# returns an HTML sign-in page, which used to read as "ok=false" for every check
+# at once and point nowhere. Now it is named for what it is.
+function Get-CortexJson {
+  param([string]$Uri, [string]$Method = 'GET')
+  try {
+    $r = Invoke-WebRequest -Uri $Uri -Method $Method -MaximumRedirection 0 -SkipHttpErrorCheck -TimeoutSec 120 -ErrorAction Stop
+  } catch { return @{ ok = $false; error = $_.Exception.Message } }
+  if ($r.StatusCode -in 301,302,303,307,308,401) { return @{ ok = $false; behindSignIn = $true; status = $r.StatusCode } }
+  try { $j = $r.Content | ConvertFrom-Json } catch { return @{ ok = $false; error = "not JSON (HTTP $($r.StatusCode))" } }
+  return @{ ok = [bool]$j.ok; json = $j; status = $r.StatusCode }
+}
+
 try {
   # ------------------------------------------------------------- 1 checks
   Step 1 'Checking prerequisites'
@@ -157,6 +171,24 @@ try {
   $nodeMajor = (node --version) -replace 'v(\d+)\..*','$1'
   if ([int]$nodeMajor -lt 20) { throw "Node 20 or later required. Found v$nodeMajor." }
   Ok "az, azd, node v$nodeMajor, npm"
+
+  # THE MARK OF THE WEB. Files that arrive through OneDrive sync, a browser
+  # download or an extracted zip carry a Zone.Identifier stream, and PowerShell's
+  # default RemoteSigned policy then refuses to run them:
+  #   "...is not digitally signed. You cannot run this script on the current system."
+  # This script got past that or you would not be reading this — but the azd
+  # pre-provision hook and the scripts this one calls may not have. That is what
+  # failed the first full run: the hook was refused, azd cancelled its docker
+  # builds, and those reported a missing imgId file. Unblock everything first.
+  $marked = @(Get-ChildItem -Path $root -Recurse -Include *.ps1,*.psm1,*.psd1 -File |
+              Where-Object { $_.FullName -notmatch '[\\/](node_modules|\.venv|\.git)[\\/]' } |
+              Where-Object { Get-Item -Path $_.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue })
+  if ($marked.Count -gt 0) {
+    $marked | Unblock-File -ErrorAction SilentlyContinue
+    Ok "Unblocked $($marked.Count) script(s) that carried the Mark of the Web"
+  } else {
+    Ok 'No script carries the Mark of the Web'
+  }
 
   # Source files that have travelled through a chat or a transfer tool can come
   # back with anything shaped like a credential replaced by asterisks — this has
@@ -193,8 +225,41 @@ try {
   Ok "Subscription: $($acct.name)"
   Ok "Tenant:       $($acct.tenantId)"
 
-  $signedInId = az ad signed-in-user show --query id -o tsv 2>$null
-  if (-not $signedInId) { $signedInId = $acct.user.name }
+  # THE STALE-TOKEN TRAP. Directory calls made with a token the CLI cached
+  # BEFORE your directory role changed are refused by continuous access
+  # evaluation ("TokenCreatedWithOutdatedPolicies ... InteractionRequired"), and
+  # the refusal reads like a missing permission. Only a fresh sign-in clears it.
+  $prevEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  $whoami = (az ad signed-in-user show --query id -o tsv --only-show-errors 2>&1 | Out-String)
+  $whoamiRc = $LASTEXITCODE
+  $ErrorActionPreference = $prevEap
+  $cae = 'TokenCreatedWithOutdatedPolicies|InteractionRequired|AADSTS50173|AADSTS53003|AADSTS50076'
+  if ($whoamiRc -ne 0 -and $whoami -match $cae) {
+    Warn2 'Your cached Azure CLI token predates a change to your directory roles, and Entra now refuses it.'
+    Info  'Clearing the cached sign-in and signing you in again — pick your account in the window that opens.'
+    # On Windows a plain `az login` can complete silently through the broker
+    # and hand back the same revoked token, so clear first and, if it is still
+    # refused, use the device-code flow, which always re-authenticates.
+    az account clear --only-show-errors 2>$null | Out-Null
+    az login --scope 'https://graph.microsoft.com//.default' --only-show-errors | Out-Null
+    az account set --subscription $acct.id --only-show-errors | Out-Null
+    $ErrorActionPreference = 'Continue'
+    $whoami = (az ad signed-in-user show --query id -o tsv --only-show-errors 2>&1 | Out-String)
+    $whoamiRc = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+    if ($whoamiRc -ne 0 -and $whoami -match $cae) {
+      Warn2 'Still refused: Windows signed you in silently with the same token. Using the device-code flow — enter the code in your browser.'
+      az login --use-device-code --scope 'https://graph.microsoft.com//.default'
+      az account set --subscription $acct.id --only-show-errors | Out-Null
+      $whoami = (az ad signed-in-user show --query id -o tsv --only-show-errors 2>$null)
+      $whoamiRc = $LASTEXITCODE
+    }
+    if ($whoamiRc -ne 0) {
+      throw "Entra keeps refusing the CLI's token. In a NEW terminal run:  az account clear; az login --use-device-code; az account set --subscription $($acct.id)   then run this script again."
+    }
+  }
+  $signedInId = if ($whoamiRc -eq 0 -or $whoami) { "$whoami".Trim() } else { '' }
+  if (-not $signedInId -or $signedInId -notmatch '^[0-9a-f-]{36}$') { $signedInId = $acct.user.name }
 
   # -------------------------------------------------------------- 3 reset
   # Deliberately narrow. It removes what Cortex created and the local azd
@@ -596,6 +661,10 @@ try {
       Fail 'azd up failed.'
       Write-Host ''
       Write-Host '  Most likely causes, in the order worth checking:' -ForegroundColor Yellow
+      Write-Host '   * "is not digitally signed" on Preprovision-Check.ps1 — a script carried the Mark of the Web.'
+      Write-Host '       This script now unblocks them at step 1 and the hook runs with -ExecutionPolicy Bypass. Re-run.'
+      Write-Host '   * "imgId: The system cannot find the file specified" — the docker build was CANCELLED because'
+      Write-Host '       another step failed (usually the one above). It is not a Docker fault. Fix that step, re-run.'
       Write-Host '   * ServiceModelDeprecating — the pinned model version is no longer deployable.'
       Write-Host "       .\scripts\Deploy-Cortex.ps1 -WhatIfResources   shows what the account will accept."
       Write-Host '   * AuthorizationFailed on a role assignment — you lack User Access Administrator.'
@@ -846,10 +915,13 @@ try {
     # the Marketplace shows the content the moment this script finishes. The
     # identity's new roles can take a minute to propagate, so a refresh that
     # still reports Purview errors is retried by the health check below.
-    try {
-      $null = Invoke-RestMethod -Method Post -Uri "$webUrl/api/index/refresh" -TimeoutSec 120
-      Ok 'Register refreshed'
-    } catch { Warn2 "Could not refresh the register now — it refreshes itself within 15 minutes ($($_.Exception.Message))" }
+    $refresh = Get-CortexJson -Uri "$webUrl/api/index/refresh" -Method Post
+    if ($refresh.behindSignIn) {
+      Warn2 'The register could not be refreshed: sign-in is intercepting /api/index/refresh.'
+      Info  'Set-CortexAuth.ps1 excludes the machine paths from sign-in — run it, then: curl -X POST <web url>/api/index/refresh'
+      Info  'Otherwise the app refreshes itself within 15 minutes.'
+    } elseif ($refresh.json) { Ok "Register refreshed ($($refresh.json.entries) entries)" }
+    else { Warn2 "Could not refresh the register now — it refreshes itself within 15 minutes ($($refresh.error))" }
   }
 
   # ------------------------------------------------------------- 13 check
@@ -857,18 +929,25 @@ try {
     Step 12 'Checking the deployment'
     # A container app that has just taken a new revision needs a moment. Three
     # attempts with a short back-off turns a spurious red into a real signal.
+    $behindSignIn = $false
     foreach ($p in @('/api/health','/api/health/keyvault','/api/health/purview','/api/health/apim','/api/health/foundry')) {
       $passed = $false
       $lastError = ''
       foreach ($attempt in 1..3) {
-        try {
-          $r = Invoke-RestMethod -Uri "$webUrl$p" -TimeoutSec 30
-          if ($r.ok) { $passed = $true; break }
-          $lastError = 'returned ok=false'
-        } catch { $lastError = $_.Exception.Message }
+        $r = Get-CortexJson -Uri "$webUrl$p"
+        if ($r.behindSignIn) { $behindSignIn = $true; $lastError = 'redirected to sign-in'; break }
+        if ($r.ok) { $passed = $true; break }
+        $lastError = if ($r.error) { $r.error } else {
+          $detail = if ($r.json.error) { $r.json.error } elseif ($r.json.sourceErrors) { ($r.json.sourceErrors | ConvertTo-Json -Compress) } elseif ($r.json.missingRequired) { "missing: $($r.json.missingRequired -join ', ')" } else { 'returned ok=false' }
+          "$detail"
+        }
         if ($attempt -lt 3) { Start-Sleep -Seconds 10 }
       }
-      if ($passed) { Ok $p } else { Warn2 "$p — $lastError" }
+      if ($passed) { Ok $p } else { Warn2 "$p — $($lastError.ToString().Substring(0, [Math]::Min(300, $lastError.ToString().Length)))" }
+    }
+    if ($behindSignIn) {
+      Warn2 'Sign-in is guarding the health endpoints, so nothing above could be checked from here.'
+      Info  'Set-CortexAuth.ps1 excludes /api/health*, /api/index/refresh and /shim/* from sign-in. Run it and check again with Test-Cortex.ps1.'
     }
 
     if ($mcpUrl) {

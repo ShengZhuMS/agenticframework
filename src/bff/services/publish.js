@@ -15,7 +15,8 @@
  *   2. On publish, Cortex generates an OpenAPI document for that one agent
  *      and imports it into APIM as a REST API.
  *   3. Cortex creates an MCP server in APIM over that API — an API resource
- *      with properties.type = 'mcp' — and adds one tool per capability.
+ *      with properties.type = 'mcp' and its tools inline in mcpTools, one
+ *      per capability, each pointing at a backing operation by full ARM id.
  *   4. Cortex writes the resulting MCP endpoint back onto the Entry, so the
  *      agent reappears in the Marketplace as a part others can build with.
  *
@@ -155,33 +156,35 @@ export async function publishAgent(entryId, { baseUrl, visibility, user }) {
     throw err;
   }
 
-  // ---- 3. project the API as an MCP server
+  // ---- 3. project the API as an MCP server, tools inline
+  // One PUT carries the type AND the tools. Sent separately, API Management
+  // silently drops the type and the "server" is a plain API that no agent
+  // can call — the 500 that bootstrap chased for two rounds.
   let mcp = null;
   try {
     mcp = await index.apim.createMcpServer({
       id: mcpId,
       displayName: `${entry.name} (MCP)`,
       description: spec.info.description,
-      backingApiId: apiId
+      tools: [
+        {
+          name: 'ask',
+          description: spec.paths['/invoke'].post.description,
+          backingApiId: apiId,
+          backingOperationId: 'ask'
+        }
+      ]
     });
-    record('Created an MCP server over it', mcpId);
-
-    await index.apim.addTool(mcpId, {
-      toolId: 'ask',
-      displayName: 'ask',
-      description: spec.paths['/invoke'].post.description,
-      backingApiId: apiId,
-      backingOperationId: 'ask'
-    });
-    record('Added the "ask" tool to the MCP server', 'one tool per capability');
+    record('Created an MCP server over it', `${mcpId} — type mcp, verified`);
+    record('Registered the "ask" tool on it', 'one tool per capability, inline in the server definition');
   } catch (err) {
     record('Creating the MCP server failed', err.message, false);
     throw err;
   }
 
   // ---- 4. write the endpoint back onto the entry
-  const mcpUrl = mcp?.url || `${config.apim.gatewayUrl || 'https://apim-cortex.azure-api.net'}/${mcpId}/mcp`;
-  const openApiUrl = `${config.apim.gatewayUrl || 'https://apim-cortex.azure-api.net'}/${apiId}/openapi.json`;
+  const mcpUrl = mcp?.url || `${config.apim.gatewayUrl}/${mcpId}/mcp`;
+  const openApiUrl = `${config.apim.gatewayUrl}/${apiId}/openapi.json`;
 
   /**
    * Widening only. The groups the builder already had keep access — otherwise
