@@ -152,7 +152,7 @@ ${identityBar(ctx)}
   <div class="govuk-phase-banner">
     <p class="govuk-phase-banner__content">
       <strong class="govuk-tag">Alpha</strong>
-      <span>This is a prototype. Usage, cost and carbon figures are illustrative.</span>
+      <span>This is a prototype built by CCoE for SIT  - all live services but mock data. Please send emails to sheng.zhu@defra.gov.uk to report bugs.</span>
     </p>
   </div>
 

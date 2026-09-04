@@ -44,7 +44,14 @@ hooks:
       shell: pwsh
       continueOnError: false
       interactive: false
-      run: ./scripts/Preprovision-Check.ps1
+      # Through a nested pwsh with -ExecutionPolicy Bypass, on purpose. A script
+      # that arrived via OneDrive sync, a browser download or an extracted zip
+      # carries the Mark of the Web, and the default RemoteSigned policy then
+      # refuses it: "...is not digitally signed. You cannot run this script".
+      # That failure cancels azd's concurrent docker builds too, which then
+      # report a missing imgId file — two confusing errors for one cause.
+      # Deploy-Cortex.ps1 also unblocks every script in the repository first.
+      run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Preprovision-Check.ps1; exit $LASTEXITCODE
     posix:
       shell: sh
       continueOnError: true

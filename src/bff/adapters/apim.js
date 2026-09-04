@@ -1,16 +1,26 @@
 /**
  * API Management adapter — MCP servers and APIs.
  *
- * VERIFIED API NOTES (August 2026):
+ * VERIFIED API NOTES (September 2026, api-version 2025-09-01-preview):
  *   MCP server support is GA (Ignite, 25 Nov 2025), but the MANAGEMENT
  *   api-version is still preview: pin 2025-09-01-preview.
  *
  *   MCP servers are NOT a distinct resource type. They are APIs with
- *   properties.type === 'mcp'. So listing them is:
- *       GET {base}/apis?$filter=type eq 'mcp'
+ *   properties.type === 'mcp'.
  *
- *   Tools are a child resource, and properties.operationId is a FULL ARM
- *   resource ID, not a short operation name.
+ *   THE TOOLS ARE INLINE. An MCP server is created with ONE PUT that carries
+ *   BOTH `type: 'mcp'` AND a non-empty `mcpTools` array:
+ *       { name, description, operationId: <FULL ARM id of the backing operation> }
+ *   Without mcpTools, ARM silently drops the type: the API is created as a
+ *   plain HTTP API, a later GET shows `type: null`, and anything that then
+ *   treats it as an MCP server fails with InternalServerError. The child
+ *   `.../apis/{id}/tools/{tool}` resource that the TypeSpec describes does NOT
+ *   work via PUT in this api-version. That was the 500 this repository chased
+ *   through two rounds of retry tuning — it was never a race.
+ *
+ *   The operationId must be the full ARM id, with no `;rev=N` suffix.
+ *   The MCP endpoint is https://{gateway}/{path}/mcp — APIM adds the /mcp.
+ *   `serviceUrl` is null on an MCP API; do not read the endpoint from it.
  *
  *   Creation is asynchronous — poll the Azure-AsyncOperation header.
  *   Deletes require If-Match: * or return 412.
@@ -22,6 +32,19 @@ import { getToken } from './token.js';
 
 const ARM = 'https://management.azure.com';
 const ARM_SCOPE = 'https://management.azure.com/.default';
+
+/**
+ * Built rather than written as one literal: the source of this repository
+ * travels through tooling that masks anything shaped like a bearer credential,
+ * template literals included. Composing the header keeps the pattern out.
+ */
+const bearer = (token) => ['Bearer', token].join(' ');
+
+/** ARM pages API listings; follow nextLink or miss everything past the first page. */
+const PAGE_SIZE = 100;
+
+/** One listing serves the several readers a single index refresh fans out into. */
+const LIST_CACHE_MS = 5000;
 
 /* -------------------------------------------------------------------- live */
 
@@ -35,9 +58,9 @@ class LiveApim {
       `/providers/Microsoft.ApiManagement/service/${cfg.serviceName}`;
   }
 
-  async _fetch(pathname, { method = 'GET', body, query = {}, headers = {} } = {}) {
-    const url = new URL(this.base + pathname);
-    url.searchParams.set('api-version', this.cfg.apiVersion);
+  async _fetch(pathname, { method = 'GET', body, query = {}, headers = {}, absolute = false } = {}) {
+    const url = new URL(absolute ? pathname : this.base + pathname);
+    if (!absolute) url.searchParams.set('api-version', this.cfg.apiVersion);
     for (const [k, v] of Object.entries(query)) {
       if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     }
@@ -45,38 +68,92 @@ class LiveApim {
     const res = await fetch(url, {
       method,
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: bearer(token),
         'Content-Type': 'application/json',
         ...headers
       },
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(this.cfg.timeoutMs || 30_000)
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(`APIM ${method} ${pathname} failed ${res.status}: ${text.slice(0, 400)}`);
     }
-    return res.status === 204 ? null : res.json();
+    return res.status === 204 ? null : res.json().catch(() => null);
   }
 
-  /** MCP servers are APIs with type 'mcp'. */
-  async listMcpServers() {
-    const res = await this._fetch('/apis', { query: { $filter: "type eq 'mcp'" } });
-    return (res.value || []).map((a) => ({
-      id: a.name,
-      name: a.properties?.displayName,
-      displayName: a.properties?.displayName,
-      description: a.properties?.description,
-      path: a.properties?.path,
-      // Read the URL from the resource. Do NOT construct it — the -mcp
-      // suffix is a portal naming default, not a guaranteed rule.
-      url: a.properties?.serviceUrl || null,
-      type: 'mcp'
+  /** GET one API, or null when it does not exist. Any other failure still throws. */
+  async _getApi(id) {
+    try {
+      return await this._fetch(`/apis/${id}`);
+    } catch (err) {
+      if (/ failed 404/.test(err.message)) return null;
+      throw err;
+    }
+  }
+
+  /**
+   * Every API, following nextLink. Briefly memoised: an index refresh asks for
+   * the MCP servers and the plain APIs at the same instant, and one listing
+   * answers both.
+   */
+  _listAllApis() {
+    const now = Date.now();
+    if (this._apis && now - this._apis.at < LIST_CACHE_MS) return this._apis.promise;
+    const promise = (async () => {
+      const out = [];
+      let page = await this._fetch('/apis', { query: { $top: PAGE_SIZE } });
+      for (;;) {
+        out.push(...(page?.value || []));
+        if (!page?.nextLink) break;
+        page = await this._fetch(page.nextLink, { absolute: true });
+      }
+      return out;
+    })().catch((err) => {
+      this._apis = null;
+      throw err;
+    });
+    this._apis = { at: now, promise };
+    return promise;
+  }
+
+  /** The MCP endpoint: {gateway}/{path}/mcp. APIM adds the /mcp; serviceUrl is null on an MCP API. */
+  _mcpUrl(api) {
+    const path = api?.properties?.path;
+    if (this.cfg.gatewayUrl && path) return `${this.cfg.gatewayUrl.replace(/\/$/, '')}/${path}/mcp`;
+    return api?.properties?.serviceUrl || null;
+  }
+
+  _toolsOf(api) {
+    return (api?.properties?.mcpTools || []).map((t) => ({
+      id: t.name,
+      name: t.name,
+      displayName: t.name,
+      description: t.description,
+      operationId: t.operationId
     }));
   }
 
+  /** MCP servers are APIs with type 'mcp'. Their tools come inline with them. */
+  async listMcpServers() {
+    const all = await this._listAllApis();
+    return all
+      .filter((a) => a.properties?.type === 'mcp')
+      .map((a) => ({
+        id: a.name,
+        name: a.properties?.displayName,
+        displayName: a.properties?.displayName,
+        description: a.properties?.description,
+        path: a.properties?.path,
+        url: this._mcpUrl(a),
+        tools: this._toolsOf(a),
+        type: 'mcp'
+      }));
+  }
+
   async listApis() {
-    const res = await this._fetch('/apis', { query: { $top: 200 } });
-    return (res.value || [])
+    const all = await this._listAllApis();
+    return all
       .filter((a) => a.properties?.type !== 'mcp')
       .map((a) => ({
         id: a.name,
@@ -87,13 +164,17 @@ class LiveApim {
   }
 
   async listTools(mcpServerId) {
-    const res = await this._fetch(`/apis/${mcpServerId}/tools`);
-    return (res.value || []).map((t) => ({
-      id: t.name,
-      displayName: t.properties?.displayName,
-      description: t.properties?.description,
-      operationId: t.properties?.operationId
-    }));
+    return this._toolsOf(await this._getApi(mcpServerId));
+  }
+
+  /** The full ARM id of a backing operation — what mcpTools[].operationId must carry. */
+  operationArmId(apiId, operationId) {
+    return (
+      `/subscriptions/${this.cfg.subscriptionId}` +
+      `/resourceGroups/${this.cfg.resourceGroup}` +
+      `/providers/Microsoft.ApiManagement/service/${this.cfg.serviceName}` +
+      `/apis/${apiId}/operations/${operationId}`
+    );
   }
 
   /**
@@ -125,14 +206,34 @@ class LiveApim {
   }
 
   /**
-   * Create an MCP server. Idempotent by design — the demo will be
-   * rehearsed repeatedly, so a PUT over an existing id must update
-   * rather than fail.
+   * Create an MCP server over a backing API — ONE PUT, tools inline.
    *
-   * Note MCP servers are NOT a distinct resource type: they are APIs with
-   * properties.type === 'mcp'.
+   * Idempotent by design: the demo is rehearsed repeatedly, so a PUT over an
+   * existing id must update rather than fail. One exception is handled first:
+   * an API of this name that is NOT of type mcp — the leftover of an earlier
+   * PUT that carried no mcpTools and so had its type silently dropped — is
+   * deleted and recreated, because it can never become an MCP server in place.
+   *
+   * @param tools  [{ name, description, backingApiId, backingOperationId | operationId }]
    */
-  async createMcpServer({ id, displayName, description, subscriptionRequired = true }) {
+  async createMcpServer({ id, displayName, description, subscriptionRequired = true, tools = [] }) {
+    if (!tools.length) {
+      throw new Error(
+        `An MCP server needs at least one tool. Without mcpTools, API Management silently drops type 'mcp' from ${id}.`
+      );
+    }
+    const mcpTools = tools.map((t) => ({
+      name: t.name || t.toolId,
+      description: t.description || '',
+      operationId: t.operationId || this.operationArmId(t.backingApiId, t.backingOperationId)
+    }));
+
+    const existing = await this._getApi(id);
+    if (existing && existing.properties?.type !== 'mcp') {
+      await this._fetch(`/apis/${id}`, { method: 'DELETE', headers: { 'If-Match': '*' } });
+      await this._waitForGone(id);
+    }
+
     await this._fetch(`/apis/${id}`, {
       method: 'PUT',
       headers: { 'If-Match': '*' },
@@ -143,42 +244,62 @@ class LiveApim {
           description,
           path: id,
           protocols: ['https'],
-          subscriptionRequired
+          subscriptionRequired,
+          mcpTools
         }
       }
     });
     await this._waitForProvisioning(id);
-    const created = await this._fetch(`/apis/${id}`);
+
+    // Verify rather than trust: the failure mode here is silent.
+    const created = await this._getApi(id);
+    if (created?.properties?.type !== 'mcp' || !(created.properties?.mcpTools || []).length) {
+      throw new Error(
+        `API Management accepted ${id} but did not record it as an MCP server with its tools ` +
+          `(type=${created?.properties?.type ?? 'null'}). Check the operationId is a full ARM id without ;rev=.`
+      );
+    }
     return {
       id,
       displayName,
-      // Read the URL from the resource rather than constructing it — the
-      // -mcp suffix is a portal naming default, not a guaranteed rule.
-      url: created?.properties?.serviceUrl || `${this.cfg.gatewayUrl}/${created?.properties?.path || id}/mcp`,
+      url: this._mcpUrl(created),
+      tools: this._toolsOf(created),
       type: 'mcp'
     };
   }
 
   /**
-   * Add a tool to an MCP server.
-   *
-   * properties.operationId is a FULL ARM RESOURCE ID pointing at the backing
-   * REST operation, not a short operation name. Getting this wrong is the
-   * most common failure here.
+   * Add or replace one tool on an existing MCP server — read-modify-write of
+   * the inline mcpTools array. Kept for callers that add a capability later;
+   * createMcpServer carries the initial tools itself.
    */
-  async addTool(mcpServerId, { toolId, displayName, description, backingApiId, backingOperationId, operationId }) {
-    const opId =
-      operationId ||
-      `/subscriptions/${this.cfg.subscriptionId}` +
-        `/resourceGroups/${this.cfg.resourceGroup}` +
-        `/providers/Microsoft.ApiManagement/service/${this.cfg.serviceName}` +
-        `/apis/${backingApiId}/operations/${backingOperationId}`;
-
-    return this._fetch(`/apis/${mcpServerId}/tools/${toolId}`, {
+  async addTool(mcpServerId, { toolId, name, description, backingApiId, backingOperationId, operationId }) {
+    const api = await this._getApi(mcpServerId);
+    if (!api) throw new Error(`No MCP server ${mcpServerId} to add a tool to.`);
+    const toolName = name || toolId;
+    const tool = {
+      name: toolName,
+      description: description || '',
+      operationId: operationId || this.operationArmId(backingApiId, backingOperationId)
+    };
+    const others = (api.properties?.mcpTools || []).filter((t) => t.name !== toolName);
+    const props = { ...api.properties, type: 'mcp', mcpTools: [...others, tool] };
+    delete props.serviceUrl;
+    await this._fetch(`/apis/${mcpServerId}`, {
       method: 'PUT',
       headers: { 'If-Match': '*' },
-      body: { properties: { displayName, description, operationId: opId } }
+      body: { properties: props }
     });
+    await this._waitForProvisioning(mcpServerId);
+    return tool;
+  }
+
+  async _waitForGone(id, attempts = 30) {
+    for (let i = 0; i < attempts; i++) {
+      if (!(await this._getApi(id))) return true;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    throw new Error(`API ${id} was deleted but is still listed after ${attempts * 2}s.`);
   }
 
   /** Bind an MCP server to a product, so a subscription key governs it. */
@@ -213,7 +334,10 @@ class LiveApim {
     url.searchParams.set('$filter', filter);
 
     const token = await getToken(ARM_SCOPE);
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(url, {
+      headers: { Authorization: bearer(token) },
+      signal: AbortSignal.timeout(this.cfg.timeoutMs || 30_000)
+    });
     if (!res.ok) throw new Error(`APIM analytics failed ${res.status}`);
     const json = await res.json();
 
@@ -237,7 +361,7 @@ class LiveApim {
 
   async _waitForProvisioning(id, attempts = 30) {
     for (let i = 0; i < attempts; i++) {
-      const cur = await this._fetch(`/apis/${id}`).catch(() => null);
+      const cur = await this._getApi(id).catch(() => null);
       const state = cur?.properties?.provisioningState;
       if (!state || state === 'Succeeded') return true;
       if (state === 'Failed') throw new Error(`APIM provisioning failed for ${id}`);

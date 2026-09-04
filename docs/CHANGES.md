@@ -1,5 +1,22 @@
 # What changed — 3 September 2026
 
+## Addendum 4 (4 Sep): inviting people from other tenants
+
+`scripts/Add-CortexUser.ps1` — give somebody access: a colleague, or your own
+account from another tenant. Cortex's app registration is single-tenant, so an
+outside account comes in as an **Entra B2B guest**: the script finds them in the
+directory or POSTs a Graph invitation with Cortex's URL as the landing page,
+optionally adds them to Entra groups (`-Groups`), and says what they will see.
+`-NoEmail` prints the redemption link, `-Resend` re-invites. Idempotent, with
+the same stale-token handling as `Set-CortexAuth.ps1`.
+
+`identity.js` now shows a guest by the address in their `preferred_username` or
+`email` claim rather than the synthetic `name_home.com#EXT#@tenant` UPN, and
+exposes `isGuest`. Groups work for guests exactly as for members — they are
+this tenant's groups — so `all-staff` and any `-Groups` apply from the first
+sign-in. `docs/DEPLOY.md` §3d covers it; two troubleshooting rows cover a home
+tenant that refuses and a browser already signed in as someone else.
+
 ## Addendum 3, same day: the API Management 500 was the request shape, not a race
 
 `node scripts/bootstrap.js --only=apim` failed the same five skills again with

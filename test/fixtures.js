@@ -110,6 +110,11 @@ export const PRODUCTS = [
   }
 ];
 
+/**
+ * An MCP server as API Management returns it: an API of type 'mcp' whose tools
+ * are INLINE in mcpTools, each pointing at a backing operation by full ARM id.
+ * serviceUrl is null on an MCP API — the endpoint is {gateway}/{path}/mcp.
+ */
 export const MCP_SERVERS = [
   {
     name: 'permit-history-lookup-mcp',
@@ -118,10 +123,21 @@ export const MCP_SERVERS = [
       displayName: 'Permit history lookup',
       description: 'Look up permit history for a site.',
       path: 'permit-history-lookup-mcp',
-      serviceUrl: 'https://apim-test.azure-api.net/permit-history-lookup-mcp/mcp'
+      serviceUrl: null,
+      mcpTools: [
+        {
+          name: 'invoke',
+          description: 'Look up permit history for a site.',
+          operationId:
+            '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-stub/providers/Microsoft.ApiManagement/service/apim-stub/apis/permit-history-lookup/operations/invoke'
+        }
+      ]
     }
   }
 ];
+
+/** APIs the stub has been asked to create, by id, so a later GET reads back what was PUT. */
+export const CREATED_APIS = new Map();
 
 export const APIS = [
   {
@@ -216,12 +232,26 @@ export function stubAzure({ agents = [], failing = [] } = {}) {
 
     // APIM management
     if (url.includes('/reports/byApi')) return json(USAGE);
-    if (url.includes("$filter=type+eq+%27mcp%27") || url.includes("type eq 'mcp'")) {
-      return json({ value: MCP_SERVERS });
+    const oneApi = url.match(/\/apis\/([^/?]+)(\?|$)/);
+    if (oneApi) {
+      const id = decodeURIComponent(oneApi[1]);
+      if (init.method === 'PUT') {
+        // Behave like ARM: type 'mcp' survives only when mcpTools is present.
+        const body = JSON.parse(init.body || '{}');
+        const props = { ...(body.properties || {}), provisioningState: 'Succeeded' };
+        if (props.type === 'mcp' && !(props.mcpTools || []).length) props.type = null;
+        CREATED_APIS.set(id, { name: id, properties: props });
+        return json(CREATED_APIS.get(id), 201);
+      }
+      if (init.method === 'DELETE') {
+        CREATED_APIS.delete(id);
+        return json(null, 204);
+      }
+      const known = CREATED_APIS.get(id) || [...APIS, ...MCP_SERVERS].find((a) => a.name === id);
+      return known ? json(known) : json({ error: { code: 'ResourceNotFound' } }, 404);
     }
     if (url.includes('/apis')) {
-      if (init.method === 'PUT') return json({ name: 'created', properties: { provisioningState: 'Succeeded' } });
-      return json({ value: [...APIS, ...MCP_SERVERS] });
+      return json({ value: [...APIS, ...MCP_SERVERS, ...CREATED_APIS.values()] });
     }
     if (url.includes('/products/')) return json({});
 
