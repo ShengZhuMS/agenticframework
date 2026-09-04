@@ -214,7 +214,22 @@ The special group names the rules understand:
 | `cortex-team-<name>` | Display team name only; no access effect |
 | anything else | Matches an entry whose allowed groups name it (e.g. `waste-crime`) |
 
-### d. Walk the golden path once
+### d. Invite a colleague — or your own account from another tenant
+
+Cortex signs people in through **this** tenant's Entra ID, and its app registration is single-tenant. Anyone whose account lives elsewhere — a Defra colleague, a partner, your own corporate account — comes in as a **guest** (Entra B2B): they keep their own password and MFA, this tenant holds only a guest object for them, and Cortex sees them exactly as it sees a member, by the groups they are in.
+
+```powershell
+.\scripts\Add-CortexUser.ps1 -Email shengzhu@microsoft.com
+.\scripts\Add-CortexUser.ps1 -Email colleague@defra.gov.uk -Groups 'Waste Crime Observatory'
+```
+
+The script finds the person if they are already in the tenant, otherwise sends Microsoft's invitation email with Cortex as the landing page; `-Groups` adds them to Entra groups (which must also be mapped with `Set-CortexAuth.ps1 -GroupMap` to mean anything to the rules); `-NoEmail` prints the redemption link for you to pass on; `-Resend` sends the invitation again. Idempotent.
+
+What the invitee sees: an email from *Microsoft Invitations* → **Accept** → the Cortex sign-in → on the first visit only, a prompt to accept this organisation's terms (and possibly MFA) → the Marketplace. They are treated as `all-staff` like everyone signed in, so they see the "Open to all staff" entries; anything more comes from groups. Tell them to use a **private browser window** if the computer is already signed in to Cortex as somebody else.
+
+Two things this cannot do. It cannot override the invitee's **home tenant**: if that tenant blocks guest access to this one, redemption stops with an AADSTS error and the fix is on their side (or use an account that lives here). And it does not make the app multi-tenant — signing your corporate account in *directly* would need its tenant to consent to a sandbox app and would put that tenant's group ids in the token, which nothing here maps. Guest is the right shape.
+
+### e. Walk the golden path once
 
 Marketplace → an entry → Build an agent → test it → publish → it reappears in the Marketplace. Then **Ask a question** — the answer is written by the `cortex-ask` agent in Foundry from the catalogue entries you can reach, with the provenance panel underneath. Ask is live: if the model cannot be reached the page says so and falls back to the register's own summary.
 
@@ -311,6 +326,9 @@ The approved model catalogue the Build page offers is the deployment(s) that exi
 | Set-CortexAuth: **Sign-in points at client …, which no longer exists** | The app registration Easy Auth uses was deleted; nobody can sign in | Let the script finish — it creates a new one and re-points the app |
 | Health checks all **redirected to sign-in** / all `ok=false` at once | Sign-in is guarding `/api/health*`; the checks were reading the login page | `Set-CortexAuth.ps1` excludes the machine paths. Then `Test-Cortex.ps1` |
 | Bootstrap: skills fail with **500 InternalServerError** on `…-mcp/tools/invoke` | The old request shape. An MCP server must be created with its tools **inline** (`type: 'mcp'` + `mcpTools`) in one PUT; the child `/tools` resource does not work and a server created without tools silently loses its type | Fixed: one PUT, verified after. A type-null leftover is deleted and recreated. Re-run `node scripts/bootstrap.js --only=apim` |
+| Invitee: **AADSTS…** when accepting the invitation, or "your organisation does not allow you to access…" | Their home tenant's cross-tenant access settings block guest access to this tenant | Nothing here can change it. Use an account that lives in this tenant, or ask their tenant admin |
+| Invitee: signs in and lands on the **wrong account** | The browser already holds another Cortex session | Private browser window, or sign out at `/.auth/logout` first |
+| `Add-CortexUser.ps1`: **Authorization_RequestDenied** / 403 | You lack Guest Inviter / User Administrator in this tenant | Get the role, or invite from the Entra admin centre (Users → New user → Invite external user) with the Cortex URL as redirect |
 | `/profile` lists **N unmapped group ids** | Entra sends group object ids; the rules read names. Nothing is broken — an id only matters once a rule refers to it | `.\scripts\Set-CortexAuth.ps1 -MapMyGroups` names every group you are in after its display name. `-GroupMap 'waste-crime=<Entra group>'` gives one a name a rule uses |
 | `/profile` says **no named groups** | The token predates the groups claim, or the group ids are unmapped | Sign out and in. Map ids with `Set-CortexAuth.ps1 -GroupMap` |
 | Marketplace looks almost empty; entries say "Licence does not cover you" | Strict mode with no group mapping | `Set-CortexAuth.ps1 -DefaultGroups all-staff`, or map groups |
@@ -358,6 +376,7 @@ Every resource name and group is also a parameter: `-ApimName`, `-ApimResourceGr
 | Script | Does |
 |---|---|
 | `Set-CortexAuth.ps1` | Sign-in, groups claim, group mapping, default group. Idempotent. `-MapMyGroups` names every group you are in; `-GroupMap` names specific ones; `-CreateGroups` creates them; `-RotateSecret` mints a new client secret |
+| `Add-CortexUser.ps1` | Give a person access: finds them or sends a B2B guest invitation with Cortex as the landing page. `-Groups` adds them to Entra groups; `-NoEmail` prints the redemption link; `-Resend` re-invites |
 | `Set-CortexEnv.ps1` | **Dot-source it.** Loads the deployment's configuration into the session for running bootstrap by hand. Nothing written to disk |
 | `bootstrap.js` | `npm run bootstrap`. `--only=roles\|purview\|apim`, `--principal=<oid>`, `--skip-roles`, `--dry-run`, `--no-adopt` |
 | `Test-Cortex.ps1` | Health-check a deployment. `-Local` runs the unit tests instead |

@@ -68,3 +68,33 @@ describe('default groups', () => {
     assert.equal(userFromRequest({ headers: {} }, { defaultGroups: ['all-staff'] }), null);
   });
 });
+
+describe('guests from another tenant', () => {
+  test('a B2B guest is shown by their real address, not the #EXT# UPN', () => {
+    const claims = [
+      { typ: 'name', val: 'Sheng Zhu' },
+      { typ: 'preferred_username', val: 'shengzhu@microsoft.com' },
+      { typ: 'groups', val: WASTE }
+    ];
+    const req = {
+      headers: {
+        'x-ms-client-principal-name': 'shengzhu_microsoft.com#EXT#@MngEnvMCAP181916.onmicrosoft.com',
+        'x-ms-client-principal-id': 'oid-guest',
+        'x-ms-client-principal': Buffer.from(JSON.stringify({ claims })).toString('base64')
+      }
+    };
+    const user = userFromRequest(req, { groupNames: parseGroupNames(`${WASTE}=waste-crime`), defaultGroups: ['all-staff'] });
+    assert.equal(user.email, 'shengzhu@microsoft.com');
+    assert.equal(user.isGuest, true);
+    assert.equal(user.name, 'Sheng Zhu');
+    // Groups work for a guest exactly as for a member: they are this tenant's groups.
+    assert.ok(user.groups.includes('waste-crime'));
+    assert.ok(user.groups.includes('all-staff'));
+  });
+
+  test('a member keeps their UPN as their address', () => {
+    const user = userFromRequest(easyAuthRequest([]), { defaultGroups: [] });
+    assert.equal(user.email, 'sarah@defra.gov.uk');
+    assert.equal(user.isGuest, false);
+  });
+});
