@@ -435,7 +435,7 @@ module search 'modules/search.bicep' = if (createSearch) {
     sku: searchSku
     semanticSearch: searchSemantic
     cortexPrincipalId: identity.outputs.principalId
-    foundryPrincipalId: createFoundry ? foundryNew.outputs.accountPrincipalId : foundryExisting.outputs.accountPrincipalId
+    foundryPrincipalId: createFoundry ? foundryNew!.outputs.accountPrincipalId : foundryExisting!.outputs.accountPrincipalId
   }
 }
 
@@ -448,8 +448,8 @@ module data 'modules/data.bicep' = if (createData) {
     dataAccountName: dataAccountName
     stateAccountName: stateAccountName
     cortexPrincipalId: identity.outputs.principalId
-    purviewPrincipalId: createPurview ? purviewNew.outputs.principalId : purviewExisting.outputs.principalId
-    searchPrincipalId: createSearch ? search.outputs.principalId : ''
+    purviewPrincipalId: createPurview ? purviewNew!.outputs.principalId : purviewExisting!.outputs.principalId
+    searchPrincipalId: createSearch ? search!.outputs.principalId : ''
     deployerPrincipalId: deployerPrincipalId
   }
 }
@@ -467,11 +467,15 @@ module containerApps 'modules/containerapps.bicep' = {
     location: location
     tags: tags
     keyVaultName: effectiveKeyVaultName
-    registryLoginServer: createRegistry ? registryNew.outputs.loginServer : registryExisting.outputs.loginServer
+    registryLoginServer: createRegistry ? registryNew!.outputs.loginServer : registryExisting!.outputs.loginServer
     identityId: identity.outputs.id
     identityClientId: identity.outputs.clientId
-    logAnalyticsCustomerId: createMonitoring ? monitoringNew.outputs.customerId : monitoringExisting.outputs.customerId
-    logAnalyticsKey: createMonitoring ? monitoringNew.outputs.primarySharedKey : monitoringExisting.outputs.primarySharedKey
+    // Name and resource group only. The module reads the workspace key itself,
+    // so the key never travels through a module output into the deployment
+    // history. Referencing the module output (rather than the parameter) is
+    // also what orders container apps after the workspace when it is new.
+    logAnalyticsName: createMonitoring ? monitoringNew!.outputs.name : monitoringExisting!.outputs.name
+    logAnalyticsResourceGroup: effectiveMonitoringRg
     webImageName: webImageName
     mcpImageName: mcpImageName
     mcpMinReplicas: mcpMinReplicas
@@ -502,11 +506,11 @@ module containerApps 'modules/containerapps.bicep' = {
     purviewAccountName: effectivePurviewName
     searchEndpoint: searchEndpoint
     searchServiceName: createSearch ? searchServiceName : ''
-    dataStorageAccount: createData ? data.outputs.dataAccountName : ''
-    dataContainer: createData ? data.outputs.dataContainerName : 'products'
+    dataStorageAccount: createData ? data!.outputs.dataAccountName : ''
+    dataContainer: createData ? data!.outputs.dataContainerName : 'products'
     dataResourceGroup: cortexResourceGroup
-    stateAccountName: createData ? data.outputs.stateAccountName : ''
-    stateShareName: createData ? data.outputs.stateShareName : ''
+    stateAccountName: createData ? data!.outputs.stateAccountName : ''
+    stateShareName: createData ? data!.outputs.stateShareName : ''
 
     // The APIM subscription key and the App Insights connection string are
     // deliberately NOT passed. Deploy-Cortex.ps1 writes them onto the app after
@@ -541,7 +545,7 @@ module keyVaultSecrets 'modules/keyvault-secrets.bicep' = if (seedKeyVault) {
       'purview-endpoint': 'https://api.purview-service.microsoft.com'
       'purview-mcp-url': '${containerApps.outputs.mcpUrl}/mcp'
       'public-base-url': containerApps.outputs.webUrl
-      'appinsights-connection-string': createMonitoring ? monitoringNew.outputs.connectionString : monitoringExisting.outputs.connectionString
+      'appinsights-connection-string': createMonitoring ? monitoringNew!.outputs.connectionString : monitoringExisting!.outputs.connectionString
       'entra-tenant-id': subscription().tenantId
       'cortex-environment-name': environmentName
     }
@@ -575,18 +579,18 @@ output FOUNDRY_PROJECT_ENDPOINT string = 'https://${effectiveFoundryAccount}.ser
 output FOUNDRY_MODEL_NAME string = modelName
 output FOUNDRY_MODEL_VERSION string = modelVersion
 output FOUNDRY_MODEL_DEPLOYMENT string = effectiveModelDeployment
-output AZURE_CONTAINER_REGISTRY_ENDPOINT string = createRegistry ? registryNew.outputs.loginServer : registryExisting.outputs.loginServer
+output AZURE_CONTAINER_REGISTRY_ENDPOINT string = createRegistry ? registryNew!.outputs.loginServer : registryExisting!.outputs.loginServer
 
 // Round 4 — read by Set-CortexEnv.ps1 so bootstrap can reach the same places the app does.
 output FOUNDRY_ACCOUNT_RESOURCE_GROUP string = effectiveFoundryRg
 output FOUNDRY_PROJECT_NAME string = effectiveFoundryProject
-output FOUNDRY_ACCOUNT_PRINCIPAL_ID string = createFoundry ? foundryNew.outputs.accountPrincipalId : foundryExisting.outputs.accountPrincipalId
-output PURVIEW_ACCOUNT_PRINCIPAL_ID string = createPurview ? purviewNew.outputs.principalId : purviewExisting.outputs.principalId
+output FOUNDRY_ACCOUNT_PRINCIPAL_ID string = createFoundry ? foundryNew!.outputs.accountPrincipalId : foundryExisting!.outputs.accountPrincipalId
+output PURVIEW_ACCOUNT_PRINCIPAL_ID string = createPurview ? purviewNew!.outputs.principalId : purviewExisting!.outputs.principalId
 output SEARCH_SERVICE_NAME string = createSearch ? searchServiceName : ''
 output SEARCH_ENDPOINT string = searchEndpoint
-output DATA_STORAGE_ACCOUNT string = createData ? data.outputs.dataAccountName : ''
-output DATA_CONTAINER string = createData ? data.outputs.dataContainerName : 'products'
-output STATE_STORAGE_ACCOUNT string = createData ? data.outputs.stateAccountName : ''
+output DATA_STORAGE_ACCOUNT string = createData ? data!.outputs.dataAccountName : ''
+output DATA_CONTAINER string = createData ? data!.outputs.dataContainerName : 'products'
+output STATE_STORAGE_ACCOUNT string = createData ? data!.outputs.stateAccountName : ''
 output CORTEX_CHAT_POLICY string = chatPolicy
 
 output CREATED_THIS_ROUND array = concat(

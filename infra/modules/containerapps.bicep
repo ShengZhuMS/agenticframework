@@ -15,9 +15,13 @@ param registryLoginServer string
 param identityId string
 param identityClientId string
 
-param logAnalyticsCustomerId string
-@secure()
-param logAnalyticsKey string
+// The Log Analytics workspace is read HERE, where its key is consumed, rather
+// than having the monitoring module pass the key out as an output: a list*
+// value in a module output is written to the deployment history in clear text
+// (linter rule outputs-should-not-contain-secrets). The workspace usually lives
+// in another resource group, hence the explicit scope on the reference below.
+param logAnalyticsName string
+param logAnalyticsResourceGroup string
 
 // ------------------------------------------------------- configuration mode
 //
@@ -181,6 +185,11 @@ var appPort = 3000
 var webIsPlaceholder = empty(webImageName)
 var mcpIsPlaceholder = empty(mcpImageName)
 
+resource law 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
+  name: logAnalyticsName
+  scope: resourceGroup(logAnalyticsResourceGroup)
+}
+
 resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
@@ -189,8 +198,8 @@ resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
-        customerId: logAnalyticsCustomerId
-        sharedKey: logAnalyticsKey
+        customerId: law.properties.customerId
+        sharedKey: law.listKeys().primarySharedKey
       }
     }
   }
