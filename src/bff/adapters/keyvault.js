@@ -142,6 +142,78 @@ export const SECRET_CATALOGUE = [
       'Id of the Foundry project connection (kind remote-tool) that carries the APIM subscription key, so an agent can call an APIM MCP server.'
   },
   {
+    secret: 'foundry-account-name',
+    env: 'FOUNDRY_ACCOUNT_NAME',
+    path: 'foundry.accountName',
+    sensitive: false,
+    required: false,
+    description: 'Foundry account (Microsoft.CognitiveServices/accounts) name. Needed to create project connections.'
+  },
+  {
+    secret: 'foundry-project-name',
+    env: 'FOUNDRY_PROJECT_NAME',
+    path: 'foundry.projectName',
+    sensitive: false,
+    required: false,
+    description: 'Foundry project name under the account.'
+  },
+  {
+    secret: 'foundry-resource-group',
+    env: 'FOUNDRY_RESOURCE_GROUP',
+    path: 'foundry.resourceGroup',
+    sensitive: false,
+    required: false,
+    description: 'Resource group holding the Foundry account.'
+  },
+  {
+    secret: 'foundry-search-connection',
+    env: 'FOUNDRY_SEARCH_CONNECTION',
+    path: 'foundry.searchConnection',
+    sensitive: false,
+    required: false,
+    description: 'Name of the Foundry project connection to Azure AI Search. Defaults to cortex-search.'
+  },
+  {
+    secret: 'search-endpoint',
+    env: 'SEARCH_ENDPOINT',
+    path: 'search.endpoint',
+    sensitive: false,
+    required: false,
+    description: 'Azure AI Search endpoint, e.g. https://srch-cortex.search.windows.net. Empty disables data grounding.'
+  },
+  {
+    secret: 'search-service-name',
+    env: 'SEARCH_SERVICE_NAME',
+    path: 'search.serviceName',
+    sensitive: false,
+    required: false,
+    description: 'Azure AI Search service name.'
+  },
+  {
+    secret: 'data-storage-account',
+    env: 'DATA_STORAGE_ACCOUNT',
+    path: 'data.storageAccount',
+    sensitive: false,
+    required: false,
+    description: 'Storage account (ADLS Gen2) holding the sample data products.'
+  },
+  {
+    secret: 'data-container',
+    env: 'DATA_CONTAINER',
+    path: 'data.container',
+    sensitive: false,
+    required: false,
+    description: 'Container in the sample-data account. Defaults to products.'
+  },
+  {
+    secret: 'purview-account-name',
+    env: 'PURVIEW_ACCOUNT_NAME',
+    path: 'purview.accountName',
+    sensitive: false,
+    required: false,
+    description: 'Purview account name, for the Data Map (sources, scans, assets).'
+  },
+  {
     secret: 'purview-endpoint',
     env: 'PURVIEW_ENDPOINT',
     path: 'purview.endpoint',
@@ -176,6 +248,14 @@ export const SECRET_CATALOGUE = [
     required: true,
     description:
       'Public URL of this app. APIM calls back to it, so the generated OpenAPI must carry a reachable address.'
+  },
+  {
+    secret: 'cosmos-endpoint',
+    env: 'COSMOS_ENDPOINT',
+    path: 'cosmosEndpoint',
+    sensitive: false,
+    required: false,
+    description: 'Cosmos DB account endpoint for the Cortex Index. Auth is managed identity — there is no key.'
   },
   {
     secret: 'appinsights-connection-string',

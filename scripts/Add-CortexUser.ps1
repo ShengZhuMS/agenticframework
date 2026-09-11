@@ -15,7 +15,11 @@
     1. finds the person in the tenant (member or existing guest), or sends a
        B2B invitation by email with Cortex's own address as the landing page;
     2. optionally adds them to Entra groups Cortex's access rules read (-Groups);
-    3. says what they will see next, and what to do if their home tenant
+    3. checks that this tenant TRUSTS MFA FROM THE GUEST'S HOME TENANT, and
+       fixes it with -TrustHomeMfa. This tenant's baseline Conditional Access
+       requires MFA of guests AND blocks them from registering a method here —
+       so a guest can only sign in if their home tenant's MFA is accepted;
+    4. says what they will see next, and what to do if their home tenant
        refuses.
 
   Needs: Guest Inviter, User Administrator or Global Administrator in this
@@ -39,6 +43,13 @@
 .EXAMPLE
   .\scripts\Add-CortexUser.ps1 -Email shengzhu@microsoft.com -Resend
   They never got, or lost, the invitation. Sends it again.
+
+.EXAMPLE
+  .\scripts\Add-CortexUser.ps1 -Email shengzhu@microsoft.com -TrustHomeMfa
+  The guest is stopped at sign-in by "Require multifactor authentication" and
+  is never offered the set-up screen. Turn on "Trust multifactor authentication
+  from Microsoft Entra tenants" in this tenant's inbound cross-tenant access
+  defaults, so the MFA they already did at home is accepted here.
 #>
 [CmdletBinding()]
 param(
@@ -48,6 +59,7 @@ param(
   [string[]]$Groups = @(),
   [switch]$NoEmail,
   [switch]$Resend,
+  [switch]$TrustHomeMfa,
   [string]$EnvironmentName
 )
 
@@ -94,9 +106,12 @@ function Invoke-AzDirectory {
     }
     if ($LASTEXITCODE -ne 0) { throw "$What failed: $($out.Trim())" }
     if ($Json) {
+      # Warnings can precede the JSON and a stray line can follow it; keep the
+      # span from the first opening bracket to the last closing one.
       $i = $out.IndexOf('{'); $j = $out.IndexOf('[')
       $start = @($i, $j) | Where-Object { $_ -ge 0 } | Sort-Object | Select-Object -First 1
-      if ($null -ne $start) { return $out.Substring($start) }
+      $end = [Math]::Max($out.LastIndexOf('}'), $out.LastIndexOf(']'))
+      if ($null -ne $start -and $end -ge $start) { return $out.Substring($start, $end - $start + 1) }
     }
     return $out
   }
@@ -116,24 +131,48 @@ try {
   $acct = az account show | ConvertFrom-Json
   $script:subscriptionId = $acct.id
 
+  if ($Email -notmatch '^[^\s"''<>&|()]+@[^\s"''<>&|()]+$') {
+    throw "'$Email' does not look like an email address this script can look up safely."
+  }
+
   Write-Host "`nAccess to Cortex for $Email`n" -ForegroundColor Cyan
 
-  # The tenant's name, for the message — and a cheap pre-flight of the
-  # directory token, so a stale one is refreshed here rather than mid-way.
-  $org = Invoke-AzDirectory { az rest --method get --url 'https://graph.microsoft.com/v1.0/organization?$select=displayName' --only-show-errors } 'reading the tenant' -Json | ConvertFrom-Json
+  # GRAPH QUERIES AND THE WINDOWS CLI. On Windows `az` is a .cmd wrapper, so
+  # its arguments pass through cmd.exe, which treats an unquoted `&` as a
+  # command separator and an unquoted `)` as the end of a block. A URL such as
+  # users?$filter=...&$select=... therefore ran as TWO commands — the second
+  # being "'$select' is not recognized as an internal or external command" —
+  # and a startswith(...) filter can end az.cmd's own IF block early. So no
+  # query string is ever written into --url here. Parameters go through
+  # `az rest --uri-parameters`, one argument each; the CLI URL-encodes them.
+  # Nor is the `%26` trick an answer: an encoded ampersand is data, not a
+  # separator, and Graph would read it as part of the filter.
+  function GraphArgs([string]$path, [string[]]$params) {
+    $a = @('rest', '--method', 'get', '--url', "https://graph.microsoft.com/v1.0/$path", '--only-show-errors')
+    if ($params -and $params.Count -gt 0) { $a += '--uri-parameters'; $a += $params }
+    return $a
+  }
+
+  # The tenant's name and its initial *.onmicrosoft.com domain (a guest's UPN is
+  # built on it) — and a cheap pre-flight of the directory token, so a stale one
+  # is refreshed here rather than mid-way.
+  $orgArgs = GraphArgs 'organization' @('$select=displayName,verifiedDomains')
+  $org = Invoke-AzDirectory { az @orgArgs } 'reading the tenant' -Json | ConvertFrom-Json
   $tenantName = if ($org.value) { $org.value[0].displayName } else { $acct.tenantId }
+  $initialDomain = if ($org.value) { ($org.value[0].verifiedDomains | Where-Object { $_.isInitial }).name } else { $null }
 
   # ------------------------------------------------------ 1 already here?
-  # A member has the address as UPN; a guest has it as `mail` and a UPN of the
-  # form name_domain.com#EXT#@tenant. Both are checked, the latter by prefix.
+  # A member has the address as UPN; an invited guest has it as `mail` and a
+  # UPN of the form name_domain.com#EXT#@<initial domain>. Both are tried.
+  # (No startswith(): parentheses are the other thing cmd.exe acts on.)
   $safe = $Email.Replace("'", "''")
-  $select = '&$select=id,displayName,userPrincipalName,userType,externalUserState,mail'
-  $url1 = 'https://graph.microsoft.com/v1.0/users?$filter=' + [uri]::EscapeDataString("mail eq '$safe' or userPrincipalName eq '$safe'") + $select
-  $found = @((Invoke-AzDirectory { az rest --method get --url $url1 --only-show-errors } 'looking the person up in the directory' -Json | ConvertFrom-Json).value)
-  if ($found.Count -eq 0) {
-    $prefix = (($Email -replace '@', '_') + '#EXT#').Replace("'", "''")
-    $url2 = 'https://graph.microsoft.com/v1.0/users?$filter=' + [uri]::EscapeDataString("startswith(userPrincipalName,'$prefix')") + $select
-    $found = @((Invoke-AzDirectory { az rest --method get --url $url2 --only-show-errors } 'looking the guest up in the directory' -Json | ConvertFrom-Json).value)
+  $select = '$select=id,displayName,userPrincipalName,userType,externalUserState,mail'
+  $lookup = GraphArgs 'users' @("`$filter=mail eq '$safe' or userPrincipalName eq '$safe'", $select)
+  $found = @((Invoke-AzDirectory { az @lookup } 'looking the person up in the directory' -Json | ConvertFrom-Json).value)
+  if ($found.Count -eq 0 -and $initialDomain) {
+    $extUpn = ((($Email -replace '@', '_') + "#EXT#@$initialDomain")).Replace("'", "''")
+    $lookup = GraphArgs 'users' @("`$filter=userPrincipalName eq '$extUpn'", $select)
+    $found = @((Invoke-AzDirectory { az @lookup } 'looking the guest up in the directory' -Json | ConvertFrom-Json).value)
   }
   $user = if ($found.Count -gt 0) { $found[0] } else { $null }
   $userId = $null
@@ -142,10 +181,13 @@ try {
   $needsInvite = (-not $user) -or ($Resend -and $user.userType -eq 'Guest')
   if ($user) {
     $userId = $user.id
+    $type = if ($user.userType) { $user.userType.ToLower() } else { 'user' }
     $state = if ($user.externalUserState) { " — invitation $($user.externalUserState)" } else { '' }
-    Keep "$($user.displayName) is already in this tenant as a $($user.userType.ToLower())$state"
+    Keep "$($user.displayName) is already in this tenant as a $type$state"
     if ($user.userType -eq 'Guest' -and $user.externalUserState -eq 'PendingAcceptance' -and -not $Resend) {
       Warn2 'They have not accepted their invitation yet. Nothing to do here; -Resend sends it again.'
+    } elseif ($user.userType -eq 'Guest' -and -not $Resend) {
+      Ok "Nothing to invite. $Email can sign in to Cortex now — open $webUrl in a private window and pick that account."
     }
   }
 
@@ -213,18 +255,63 @@ try {
     }
   }
 
-  # ------------------------------------------------------ 4 what next
+  # ------------------------------------------------------ 4 MFA for guests
+  #
+  # THE DEADLOCK. This tenant's baseline Conditional Access has two policies
+  # for "Microsoft partners and vendors" — its name for external users:
+  #   "Multifactor authentication for ..."     Require MFA
+  #   "Security info registration for ..."     BLOCK
+  # A guest must do MFA, and may not register a method here to do it with. The
+  # sign-in log shows both as Failure and the person is never offered the
+  # set-up screen. The intended answer is not to weaken either policy but to
+  # ACCEPT THE MFA THE GUEST ALREADY DID AT HOME: inbound trust in cross-tenant
+  # access settings. Read-only unless -TrustHomeMfa is given.
+  $trustArgs = GraphArgs 'policies/crossTenantAccessPolicy/default' @('$select=inboundTrust')
+  $trust = $null
+  try { $trust = Invoke-AzDirectory { az @trustArgs } 'reading the cross-tenant access defaults' -Json | ConvertFrom-Json } catch { $trust = $null }
+  $mfaTrusted = $trust -and $trust.inboundTrust -and $trust.inboundTrust.isMfaAccepted -eq $true
+  $portalPath = 'Entra admin center -> External Identities -> Cross-tenant access settings -> Default settings -> Inbound access settings -> Edit inbound defaults -> Trust settings -> tick "Trust multifactor authentication from Microsoft Entra tenants"'
+
+  if ($mfaTrusted) {
+    Keep 'This tenant trusts MFA from the guest''s home tenant (inbound cross-tenant access)'
+  } elseif ($TrustHomeMfa) {
+    $tmp = New-TemporaryFile
+    try {
+      '{"inboundTrust":{"isMfaAccepted":true}}' | Set-Content -Path $tmp -Encoding utf8
+      $null = Invoke-AzDirectory {
+        az rest --method patch --url 'https://graph.microsoft.com/v1.0/policies/crossTenantAccessPolicy/default' --headers 'Content-Type=application/json' --body "@$tmp" --only-show-errors
+      } 'turning on inbound MFA trust'
+      Ok 'This tenant now trusts MFA from the guest''s home tenant. They must sign out fully and sign in again.'
+      $mfaTrusted = $true
+    } catch {
+      Warn2 "Could not change the cross-tenant access defaults from here: $($_.Exception.Message)"
+      Info  'You need Security Administrator or Global Administrator. By hand (two minutes):'
+      Info  $portalPath
+    } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+  } else {
+    Warn2 'This tenant does NOT trust MFA from other tenants, and its Conditional Access requires MFA of guests'
+    Warn2 'while blocking them from registering a method here. A guest will be stopped at sign-in and never'
+    Warn2 'offered the set-up screen. Fix:  .\scripts\Add-CortexUser.ps1 -Email <address> -TrustHomeMfa'
+    Info  "or by hand: $portalPath"
+  }
+
+  # ------------------------------------------------------ 5 what next
   Write-Host ''
   Write-Host '  What happens next' -ForegroundColor Green
   Write-Host "   1. $Email accepts the invitation, or simply opens $webUrl and picks that account."
   Write-Host "      Use a private browser window if this computer is already signed in to Cortex as someone else."
-  Write-Host "   2. First sign-in only: Entra asks them to accept $tenantName's terms, and may ask for MFA."
+  Write-Host "   2. First sign-in only: Entra asks them to accept $tenantName's terms. The MFA they did at home is"
+  Write-Host '      accepted here — they are not asked to set anything up in this tenant.'
   Write-Host "   3. $webUrl/profile shows what they can see. Every signed-in person is treated as all-staff;"
   Write-Host '      anything more comes from the Entra groups above.'
   Write-Host ''
-  Write-Host '  If redemption stops with an AADSTS error, the invitee''s HOME tenant blocks guest access to this' -ForegroundColor DarkGray
-  Write-Host '  one (cross-tenant access settings). Nothing here can change that — use an account that lives in' -ForegroundColor DarkGray
-  Write-Host '  this tenant for the demo instead.' -ForegroundColor DarkGray
+  Write-Host '  Still stopped by "Require multifactor authentication"? Their HOME tenant did not perform MFA for' -ForegroundColor DarkGray
+  Write-Host '  that sign-in, so there is nothing to trust. Either exclude a "Cortex testers" group from the two' -ForegroundColor DarkGray
+  Write-Host '  "partners and vendors" policies, or give them a member account in this tenant — members are not' -ForegroundColor DarkGray
+  Write-Host '  targeted by those policies and may register MFA normally. The latter is the safer demo.' -ForegroundColor DarkGray
+  Write-Host ''
+  Write-Host '  If redemption stops with an AADSTS error instead, the invitee''s HOME tenant blocks guest access to' -ForegroundColor DarkGray
+  Write-Host '  this one (its own cross-tenant settings). Nothing here can change that.' -ForegroundColor DarkGray
   Write-Host ''
 }
 catch { Write-Host "  FAIL    $($_.Exception.Message)" -ForegroundColor Red; exit 1 }

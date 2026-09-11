@@ -627,3 +627,31 @@ summary:focus,
 @media print {
   .cortex-nav, .cortex-persona, .govuk-header__search, .cortex-filters { display: none; }
 }
+
+/* ------------------------------------------------------------ chat window */
+.cortex-chat { max-width: 900px; }
+.cortex-chat__head { display: flex; gap: 24px; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #b1b4b6; padding-bottom: 12px; margin-bottom: 12px; }
+.cortex-chat__side { flex: 0 0 260px; text-align: right; font-size: 16px; }
+.cortex-chat__side details { text-align: left; }
+.cortex-chat__policy { color: #505a5f; border-left: 4px solid #b1b4b6; padding-left: 12px; }
+.cortex-chat__thread { display: flex; flex-direction: column; gap: 18px; margin: 16px 0 20px; }
+.cortex-chat__turn { display: flex; flex-direction: column; gap: 10px; }
+.cortex-chat__q, .cortex-chat__a { padding: 12px 16px; border-radius: 4px; max-width: 88%; }
+.cortex-chat__q { background: #f3f2f1; align-self: flex-end; border-right: 5px solid #1d70b8; }
+.cortex-chat__a { background: #fff; border: 1px solid #b1b4b6; border-left: 5px solid #00703c; align-self: flex-start; }
+.cortex-chat__q .govuk-body, .cortex-chat__a .govuk-body { margin-bottom: 4px; }
+.cortex-chat__who { display: block; font-size: 14px; font-weight: 700; color: #505a5f; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.cortex-chat__form { position: sticky; bottom: 0; background: #fff; padding: 12px 0 8px; border-top: 1px solid #b1b4b6; }
+.cortex-chat__form textarea { max-width: 100%; }
+@media (max-width: 640px) { .cortex-chat__head { flex-direction: column; } .cortex-chat__side { flex: none; text-align: left; } }
+
+/* ------------------------------------------------------------ automations */
+.cortex-run { border: 1px solid #b1b4b6; border-left: 5px solid #1d70b8; padding: 12px 16px; margin-bottom: 12px; background: #fff; }
+.cortex-run--failed { border-left-color: #d4351c; }
+.cortex-four { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0 24px; }
+.cortex-four > div { background: #f3f2f1; padding: 12px 14px; }
+.cortex-four strong { display: block; font-size: 14px; color: #505a5f; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+
+/* -------------------------------------------------------- data grounding */
+.cortex-assets td, .cortex-assets th { font-size: 16px; }
+.cortex-chip { display: inline-block; background: #f3f2f1; border: 1px solid #b1b4b6; border-radius: 3px; padding: 1px 6px; font-size: 14px; margin: 0 4px 4px 0; }

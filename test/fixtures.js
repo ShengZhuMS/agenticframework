@@ -24,9 +24,47 @@ export function stubConfig() {
   config.apim.resourceGroup = 'rg-stub';
   config.apim.serviceName = 'apim-stub';
   config.apim.gatewayUrl = 'https://apim-stub.azure-api.net';
+  config.apim.subscriptionKey = 'stub-apim-key';
   config.purview.endpoint = 'https://api.purview-service.microsoft.com';
+  config.purview.accountName = 'pview-stub';
+  config.purview.dataMapEndpoint = 'https://pview-stub.purview.azure.com';
+  config.purview.collection = 'pview-stub';
   config.publicBaseUrl = 'https://cortex.stub';
   config.purviewMcpUrl = 'https://mcp.stub/mcp';
+  // Round 4: the Foundry project's ARM location, search, sample data.
+  config.foundry.accountName = 'fdry-stub';
+  config.foundry.projectName = 'proj-stub';
+  config.foundry.resourceGroup = 'rg-fdry-stub';
+  config.search.endpoint = 'https://srch-stub.search.windows.net';
+  config.search.serviceName = 'srch-stub';
+  config.data.storageAccount = 'ststubdata';
+  config.data.container = 'products';
+  config.data.resourceGroup = 'rg-stub';
+}
+
+/** What the ARM stub has been asked to store: project connections by name. */
+export const CONNECTIONS = new Map();
+/** AI Search objects the stub holds, by kind then name. */
+export const SEARCH = { indexes: new Map(), datasources: new Map(), indexers: new Map(), runs: [] };
+/** Blobs the storage stub holds, by "container/path". */
+export const BLOBS = new Map();
+/** Data Map assets the stub knows, by qualified name. */
+export const DATAMAP_ASSETS = new Map();
+/** Unified Catalog data assets registered through the stub, and product relationships. */
+export const UC_ASSETS = new Map();
+export const UC_RELATIONSHIPS = new Map();
+
+/** Reset every round-4 stub store. */
+export function resetRoundFour() {
+  CONNECTIONS.clear();
+  SEARCH.indexes.clear();
+  SEARCH.datasources.clear();
+  SEARCH.indexers.clear();
+  SEARCH.runs.length = 0;
+  BLOBS.clear();
+  DATAMAP_ASSETS.clear();
+  UC_ASSETS.clear();
+  UC_RELATIONSHIPS.clear();
 }
 
 const realFetch = globalThis.fetch;
@@ -212,16 +250,152 @@ export function stubAzure({ agents = [], failing = [] } = {}) {
     // Anything that is not an Azure endpoint goes to the real network. That
     // lets a test boot the actual server and drive it over HTTP while its
     // outbound Azure calls stay stubbed.
-    if (!/\.azure\.com|\.azure-api\.net|management\.azure\.com|purview-service|services\.ai/.test(url)) {
+    if (!/\.azure\.com|\.azure-api\.net|management\.azure\.com|purview-service|services\.ai|search\.windows\.net|core\.windows\.net/.test(url)) {
       return realFetch(input, init);
     }
     for (const f of failing) {
       if (url.includes(f)) return json({ error: 'stubbed failure' }, 503);
     }
+    const method = init.method || 'GET';
+    const body = () => JSON.parse(init.body || '{}');
+    const host = new URL(url).hostname;
+
+    // Foundry project connections (ARM)
+    const conn = url.match(/\/connections\/([^/?]+)\?/);
+    if (conn && url.includes('management.azure.com')) {
+      const name = conn[1];
+      if (method === 'PUT') {
+        CONNECTIONS.set(name, { name, ...body() });
+        return json(CONNECTIONS.get(name));
+      }
+      return CONNECTIONS.has(name) ? json(CONNECTIONS.get(name)) : json({ error: { code: 'NotFound' } }, 404);
+    }
+    if (url.includes('management.azure.com') && /\/connections\?/.test(url)) {
+      return json({ value: [...CONNECTIONS.values()] });
+    }
+
+    // Azure AI Search
+    if (host.endsWith('search.windows.net')) {
+      const m = url.match(/\/(indexes|datasources|indexers)(?:\/([^/?]+))?(?:\/(stats|status|run|docs\/search))?\?/);
+      if (m) {
+        const [, kind, rawName, action] = m;
+        const name = rawName ? decodeURIComponent(rawName) : null;
+        const store = SEARCH[kind];
+        if (!name) return json({ value: [...store.values()].map((x) => ({ name: x.name })) });
+        if (action === 'run') {
+          if (!SEARCH.indexers.has(name)) return json({ error: 'no such indexer' }, 404);
+          SEARCH.runs.push(name);
+          return json(null, 202);
+        }
+        if (action === 'stats') return store.has(name) ? json({ documentCount: 42, storageSize: 1000 }) : json({}, 404);
+        if (action === 'status') {
+          return store.has(name)
+            ? json({ status: 'running', lastResult: { status: 'success', itemsProcessed: 42, itemsFailed: 0, startTime: '2026-09-11T08:00:00Z', endTime: '2026-09-11T08:00:05Z', errors: [] } })
+            : json({}, 404);
+        }
+        if (action === 'docs/search') {
+          return json({ value: [{ '@search.score': 1, id: 'a', title: 'row', url: 'https://ststubdata.blob.core.windows.net/products/x.csv', registration_number: 'CBDU000001' }] });
+        }
+        if (method === 'PUT') {
+          store.set(name, { ...body(), name });
+          return json(store.get(name), store.has(name) ? 200 : 201);
+        }
+        if (method === 'DELETE') {
+          store.delete(name);
+          return json(null, 204);
+        }
+        return store.has(name) ? json(store.get(name)) : json({}, 404);
+      }
+    }
+
+    // Storage (blob REST) — by HOST: a Data Map qualified name in a query
+    // string also contains core.windows.net and must not land here.
+    if (host.endsWith('core.windows.net')) {
+      const u = new URL(url);
+      const [, container, ...rest] = u.pathname.split('/');
+      const key = `${container}/${rest.map(decodeURIComponent).join('/')}`;
+      if (u.searchParams.get('restype') === 'container' && u.searchParams.get('comp') === 'list') {
+        const prefix = u.searchParams.get('prefix') || '';
+        const items = [...BLOBS.entries()].filter(([k]) => k.startsWith(`${container}/${prefix}`));
+        const xml = `<EnumerationResults><Blobs>${items
+          .map(([k, v]) => `<Blob><Name>${k.slice(container.length + 1)}</Name><Properties><Content-Length>${v.length}</Content-Length></Properties></Blob>`)
+          .join('')}</Blobs></EnumerationResults>`;
+        return { ok: true, status: 200, text: async () => xml, json: async () => ({}) };
+      }
+      if (u.searchParams.get('restype') === 'container') return json(null, 201);
+      if (method === 'PUT') {
+        BLOBS.set(key, typeof init.body === 'string' ? init.body : Buffer.from(init.body || '').toString('utf8'));
+        return json(null, 201);
+      }
+      if (BLOBS.has(key)) return { ok: true, status: 200, text: async () => BLOBS.get(key), json: async () => ({}) };
+      return json({}, 404);
+    }
+
+    // Purview Data Map (account endpoint)
+    if (host.endsWith('.purview.azure.com')) {
+      if (url.includes('/account/collections')) return json({ value: [{ name: 'pview-stub', friendlyName: 'Root' }] });
+      if (url.includes('/policystore/collections/')) {
+        return json({
+          id: 'policy-1',
+          name: 'policy-1',
+          properties: {
+            attributeRules: [
+              { id: 'purviewmetadatarole_builtin_data-source-administrator:pview-stub', dnfCondition: [[{ attributeName: 'principal.microsoft.id', attributeValueIncludedIn: ['existing-oid'] }]] },
+              { id: 'purviewmetadatarole_builtin_data-curator:pview-stub', dnfCondition: [[{ attributeName: 'principal.microsoft.id', attributeValueIncludedIn: [] }]] },
+              { id: 'purviewmetadatarole_builtin_purview-reader:pview-stub', dnfCondition: [[{ attributeName: 'derived.purview.role', attributeValueIncludes: 'purviewmetadatarole_builtin_purview-reader' }]] }
+            ]
+          }
+        });
+      }
+      if (url.includes('/policystore/metadataPolicies/')) {
+        DATAMAP_ASSETS.set('__policy_put__', body());
+        return json(body());
+      }
+      if (/\/scan\/datasources\/[^/]+\/scans\/[^/]+\/runs\/[^/?]+\?/.test(url)) return json({ scanResultId: 'run-1', status: 'Queued' });
+      if (/\/scan\/datasources\/[^/]+\/scans\/[^/]+\/runs\?/.test(url)) {
+        return json({ value: [{ id: 'run-1', status: 'Succeeded', startTime: '2026-09-11T08:00:00Z', assetsDiscovered: 28 }] });
+      }
+      if (/\/scan\/datasources\/[^/]+\/scans\/[^/?]+\?/.test(url)) {
+        if (method === 'PUT') return json({ ...body(), name: 'scan' }, 201);
+        return json({}, 404);
+      }
+      if (/\/scan\/datasources\/[^/?]+\?/.test(url)) {
+        if (method === 'PUT') return json({ ...body() }, 201);
+        return json({}, 404);
+      }
+      if (url.includes('/entity/uniqueAttribute/type/')) {
+        const qn = decodeURIComponent(new URL(url).searchParams.get('attr:qualifiedName') || '');
+        const a = DATAMAP_ASSETS.get(qn);
+        return a ? json({ entity: a, referredEntities: {} }) : json({}, 404);
+      }
+      if (url.includes('/search/query')) return json({ value: [] });
+    }
 
     // Purview Unified Catalog
     if (url.includes('/datagovernance/catalog/businessdomains')) {
       return json({ value: DOMAINS, nextLink: null });
+    }
+    const rel = url.match(/\/dataProducts\/([^/]+)\/relationships\?/);
+    if (rel) {
+      const list = UC_RELATIONSHIPS.get(rel[1]) || [];
+      if (method === 'POST') {
+        list.push(body());
+        UC_RELATIONSHIPS.set(rel[1], list);
+        return json(body());
+      }
+      return json({ value: list });
+    }
+    if (url.includes('/datagovernance/catalog/dataAssets/query')) {
+      const b = body();
+      const all = [...UC_ASSETS.values()];
+      return json({ value: b.ids ? all.filter((a) => b.ids.includes(a.id)) : all });
+    }
+    if (url.includes('/datagovernance/catalog/dataAssets') && method === 'POST') {
+      const b = body();
+      const id = `uc-${UC_ASSETS.size + 1}`;
+      const asset = { id, name: `asset ${id}`, type: 'ADLSGen2Path', source: { type: 'DataMap', assetId: b.source.assetId, assetType: 'adls_gen2_path', fqn: 'https://ststubdata.dfs.core.windows.net/products/x/x.csv' }, schema: [{ name: 'registration_number' }, { name: 'status' }] };
+      UC_ASSETS.set(id, asset);
+      return json(asset, 201);
     }
     if (url.includes('/dataProducts/query')) {
       return json({ value: PRODUCTS });

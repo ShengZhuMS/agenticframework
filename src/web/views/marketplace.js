@@ -92,6 +92,7 @@ function entryCard(e, ctx) {
         <p class="cortex-src" style="margin-top:6px">${esc(e.visReason || '')}</p>
         <p class="govuk-body-s" style="margin-top:8px;margin-bottom:0">
           <a class="govuk-link" href="/entry/${attr(e.id)}">${esc(VIS[e.vis]?.next || 'Open')}</a>
+          ${e.cat === 'Agent' ? ` · <a class="govuk-link" href="/agent/${attr(e.id)}/chat" target="_blank" rel="opener">Chat</a>` : ''}
         </p>
       </div>
     </div>

@@ -14,7 +14,12 @@
     "mcp": "node src/purview-mcp/server.js",
     "build:assets": "node scripts/build-assets.js",
     "prepare": "node scripts/build-assets.js",
-    "bootstrap": "node scripts/bootstrap.js"
+    "bootstrap": "node scripts/bootstrap.js",
+    "bootstrap:connections": "node scripts/bootstrap.js --only=connections",
+    "bootstrap:data": "node scripts/bootstrap.js --only=data",
+    "bootstrap:link": "node scripts/bootstrap.js --only=link",
+    "bootstrap:search": "node scripts/bootstrap.js --only=search",
+    "sample-data": "node scripts/sample-data.js --list"
   },
   "dependencies": {
     "govuk-frontend": "^5.7.1"

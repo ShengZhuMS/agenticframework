@@ -14,7 +14,6 @@ param tags object
 param sku string
 param publisherEmail string
 param publisherName string
-param productId string = 'cortex'
 param principalId string
 
 var skuCapacity = sku == 'Developer' ? 1 : 1
@@ -37,7 +36,7 @@ resource apim 'Microsoft.ApiManagement/service@2024-05-01' = {
 // A product to bind published MCP servers to.
 resource product 'Microsoft.ApiManagement/service/products@2024-05-01' = {
   parent: apim
-  name: productId
+  name: 'cortex'
   properties: {
     displayName: 'Cortex'
     description: 'Data products, skills and agents published through Cortex.'

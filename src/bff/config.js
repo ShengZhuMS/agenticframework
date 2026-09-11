@@ -33,8 +33,17 @@ export const config = {
     endpoint: env.PURVIEW_ENDPOINT || 'https://api.purview-service.microsoft.com',
     apiVersion: env.PURVIEW_API_VERSION || '2026-03-20-preview',
     scope: 'https://purview.azure.net/.default',
-    dataMapEndpoint: env.PURVIEW_DATAMAP_ENDPOINT || '',
+    /**
+     * The Purview ACCOUNT, for the Data Map (sources, scans, assets). The
+     * Unified Catalog is tenant-level and needs no account name; the Data Map
+     * still lives at https://<account>.purview.azure.com.
+     */
+    accountName: env.PURVIEW_ACCOUNT_NAME || '',
+    dataMapEndpoint:
+      env.PURVIEW_DATAMAP_ENDPOINT || (env.PURVIEW_ACCOUNT_NAME ? `https://${env.PURVIEW_ACCOUNT_NAME}.purview.azure.com` : ''),
     dataMapApiVersion: env.PURVIEW_DATAMAP_API_VERSION || '2023-09-01',
+    /** Data Map collection the sample sources are registered in. Defaults to the root collection (= account name). */
+    collection: env.PURVIEW_COLLECTION || env.PURVIEW_ACCOUNT_NAME || '',
     /** No outbound call may hang a page or the index refresh. */
     timeoutMs: Number(env.PURVIEW_TIMEOUT_MS || 30_000)
   },
@@ -70,6 +79,19 @@ export const config = {
      * key, so an agent can call an APIM MCP server.
      */
     mcpConnection: env.FOUNDRY_MCP_CONNECTION || '',
+    /**
+     * Where the project lives in ARM, so Cortex can create project
+     * connections itself: one per MCP server (carrying the APIM key) and one
+     * to Azure AI Search. Without these the agent → MCP call has no key and
+     * API Management answers 401.
+     */
+    accountName: env.FOUNDRY_ACCOUNT_NAME || '',
+    projectName: env.FOUNDRY_PROJECT_NAME || '',
+    resourceGroup: env.FOUNDRY_RESOURCE_GROUP || '',
+    /** Name of the project connection to Azure AI Search (authType AAD). */
+    searchConnection: env.FOUNDRY_SEARCH_CONNECTION || 'cortex-search',
+    /** How many MCP approval rounds Cortex will answer on the user's behalf in one turn. */
+    maxApprovalRounds: Number(env.FOUNDRY_MAX_APPROVAL_ROUNDS || 6),
     timeoutMs: Number(env.FOUNDRY_TIMEOUT_MS || 30_000),
     /** A model answer takes longer than a listing. Bounded all the same. */
     responseTimeoutMs: Number(env.FOUNDRY_RESPONSE_TIMEOUT_MS || 90_000)
@@ -86,6 +108,56 @@ export const config = {
      * agent calling the catalogue live.
      */
     usePurviewMcp: bool(env.ASK_USE_PURVIEW_MCP, false)
+  },
+
+  /**
+   * Azure AI Search — one index per data product, built from the files the
+   * Data Map scanned. The Foundry agent reads it through the azure_ai_search
+   * tool, so an answer can cite the underlying rows.
+   */
+  search: {
+    endpoint: env.SEARCH_ENDPOINT || (env.SEARCH_SERVICE_NAME ? `https://${env.SEARCH_SERVICE_NAME}.search.windows.net` : ''),
+    serviceName: env.SEARCH_SERVICE_NAME || '',
+    apiVersion: env.SEARCH_API_VERSION || '2024-07-01',
+    scope: 'https://search.azure.com/.default',
+    /** simple | semantic | vector | vector_simple_hybrid | vector_semantic_hybrid. Keyword by default: no embedding model needed. */
+    queryType: env.SEARCH_QUERY_TYPE || 'simple',
+    topK: Number(env.SEARCH_TOP_K || 5),
+    indexPrefix: env.SEARCH_INDEX_PREFIX || 'cortex-',
+    timeoutMs: Number(env.SEARCH_TIMEOUT_MS || 30_000)
+  },
+
+  /**
+   * The sample-data storage account (ADLS Gen2). Bootstrap writes one folder
+   * per data product here; the Data Map scans it and AI Search indexes it.
+   */
+  data: {
+    storageAccount: env.DATA_STORAGE_ACCOUNT || '',
+    container: env.DATA_CONTAINER || 'products',
+    resourceGroup: env.DATA_RESOURCE_GROUP || env.CORTEX_RESOURCE_GROUP || '',
+    scope: 'https://storage.azure.com/.default'
+  },
+
+  /** Where application state is written. Empty = memory only. */
+  state: {
+    dir: env.CORTEX_STATE_DIR || ''
+  },
+
+  /**
+   * Who may chat with an agent. `all-staff` (the default for this phase) lets
+   * every signed-in person open a chat with every agent. `visibility` applies
+   * the same rules as the Marketplace: only agents you could attach.
+   */
+  chat: {
+    policy: env.CORTEX_CHAT_POLICY || 'all-staff',
+    maxTurns: Number(env.CORTEX_CHAT_MAX_TURNS || 40)
+  },
+
+  /** Automations: propose-only, run by a timer inside the web app. */
+  automations: {
+    enabled: !/^(0|false|no|off)$/i.test(String(env.CORTEX_AUTOMATIONS || 'true')),
+    tickSeconds: Number(env.CORTEX_AUTOMATION_TICK_SECONDS || 60),
+    maxRunsKept: Number(env.CORTEX_AUTOMATION_HISTORY || 30)
   },
 
   /**

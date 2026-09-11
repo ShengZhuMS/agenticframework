@@ -49,7 +49,7 @@ async function page(path, init) {
 }
 
 describe('every demo page renders', () => {
-  for (const path of ['/', '/marketplace', '/marketplace/map', '/build', '/build/new', '/share', '/requests', '/profile', '/help']) {
+  for (const path of ['/', '/marketplace', '/marketplace/map', '/build', '/build/new', '/share', '/requests', '/profile', '/help', '/automate', '/automate/new']) {
     test(`${path} is 200 and not the error page`, async () => {
       const r = await page(path);
       assert.equal(r.status, 200, path);
@@ -64,9 +64,88 @@ describe('every demo page renders', () => {
     assert.match(r.body, /Catalogue status/);
   });
 
+  test('a data product entry shows the data behind it', async () => {
+    const r = await page('/entry/p-water-quality');
+    assert.match(r.body, /The data behind it/);
+    assert.match(r.body, /Build the index now|Rebuild the index/);
+  });
+
+  test('the Automate section is real: the form validates and a set-up automation appears', async () => {
+    const bad = await page('/automate/new', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'name=' });
+    assert.equal(bad.status, 400);
+    assert.match(bad.body, /There is a problem/);
+  });
+
   test('the Marketplace resolves a domain slug in the filter to the same entries as the id', async () => {
     const byId = await page('/marketplace?cluster=d-water');
     assert.match(byId.body, /Water quality archive/);
+  });
+});
+
+describe('agents: page, chat window, marketplace link', () => {
+  before(() => {
+    index.upsert({
+      id: 'smoke-agent',
+      name: 'Smoke agent',
+      cat: 'Agent',
+      cluster: 'd-waste',
+      desc: 'Answers smoke questions.',
+      owner: 'EA Waste Regulation',
+      fresh: 'Live',
+      sens: 'Official',
+      access: 'Open to the team that built it',
+      allowedGroups: ['ea-waste-regulation'],
+      licence: 'Internal only',
+      _source: { system: 'foundry', id: 'smoke-agent' },
+      _endpoints: {},
+      _agent: { definition: { name: 'Smoke agent', instructions: 'Be brief.', builtByTeam: 'EA Waste Regulation', knowledge: ['p-water-quality'], tools: [], actions: ['read'] }, gates: [] }
+    });
+  });
+
+  test('the agent page renders with the chat and rebuild controls', async () => {
+    const r = await page('/agent/smoke-agent');
+    assert.equal(r.status, 200);
+    assert.match(r.body, /Open a chat window/);
+    assert.match(r.body, /Rebuild tools/);
+  });
+
+  test('a chat turn posts, redirects to the thread and shows the answer with its provenance', async () => {
+    const open = await page('/agent/smoke-agent/chat');
+    assert.equal(open.status, 200);
+    assert.match(open.body, /Every member of staff can chat with every agent/);
+    const sent = await page('/agent/smoke-agent/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'q=' + encodeURIComponent('Which registrations lapsed?')
+    });
+    assert.equal(sent.status, 303);
+    assert.match(sent.location, /\/agent\/smoke-agent\/chat\?thread=.*#latest$/);
+    const thread = await page(sent.location.replace('#latest', ''));
+    assert.equal(thread.status, 200);
+    assert.match(thread.body, /Which registrations lapsed\?/);
+    assert.match(thread.body, /A stubbed answer naming its sources/);
+  });
+
+  test('the entry page of an agent offers the chat, whatever its visibility to this person', async () => {
+    const r = await page('/entry/smoke-agent');
+    assert.equal(r.status, 200);
+    assert.match(r.body, /Chat with this agent/);
+  });
+
+  test('an automation can be set up against the agent and run', async () => {
+    const created = await page('/automate/new', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ name: 'Smoke digest', kind: 'agent', agentId: 'smoke-agent', question: 'What lapsed this week?', cadence: 'daily', at: '07:00', purpose: 'Smoke test' }).toString()
+    });
+    assert.equal(created.status, 303);
+    const id = new URL(created.location, base).searchParams.get('created');
+    assert.match(id, /^AUT-\d{4}$/);
+    const ran = await page(`/automate/${id}/run`, { method: 'POST' });
+    assert.equal(ran.status, 303);
+    const detail = await page(`/automate/${id}`);
+    assert.match(detail.body, /A stubbed answer naming its sources/);
+    assert.match(detail.body, /What it writes/);
   });
 });
 
