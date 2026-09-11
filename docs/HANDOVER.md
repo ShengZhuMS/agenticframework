@@ -62,7 +62,11 @@ scripts/
   Start-Local.ps1       Run on your machine against real Azure.
   Test-Cortex.ps1       Health check a deployment, including the MCP server.
   bootstrap.js          Grants the Cortex identity its Purview roles, then writes the Defra
-                        content into real Purview + APIM. Idempotent. --only=roles|purview|apim
+                        content into real Purview + APIM. Idempotent.
+                        --only=roles|purview|apim|connections|data|link|search
+  bootstrap-data.js     The round-4 sections: Foundry connections per MCP server; sample files →
+                        storage → Data Map scan → assets attached to products; AI Search indexes.
+  sample-data.js        Deterministic synthetic CSV + data dictionary per data product. --list, --out.
   purview-access.js     The Unified Catalog Policies API mutation, as pure functions + grants.
 bootstrap/            Domains, data products, skills. INPUT to the script, not runtime data.
 Dockerfile            cortex-web.
@@ -70,16 +74,28 @@ Dockerfile.mcp        cortex-purview-mcp. Same tree, different entry point.
 src/bff/
   server.js           Zero-dependency HTTP server. All routing.
   config.js           Shape + defaults. hydrateConfig() overlays Key Vault at startup.
-  adapters/           purview, apim, foundry, keyvault, token. One implementation each: live.
+  adapters/           purview, apim, foundry, keyvault, token — plus, round 4:
+    foundry-connections.js  Project connections (ARM): one per MCP server carrying the APIM key;
+                            one keyless connection to AI Search. The 401 fix.
+    search.js               Azure AI Search: index/data source/indexer per product, CSV parsing.
+    datamap.js              Purview Data Map: collection roles, sources, scans, asset lookup.
+    storage.js              Blob REST with an Entra token. Uploads and header reads.
   services/
     visibility.js     THE governance engine. Read this before touching anything.
     identity.js       Entra claims → user. Groups are everything.
     assurance.js      Seven gates, computed from the agent definition.
-    agents.js         Build + validate. Server-side refusal lives here.
-    publish.js        Glue 2.
+    agents.js         Build + validate + rebuild. Server-side refusal lives here. Attaches
+                      per-tool connections and azure_ai_search tools.
+    grounding.js      Data product → Data Map assets → AI Search index. buildIndex().
+    chat.js           Multi-turn chat with an agent; policy check on every turn.
+    automations.js    Propose-only recurring runs; the scheduler.
+    explain.js        Raw back-end failures → plain-language heading, message, fix.
+    publish.js        Glue 2, now also creating the MCP server's Foundry connection.
     ask.js            Question answering + provenance.
     requests.js       Request lifecycle.
-  index/store.js      The Cortex Index — merged register over all three back ends.
+  state/store.js      JSON collections on the mounted share (or memory). All persistence.
+  index/store.js      The Cortex Index — merged register over all three back ends; persisted
+                      agent records are merged back on refresh.
 src/web/              Server-rendered GOV.UK pages. No client JS at all.
 src/purview-mcp/      Glue 1.
 test/
@@ -161,6 +177,8 @@ These cost real time to establish. They were correct in August 2026 and several 
 | **A model in the catalogue that is not deployed** | Passes validation, fails at agent creation | `listModels()` offers only `FOUNDRY_MODEL` and `FOUNDRY_MODELS` |
 | **MCP server PUT without `mcpTools`** | Type silently dropped; every later call about it answers 500 | One PUT with type AND tools inline, then verify the GET shows `type: mcp`. Never `/tools/{id}` |
 | **`Number(headers.get('retry-after'))`** | `Number(null)` is 0, so an absent header meant a zero-second wait — three "retries" in one second | `retryDelayMs()` honours only a present numeric header, else backs off with a floor |
+| **A query string in a URL passed to `az rest` on Windows** | `'$select' is not recognized as an internal or external command` — `az` is a .cmd, its arguments pass through cmd.exe, an unquoted `&` splits the command and an unquoted `)` ends az.cmd's own IF block | Never put `?a=b&c=d` in `--url`. Pass each parameter with `--uri-parameters 'a=b' 'c=d'` and let the CLI encode. Do **not** encode `&` as `%26` — that is data, not a separator, and Graph reads it as part of the previous value. Avoid `startswith(...)`; filter on an exact value instead |
+| **Guest stopped by MFA with no set-up offered** | The tenant's baseline Conditional Access requires MFA of "Microsoft partners and vendors" (external users) AND blocks their security-info registration. Deadlock by design: guests bring MFA from home | Inbound cross-tenant access trust: `isMfaAccepted = true` (`Add-CortexUser.ps1 -TrustHomeMfa`). Never weaken the two policies — MCAP automation may re-apply them anyway. Testers whose home tenant does no MFA get member accounts |
 | **Stale CLI token after a directory role change** | `TokenCreatedWithOutdatedPolicies … InteractionRequired`, reads like a missing permission; on Windows a plain `az login` hands back the same token via the broker | `az account clear` → `az login --use-device-code`. Both scripts do this automatically |
 | **Key Vault on access policies** | RBAC assignment silently ignored | `--enable-rbac-authorization true`. Deploy script warns |
 | **Two azd environments, one Key Vault** | The last one provisioned owns every endpoint in the vault; the other app talks to the wrong container | `cortex-environment-name` records the owner and the deploy script warns. Give the second environment its own vault |
@@ -197,15 +215,28 @@ These cost real time to establish. They were correct in August 2026 and several 
 
 ---
 
+## 8b. Round 4 (11 Sep) — what changed and what to verify first
+
+Delivered: per-tool Foundry project connections (the agent → APIM `401` fix) with server-side approval of MCP calls; a chat window per agent (`/agent/:id/chat`, all staff this phase); the data behind every data product — synthetic files, Data Map scan, assets attached, one AI Search index per product, `azure_ai_search` on agents built on them; Automate a task (propose-only); light persistence on an Azure Files share. 289 tests. Nothing in it has run against the tenant yet; in order of "most likely to need a nudge":
+
+1. **`PUT …/projects/…/connections/{name}` (api-version 2025-06-01)** with `category: RemoteTool, authType: CustomKeys` — if ARM rejects a property name, the error is printed by `--only=connections` and the fix is in `adapters/foundry-connections.js`. Then test an agent: the panel should show *Tools this answer used* instead of the 401.
+2. **The approval loop.** `mcp_approval_request` → `mcp_approval_response` with `previous_response_id`. If Foundry's item names differ, `adapters/foundry.js` `respond()` and `collectToolCalls()` are the two places.
+3. **Data Map registration as `AdlsGen2` / scan kind `AdlsGen2Msi`** and the collection metadata policy PUT. A `403` here means the role grant did not take — grant yourself by hand (DEPLOY §6) and re-run `--only=data`.
+4. **Asset lookup after the scan** by qualified name `https://<acct>.dfs.core.windows.net/products/<id>/<id>.csv`. If the Data Map named the file differently, `bootstrap-data.js linkAssets()` falls back to a keyword search under the folder; the warning names the file it looked for.
+5. **`azure_ai_search` on a prompt agent** — the tool shape is the documented one; if agent creation is refused, the message is on the Build page. The keyless connection needs the Foundry **account** identity to hold the two search roles (Bicep) and the account to *have* an identity (deploy script warns).
+6. **The Azure Files mount.** If `/api/health/state` says `memory` on the deployed app, check the `cortex-state` storage on the Container Apps environment and the volume on `cortex-web`.
+
 ## 9. Next work, in priority order
 
-1. **Persistence.** Requests, methods, threads and access requests are all in memory and die on restart, and `cortex-web` is pinned to one replica because of it. Cosmos was removed from the Bicep because nothing used it — add it back (or a small JSON store on a mounted share) and implement a store when you do this. This is the biggest real gap.
+1. **A real store.** Persistence is a JSON file per collection on one share, written by one replica — right for hundreds of records and a demo, wrong for scale-out. Cosmos DB (or Table storage) behind `state/store.js`'s `collection()` interface is a contained change; nothing above it knows about files.
 2. **Purview access policies.** Cortex owns the request workflow; it does not yet call anything to actually *grant* access. Approval currently updates the register only.
-3. **Streaming for Ask.** `LiveFoundry.stream()` exists and is unused; the UI posts and re-renders.
-4. **Recurring requests.** Cadence is captured and approved methods are stored, but nothing issues them on a schedule.
+3. **Streaming for Ask and chat.** `LiveFoundry.stream()` exists and is unused; both UIs post and re-render (deliberately, to stay JavaScript-free).
+4. **Automations that deliver.** Runs are drafts in a history. Emailing the owner (Graph `Mail.Send` on the Cortex identity) and the write-enabled phase both need their own approval design.
+4b. **Chat policy.** `all-staff` is the phase rule; switch `CORTEX_CHAT_POLICY` to `visibility` when the Marketplace rules should govern chat too.
+4c. **Vector search.** The indexes are keyword-only (`simple`), so no embedding model is needed. Deploy `text-embedding-3-small`, add a vector field and integrated vectorisation to `search.js`, and set `SEARCH_QUERY_TYPE=vector_semantic_hybrid`.
 5. **Skill invocation shim.** `bootstrap.js` publishes skills pointing at `/shim/skills/:id`, which is not implemented. Either implement it or stop publishing those APIs.
 5b. **The shim trusts the gateway.** `/shim/*` and `/api/health*` are excluded from Easy Auth so API Management and the scripts can reach them; the shim does not verify that a call came through API Management. Add a shared header check (APIM policy sets it, the shim requires it) before this leaves the sandbox.
-6. **Data Map lineage.** `getAssets()` exists; lineage on the entry page comes from managed attributes, not real lineage.
+6. **Data Map lineage.** Assets and their schema now come from the Data Map through `getAssets()`; lineage on the entry page still comes from managed attributes.
 7. **Get Key Vault back in the runtime path.** The sandbox vault has public network access disabled, so the apps run on direct configuration with three Container Apps secrets. That is weaker than a vault — the secrets are readable by anyone with Contributor on the app. Fixing it means a VNet-integrated Container Apps environment and a private endpoint, and the environment cannot be VNet-joined after creation, so it has to be rebuilt. `docs/DEPLOY.md` §5c has the order.
 
 ---
@@ -220,6 +251,8 @@ These cost real time to establish. They were correct in August 2026 and several 
 - **Business language in the UI.** No jargon, no product names in user-facing copy where a plain word will do.
 - **Infrastructure must survive a re-run.** Assume every template is applied many times. Anything that only works the first time is a bug, not a limitation.
 - **Users from other tenants are guests, never a second identity provider.** The app registration stays single-tenant; `Add-CortexUser.ps1` invites them in, and `identity.js` shows a guest by the address in their `preferred_username`/`email` claim rather than the synthetic `#EXT#` UPN. Making the app multi-tenant would put foreign group ids in the token, which nothing maps.
+- **State goes through `state/store.js`.** `collection(name, emptyShape)` and `save()`; nothing else touches the file system. Access collections lazily (a function call each time) so `configureState()` at startup can point them at the share.
+- **Propose-only is structural.** An automation has no field that could enable writing. If a later phase adds one, it belongs behind its own approval design, not a boolean.
 - **Configuration has two supported sources, and the app must not care which.** Key Vault when it is reachable, the environment otherwise. `SECRET_CATALOGUE` in `adapters/keyvault.js` is the contract between them: add a value there and to `containerapps.bicep`, or it will work in one mode and not the other.
 - **Never write a bearer header as one literal.** Use the `bearer(token)` helper each adapter defines. Source that travels through a chat or transfer tool comes back with credential-shaped text masked — including template literals — and the result parses and then fails every call. Deploy-Cortex.ps1 step 1 checks for it.
 - **Bound every outbound call.** `AbortSignal.timeout` on every `fetch`; the adapters have per-call and per-answer budgets in config. A hanging back end must degrade a page, not hang it.

@@ -1,5 +1,193 @@
 # What changed — 3 September 2026
 
+## Addendum 7 (11 Sep): round 4 — agents that can reach their tools and their data
+
+Six requests, all delivered, all re-deployable on their own. Nothing here has run
+against the tenant yet; `docs/HANDOVER.md` §8b lists what to verify first.
+
+### 1. The agent → tool 401, fixed
+
+**Symptom.** Testing `data-mapper`: *Foundry POST /openai/v1/responses failed 400:
+Authentication failed when connecting to the MCP server
+https://prdcoreapimneu001.azure-api.net:443/magic-map-mcp/mcp: 401 Access denied
+due to missing subscription key.*
+
+**Cause.** Every Cortex-published MCP server sits behind API Management, which
+requires `Ocp-Apim-Subscription-Key`. Foundry refuses a raw header on an MCP
+tool; the documented route is a **project connection** (category `RemoteTool`,
+`CustomKeys`) that the tool names through `project_connection_id`. The code had
+the field but nothing ever created a connection (`FOUNDRY_MCP_CONNECTION` was
+never set). One connection per server, because Foundry uses the *connection's*
+target when it differs from the tool's URL.
+
+**Fix.**
+- `src/bff/adapters/foundry-connections.js` — ARM PUT of the connection,
+  idempotent; names from the APIM id (`cx-mcp-<id>-<hash>`, ≤ 33 chars); a
+  keyless `CognitiveSearch` connection for AI Search.
+- `services/agents.js` creates the connection for every APIM tool when an agent
+  is built or **rebuilt** (new: `rebuildAgent`, "Rebuild tools" on the agent
+  page); `services/publish.js` creates one for each newly published agent;
+  `bootstrap.js --only=connections` creates them for every MCP server in APIM.
+- `infra/modules/foundry-existing.bicep` grants `id-cortex` **Foundry Project
+  Manager** (`Microsoft.CognitiveServices/accounts/projects/*`) — the smallest
+  role that can write a connection.
+- **The approval loop.** Tools are registered `require_approval: 'always'`, so
+  a call came back as `mcp_approval_request` and the old code showed an empty
+  answer. `adapters/foundry.js respond()` now approves server-side, continues
+  from `previous_response_id`, records every `mcp_call`, and returns
+  `toolCalls` — shown as *Tools this answer used*.
+- **The error page.** `services/explain.js` turns raw failures into a heading,
+  a sentence and a fix; the raw text is behind a *Technical detail* fold. Used
+  on the agent test page, in chat, and in automation runs.
+
+### 2. Chat with an agent
+
+`/agent/:id/chat` — a server-rendered, JavaScript-free conversation in its own
+window (`Open a chat window` on the agent page, `Chat with this agent` on its
+entry, `Chat` on Marketplace cards). Foundry keeps the thread via
+`previous_response_id`; Cortex keeps the transcript and provenance for the
+person who had it. `CORTEX_CHAT_POLICY=all-staff` (this phase) lets every
+signed-in person chat with every agent; `visibility` applies the Marketplace
+rules. Checked on every turn. `services/chat.js`, `views/chat.js`.
+
+### 3. The data behind a data product
+
+- `adapters/purview.js`: register a Data Map asset in the catalogue
+  (`POST /dataAssets`, `source.assetId`), attach it to a product
+  (`POST /dataProducts/{id}/relationships?entityType=DATAASSET`), read assets
+  with schema and classifications.
+- `adapters/datamap.js`: collection roles (metadata policy RMW), ADLS Gen2
+  source, `AdlsGen2Msi` scan, run and wait, asset lookup by qualified name.
+- `adapters/search.js`: index / data source (`adlsgen2`, managed identity) /
+  indexer (`delimitedText`, header row) per product; stats, status, run.
+- `services/grounding.js`: assets → columns → `buildIndex()`; `azure_ai_search`
+  tools for agents built on indexed products; grounding notes in instructions.
+- Entry pages: **The data behind it** — assets, columns, classifications,
+  index state, indexer status, **Build the index now**.
+- Bootstrap writes `cortexDataFolder` and `cortexSearchIndex` managed
+  attributes on each product so the app finds its folder and index directly.
+
+### 4. Sample data for all fourteen products
+
+`scripts/sample-data.js` — deterministic (seeded) synthetic CSVs of 700–1,800
+rows with snake_case headers that pass the Data Map's schema rules, and a
+`README.md` data dictionary per product. `bootstrap.js --only=data` uploads
+them, grants Data Map collection roles to you and the Cortex identity,
+registers `cortex-sample-data`, runs `cortex-sample-scan`, waits (3–10 min;
+`--no-wait` to skip), then attaches each scanned file to its product.
+`--only=link` does the attachment on its own. `--only=search` builds the
+indexes and the Foundry search connection.
+
+### 5. Automate a task
+
+`services/automations.js`, `views/automate.js`. Two kinds: ask a named agent a
+fixed question, or re-run an approved request method through Ask inside the
+owner's captured permissions. Cadences: every 15 minutes (demo), hourly,
+daily, weekdays, weekly (UTC). A timer in the web app runs what is due; **Run
+it now**, pause, resume, delete, delete a draft. Every automation states what
+it does, who is accountable, what it writes (nothing), what stops it and how
+it is undone. Propose-only is structural — there is no field to turn writing on.
+
+### 6. Light persistence
+
+`src/bff/state/store.js` — one JSON file per collection on an Azure Files share
+mounted at `/data` (`infra/modules/data.bicep`, `containerapps.bicep`), memory
+when unmounted. Requests, approved methods, Ask threads, chats, automations,
+access and gateway requests, and the Cortex record of every agent (definition,
+gates, published state) now survive restarts and redeploys. `cortex-web` stays
+at one replica: one writer.
+
+### Infrastructure
+
+New in `PRDCORECORTEX001`: `srch-cortex-<id>` (AI Search, Basic — 15 indexes;
+`SEARCH_SKU=standard` for more), `stcortexdata<id>` (ADLS Gen2, sample data,
+keyless), `stcortexstate<id>` (Azure Files share). Role grants: Purview account
+identity and search identity read the data account; Cortex identity writes it
+and administers search; Foundry account identity holds the search roles the
+`azure_ai_search` tool needs; the deployer gets Storage Blob Data Contributor
+(`DEPLOYER_PRINCIPAL_ID`, set by the deploy script). `-NoData`, `-NoSearch`,
+`-SearchSku`, `-ChatPolicy`, `-NoScanWait` on `Deploy-Cortex.ps1`.
+`Set-CortexEnv.ps1` and `Test-Cortex.ps1` know the new values and checks.
+
+### Numbers
+
+Tests 226 → **289**. New: `state`, `foundry-connections`, `foundry-approval`,
+`search`, `datamap`, `grounding`, `chat`, `automations`, `sample-data`,
+`explain`; smoke covers `/automate`, the entry page's data panel and the form
+validation.
+
+### Things to know
+
+- The Foundry **account** needs a system-assigned identity for keyless search;
+  the deploy script warns if it has none.
+- Indexes are keyword (`simple`) — no embedding model. `SEARCH_QUERY_TYPE` and
+  `SEARCH_SEMANTIC` are the upgrade path.
+- Agents built before this round have no tool connections: **Rebuild tools**.
+- Bicep in this round could not be compiled here; `azd up` validates it. If it
+  reports a property name, the three new modules are small.
+
+
+## Addendum 6 (8 Sep): guests stopped by MFA with no way to set it up
+
+The first invited tester was stopped at sign-in by *Require multifactor
+authentication* and never offered the set-up screen. The sign-in log shows why:
+two baseline Conditional Access policies for "Microsoft partners and vendors" —
+the tenant's term for external users — one requiring MFA, the other **blocking
+security-info registration**. A guest must do MFA and may not register a method
+here to do it with. That is deliberate: guests are meant to bring MFA from their
+home tenant, and this tenant simply was not yet configured to accept it.
+
+Fix: inbound trust in cross-tenant access settings (`isMfaAccepted`), so the
+MFA a Microsoft or Defra account already performed at home satisfies the
+requirement here. `Add-CortexUser.ps1` now reads that setting on every run,
+warns while it is off, and turns it on with `-TrustHomeMfa` (Graph
+`PATCH /policies/crossTenantAccessPolicy/default`), printing the portal path
+if it lacks the right. The two policies are not touched. For a tester whose
+home tenant performs no MFA, the answer is a member account in this tenant.
+`docs/DEPLOY.md` §3d and §6, `HANDOVER.md` §7.
+
+## Addendum 5 (4 Sep, later): `'$select' is not recognized…`
+
+`Add-CortexUser.ps1` found the account and then fell over on its own URL. On
+Windows `az` is a `.cmd`, its arguments pass through cmd.exe, and the unquoted
+`&` in `users?$filter=…&$select=…` split the command in two — the JSON on
+screen was the first half succeeding, and `'$select' is not recognized` was
+cmd.exe trying to run the second half. Same trap as `token.js` (§7 of the
+handover), one layer up.
+
+The fix is structural: **no query string is ever written into `--url`.** Each
+parameter goes through `az rest --uri-parameters`, one argument each, and the
+CLI URL-encodes them. The guest fallback no longer uses `startswith(...)` — an
+unquoted `)` ends az.cmd's own IF block — but builds the exact
+`name_home.com#EXT#@<initial domain>` UPN from the tenant's verified domains.
+`Set-CortexAuth.ps1 -MapMyGroups` had the same `&` and is fixed the same way.
+A copy published for a few minutes earlier this afternoon encoded `&` as `%26`
+instead; that was wrong (an encoded ampersand is data, not a separator — Graph
+would have read it as part of the filter) and is superseded. If you took that
+copy, replace it.
+
+What the failed lookup had already answered: `shengzhu@microsoft.com` is
+**already a guest** in the tenant. Nothing to invite — open Cortex in a private
+window and pick that account. The script now says exactly that when it finds an
+accepted guest.
+
+## Addendum 4 (4 Sep): inviting people from other tenants
+
+`scripts/Add-CortexUser.ps1` — give somebody access: a colleague, or your own
+account from another tenant. Cortex's app registration is single-tenant, so an
+outside account comes in as an **Entra B2B guest**: the script finds them in the
+directory or POSTs a Graph invitation with Cortex's URL as the landing page,
+optionally adds them to Entra groups (`-Groups`), and says what they will see.
+`-NoEmail` prints the redemption link, `-Resend` re-invites. Idempotent, with
+the same stale-token handling as `Set-CortexAuth.ps1`.
+
+`identity.js` now shows a guest by the address in their `preferred_username` or
+`email` claim rather than the synthetic `name_home.com#EXT#@tenant` UPN, and
+exposes `isGuest`. Groups work for guests exactly as for members — they are
+this tenant's groups — so `all-staff` and any `-Groups` apply from the first
+sign-in. `docs/DEPLOY.md` §3d covers it; two troubleshooting rows cover a home
+tenant that refuses and a browser already signed in as someone else.
+
 ## Addendum 3, same day: the API Management 500 was the request shape, not a race
 
 `node scripts/bootstrap.js --only=apim` failed the same five skills again with

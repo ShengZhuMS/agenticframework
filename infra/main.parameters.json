@@ -53,6 +53,13 @@
     "webImageName":           { "value": "${SERVICE_WEB_IMAGE_NAME=}" },
     "mcpImageName":           { "value": "${SERVICE_PURVIEW_MCP_IMAGE_NAME=}" },
     "mcpMinReplicas":         { "value": "${MCP_MIN_REPLICAS=1}" },
-    "webMaxReplicas":         { "value": "${WEB_MAX_REPLICAS=1}" }
+    "webMaxReplicas":         { "value": "${WEB_MAX_REPLICAS=1}" },
+
+    "createData":             { "value": "${CREATE_DATA=true}" },
+    "createSearch":           { "value": "${CREATE_SEARCH=true}" },
+    "searchSku":              { "value": "${SEARCH_SKU=basic}" },
+    "searchSemantic":         { "value": "${SEARCH_SEMANTIC=disabled}" },
+    "deployerPrincipalId":    { "value": "${DEPLOYER_PRINCIPAL_ID=}" },
+    "chatPolicy":             { "value": "${CORTEX_CHAT_POLICY=all-staff}" }
   }
 }

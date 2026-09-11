@@ -21,8 +21,7 @@ import { decorate, visibilityFor, VIS, VIS_ORDER } from './services/visibility.j
 
 import { marketplacePage } from '../web/views/marketplace.js';
 import { entryPage, entryNotFoundPage } from '../web/views/entry.js';
-import { startPage, placeholderPage, helpPage, errorPage, profilePage } from '../web/views/pages.js';
-import { aboutPage } from '../web/views/about.js';
+import { startPage, helpPage, errorPage, profilePage } from '../web/views/pages.js';
 import {
   buildLandingPage,
   buildFormPage,
@@ -36,12 +35,20 @@ import { requestsPage, requestDetailPage } from '../web/views/requests.js';
 import { ask, threadsFor, getThread } from './services/ask.js';
 import { userFromRequest, authConfigured } from './services/identity.js';
 import * as reqs from './services/requests.js';
+import * as chatSvc from './services/chat.js';
+import * as auto from './services/automations.js';
+import { chatPage, chatRefusedPage } from '../web/views/chat.js';
+import { automationsPage, automationFormPage, automationPage } from '../web/views/automate.js';
+import { explainError } from './services/explain.js';
+import { groundingStatus, buildIndex, forgetAssets } from './services/grounding.js';
+import { configureState, stateHealth } from './state/store.js';
 import {
   knowledgeOptions,
   toolOptions,
   modelCatalogue,
   validateBuild,
   createAgent,
+  rebuildAgent,
   resolveDefinition,
   gatesForDefinition,
   composeInstructions
@@ -64,9 +71,6 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8'
 };
@@ -219,6 +223,18 @@ async function handle(req, res) {
   }
   if (pathname === '/api/health/foundry') {
     return json(res, 200, await index.foundry.health().catch((e) => ({ ok: false, error: e.message })));
+  }
+  if (pathname === '/api/health/search') {
+    return json(res, 200, await index.search.health().catch((e) => ({ ok: false, error: e.message })));
+  }
+  if (pathname === '/api/health/datamap') {
+    return json(res, 200, await index.datamap.health().catch((e) => ({ ok: false, error: e.message })));
+  }
+  if (pathname === '/api/health/storage') {
+    return json(res, 200, await index.storage.health().catch((e) => ({ ok: false, error: e.message })));
+  }
+  if (pathname === '/api/health/state') {
+    return json(res, 200, stateHealth());
   }
 
   /**
@@ -415,7 +431,8 @@ async function handle(req, res) {
         tools,
         answer: sessionAnswers.get(entry.id) || null,
         question: sessionAnswers.get(entry.id)?.question || '',
-        published: url.searchParams.get('published')
+        published: url.searchParams.get('published'),
+        rebuilt: url.searchParams.get('rebuilt')
       })
     );
   }
@@ -433,14 +450,54 @@ async function handle(req, res) {
       sessionAnswers.set(entry.id, { ...answer, question: form.question });
       index.upsert({ ...entry, calls: (entry.calls || 0) + 1 });
     } catch (err) {
+      console.error('[agent test]', entry.id, err.message);
       sessionAnswers.set(entry.id, {
-        text: 'The agent could not be reached just now.',
+        text: '',
         sources: [],
-        couldNotReach: [err.message],
+        couldNotReach: [],
+        error: explainError(err),
         question: form.question
       });
     }
     return redirect(res, `/agent/${entry.id}`);
+  }
+
+  /* ---- rebuild: a new Foundry version with fresh tool connections and indexes ---- */
+  const rebuildMatch = pathname.match(/^\/agent\/([^/]+)\/rebuild$/);
+  if (rebuildMatch && req.method === 'POST') {
+    const entry = index.get(rebuildMatch[1]);
+    if (!entry || entry.cat !== 'Agent') return send(res, 404, entryNotFoundPage(ctx, { id: rebuildMatch[1] }));
+    try {
+      await rebuildAgent(entry, ctx.user);
+      sessionAnswers.delete(entry.id);
+      return redirect(res, `/agent/${entry.id}?rebuilt=1`);
+    } catch (err) {
+      console.error('[agent rebuild]', entry.id, err.message);
+      const e = explainError(err);
+      return send(res, 502, errorPage(ctx, { code: 502, heading: e.heading, message: `${e.message} (${e.detail.slice(0, 200)})` }));
+    }
+  }
+
+  /* ---- chat: a conversation with an agent, in its own window ---- */
+  const chatMatch = pathname.match(/^\/agent\/([^/]+)\/chat$/);
+  if (chatMatch) {
+    const entry = index.get(chatMatch[1]);
+    if (!entry || entry.cat !== 'Agent') return send(res, 404, entryNotFoundPage(ctx, { id: chatMatch[1] }));
+    const permission = chatSvc.canChat(entry, ctx.user);
+    if (!permission.allowed) return send(res, 403, chatRefusedPage(ctx, { entry, reason: permission.reason }));
+
+    if (req.method === 'POST') {
+      const form = parseForm(await readBody(req));
+      try {
+        const { thread } = await chatSvc.chat(entry, form.q, ctx.user, { threadId: form.thread });
+        return redirect(res, `/agent/${entry.id}/chat?thread=${encodeURIComponent(thread.id)}#latest`);
+      } catch (err) {
+        return send(res, err.code || 500, errorPage(ctx, { code: err.code || 500, heading: 'That message could not be sent', message: err.message }));
+      }
+    }
+    const tid = url.searchParams.get('thread');
+    const thread = tid ? chatSvc.getThread(tid, ctx.user) : null;
+    return send(res, 200, chatPage(ctx, { entry, thread, history: chatSvc.threadsFor(entry.id, ctx.user), permission }));
   }
 
   const publishMatch = pathname.match(/^\/agent\/([^/]+)\/publish$/);
@@ -548,19 +605,40 @@ async function handle(req, res) {
     );
   }
 
+  /* ---- build (or rebuild) the AI Search index behind a data product ---- */
+  const groundMatch = pathname.match(/^\/entry\/([^/]+)\/ground$/);
+  if (groundMatch && req.method === 'POST') {
+    const raw = index.get(groundMatch[1]);
+    if (!raw) return send(res, 404, entryNotFoundPage(ctx, { id: groundMatch[1] }));
+    try {
+      forgetAssets(raw.id);
+      const r = await buildIndex(raw);
+      const note = `Index ${r.index} over ${r.columns.length} columns; indexer ${r.run.started ? 'started' : r.run.reason || 'queued'}.`;
+      return redirect(res, `/entry/${raw.id}?built=${encodeURIComponent(note)}#data`);
+    } catch (err) {
+      console.error('[ground]', raw.id, err.message);
+      return send(res, 502, errorPage(ctx, { code: 502, heading: 'The index could not be built', message: err.message }));
+    }
+  }
+
   const entryMatch = pathname.match(/^\/entry\/([^/]+)$/);
   if (entryMatch) {
     const raw = index.get(entryMatch[1]);
     // CAP-049 — be told when an entry does not exist, and what to do next
     if (!raw) return send(res, 404, entryNotFoundPage(ctx, { id: entryMatch[1] }));
     const [entry] = decorate([raw], ctx.user);
+    const grounding = entry.cat === 'Data' ? await groundingStatus(raw) : null;
+    const chat = entry.cat === 'Agent' ? chatSvc.canChat(raw, ctx.user) : null;
     return send(
       res,
       200,
       entryPage(ctx, {
         entry,
         cluster: index.clusterById(entry.cluster),
-        requested: url.searchParams.get('requested')
+        requested: url.searchParams.get('requested'),
+        grounding,
+        built: url.searchParams.get('built'),
+        chat
       })
     );
   }
@@ -740,6 +818,7 @@ async function handle(req, res) {
           });
         }
       }
+      index.saveRequests();
     }
     return redirect(res, `/share`);
   }
@@ -838,34 +917,74 @@ async function handle(req, res) {
     return redirect(res, `/requests/${ref}`);
   }
 
+  /* ============================================ Automate — propose-only ==== */
+
   if (pathname === '/automate') {
-    return send(
-      res,
-      200,
-      placeholderPage(ctx, {
-        heading: 'Automate a task',
-        section: 'automate',
-        wp: 'Phase 3',
-        lede: 'Automations that draft, with a person at the checkpoint.',
-        bullets: [
-          'Every automation states what it writes in one sentence, who is accountable, what stops it and how it is undone.',
-          'Everything starts in propose-only. Nothing writes until the accountable owner turns writing on.'
-        ]
-      })
-    );
+    return send(res, 200, automationsPage(ctx, { mine: auto.mine(ctx.user), all: auto.list(), created: url.searchParams.get('created') }));
   }
 
-  // The story for leadership and new users. The only figures on it are read
-  // live from the register, so it can never contradict the Marketplace.
-  if (pathname === '/about') {
-    return send(res, 200, aboutPage(ctx, { stats: index.stats(), coverage: index.coverage() }));
+  const automationAgents = () =>
+    index
+      .all()
+      .filter((e) => e.cat === 'Agent')
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+  if (pathname === '/automate/new' && req.method === 'GET') {
+    const pre = {};
+    if (url.searchParams.get('agent')) pre.agentId = url.searchParams.get('agent');
+    return send(res, 200, automationFormPage(ctx, { agents: automationAgents(), methods: reqs.approvedMethods(), form: pre }));
+  }
+
+  if (pathname === '/automate/new' && req.method === 'POST') {
+    const form = parseForm(await readBody(req));
+    const result = auto.validate(form, ctx.user);
+    if (!result.ok) {
+      return send(res, 400, automationFormPage(ctx, { agents: automationAgents(), methods: reqs.approvedMethods(), form, errors: result.errors }));
+    }
+    const a = auto.create(result.definition);
+    return redirect(res, `/automate?created=${a.id}`);
+  }
+
+  const autoAction = pathname.match(/^\/automate\/(AUT-\d+)\/(run|pause|resume|delete|runs\/delete)$/);
+  if (autoAction && req.method === 'POST') {
+    const [, id, action] = autoAction;
+    const a = auto.get(id);
+    if (!a) return send(res, 404, errorPage(ctx, notFound()));
+    if (action === 'run') {
+      await auto.runNow(id);
+      return redirect(res, `/automate/${id}?ran=1`);
+    }
+    if (action === 'pause') auto.setStatus(id, 'paused');
+    if (action === 'resume') auto.setStatus(id, 'active');
+    if (action === 'delete') {
+      auto.remove(id);
+      return redirect(res, '/automate');
+    }
+    if (action === 'runs/delete') {
+      const form = parseForm(await readBody(req));
+      auto.deleteRun(id, form.at);
+    }
+    return redirect(res, `/automate/${id}`);
+  }
+
+  const autoDetail = pathname.match(/^\/automate\/(AUT-\d+)$/);
+  if (autoDetail) {
+    const a = auto.get(autoDetail[1]);
+    if (!a) return send(res, 404, errorPage(ctx, notFound()));
+    const isOwner = a.owner?.email === ctx.user.email || a.owner?.id === ctx.user.id;
+    return send(res, 200, automationPage(ctx, { automation: a, ran: url.searchParams.get('ran'), isOwner }));
   }
 
   if (pathname === '/help' || pathname.startsWith('/help/')) {
+    const probe = (fn) => fn().catch((e) => ({ ok: false, error: e.message }));
     const health = {
-      Purview: await index.purview.health().catch((e) => ({ ok: false, error: e.message })),
-      'API Management': await index.apim.health().catch((e) => ({ ok: false, error: e.message })),
-      Foundry: await index.foundry.health().catch((e) => ({ ok: false, error: e.message }))
+      Purview: await probe(() => index.purview.health()),
+      'Purview Data Map': await probe(() => index.datamap.health()),
+      'API Management': await probe(() => index.apim.health()),
+      Foundry: await probe(() => index.foundry.health()),
+      'Azure AI Search': await probe(() => index.search.health()),
+      'Sample data storage': await probe(() => index.storage.health()),
+      'Application state': stateHealth()
     };
     return send(res, 200, helpPage(ctx, { stats: index.stats(), health }));
   }
@@ -941,7 +1060,10 @@ export async function start() {
   // Key Vault first: every adapter is constructed from configuration, so the
   // vault must be read before anything reads config.
   await hydrateConfig();
+  // State on the mounted share (or memory locally) — before anything reads a collection.
+  configureState(config.state.dir);
   await index.init();
+  auto.startScheduler();
 
   const server = http.createServer((req, res) => {
     const started = Date.now();
@@ -985,6 +1107,9 @@ export async function start() {
       console.warn('  local identity. This must never be set in a deployed environment.');
     }
     console.log(`  register: ${s.entries} entries across ${s.clusters} clusters`);
+    const st = stateHealth();
+    console.log(`  state: ${st.mode}${st.directory ? ` (${st.directory})` : ''} — ${st.collections.map((c) => `${c.name}:${c.records}`).join(', ') || 'nothing yet'}`);
+    console.log(`  chat policy: ${config.chat.policy}; automations: ${config.automations.enabled ? `every ${config.automations.tickSeconds}s` : 'off'}`);
     reportConfigSource();
     await prewarm();
   });

@@ -64,7 +64,71 @@ function row(field, value, source, by) {
   </div>`;
 }
 
-export function entryPage(ctx, { entry: e, cluster, requested }) {
+/**
+ * The data behind a data product: assets from the Data Map, the AI Search
+ * index built from them, and the button that builds it.
+ */
+function groundingPanel(e, g, built) {
+  if (!g) return '';
+  const idx = g.exists
+    ? `<strong class="govuk-tag govuk-tag--green">Index ready</strong> <span class="cortex-src">${esc(g.index)} · ${esc(num(g.documents))} rows</span>`
+    : g.configured
+      ? `<strong class="govuk-tag govuk-tag--grey">No index yet</strong> <span class="cortex-src">${esc(g.index)}</span>`
+      : '<strong class="govuk-tag govuk-tag--grey">Search not configured</strong>';
+  const indexer = g.indexer?.lastRun
+    ? `<p class="govuk-body-s govuk-!-margin-bottom-1">Last index run: ${esc(g.indexer.lastRun.status)}, ${esc(num(g.indexer.lastRun.processed))} rows processed${g.indexer.lastRun.failed ? `, ${esc(num(g.indexer.lastRun.failed))} failed` : ''}${g.indexer.status && g.indexer.status !== 'running' ? '' : ' <span class="cortex-src">(running)</span>'}.</p>
+       ${g.indexer.lastRun.errors?.length ? `<p class="govuk-body-s" style="color:#d4351c">${g.indexer.lastRun.errors.map(esc).join('<br>')}</p>` : ''}`
+    : '';
+  const assets = g.assets?.length
+    ? `<table class="govuk-table cortex-assets">
+        <thead class="govuk-table__head"><tr class="govuk-table__row"><th class="govuk-table__header">Asset</th><th class="govuk-table__header">Type</th><th class="govuk-table__header">Columns</th></tr></thead>
+        <tbody class="govuk-table__body">
+        ${g.assets
+          .map(
+            (a) => `<tr class="govuk-table__row">
+              <td class="govuk-table__cell">${a.openInUrl ? `<a class="govuk-link" href="${attr(a.openInUrl)}" target="_blank" rel="noopener">${esc(a.name)}</a>` : esc(a.name)}
+                ${a.fqn ? `<span class="cortex-src" style="word-break:break-all">${esc(a.fqn)}</span>` : ''}
+                ${a.classifications?.length ? `<span class="cortex-src">Classified: ${a.classifications.map(esc).join(', ')}</span>` : ''}</td>
+              <td class="govuk-table__cell">${esc(a.assetType || a.type || '—')}</td>
+              <td class="govuk-table__cell">${
+                (a.schema || []).length
+                  ? a.schema.slice(0, 40).map((c) => `<span class="cortex-chip">${esc(c.name)}</span>`).join('') + (a.schema.length > 40 ? `<span class="cortex-src">+${a.schema.length - 40} more</span>` : '')
+                  : '<span class="govuk-hint" style="display:inline">Not extracted yet</span>'
+              }</td>
+            </tr>`
+          )
+          .join('')}
+        </tbody></table>`
+    : `<p class="govuk-body">No data assets are attached to this product in the Unified Catalog yet.${
+        g.assets?.error ? ` <span class="cortex-src">(${esc(g.assets.error)})</span>` : ''
+      } Bootstrap attaches the scanned sample files: <code>node scripts/bootstrap.js --only=data</code>.</p>`;
+
+  return `
+    <h2 class="govuk-heading-m" id="data">The data behind it</h2>
+    <p class="govuk-body">
+      A data product describes data. Underneath it, in the <strong>Purview Data Map</strong>, sit the files or tables the scan found — with their schema and classifications.
+      Cortex builds an <strong>Azure AI Search</strong> index from those same files so an agent built on this product can read rows, not just the description.
+    </p>
+    ${
+      built
+        ? `<div class="govuk-inset-text"><p class="govuk-body govuk-!-margin-bottom-0"><strong>Index build started.</strong> ${esc(built)} The indexer reads the files directly from storage; rows appear within a minute or two. Agents built on this product pick the index up on their next <em>Rebuild tools</em>.</p></div>`
+        : ''
+    }
+    ${assets}
+    <p class="govuk-body">${idx}</p>
+    ${indexer}
+    ${g.errors?.length ? `<p class="govuk-body-s" style="color:#d4351c">${g.errors.map(esc).join('<br>')}</p>` : ''}
+    ${
+      g.configured
+        ? `<form method="post" action="/entry/${attr(e.id)}/ground">
+             <button class="govuk-button govuk-button--secondary" type="submit">${g.exists ? 'Rebuild the index' : 'Build the index now'}</button>
+             <span class="cortex-src" style="margin-left:8px">Creates the index, a data source over <code>${esc(g.folder)}/</code> and an indexer, then runs it. Safe to repeat.</span>
+           </form>`
+        : ''
+    }`;
+}
+
+export function entryPage(ctx, { entry: e, cluster, requested, grounding = null, built = null, chat = null }) {
   const deps = (e.deps || []).length
     ? e.deps
         .map((d) => {
@@ -80,10 +144,18 @@ export function entryPage(ctx, { entry: e, cluster, requested }) {
 
   /* ---------------------------------------------------- the action panel */
   let actions = '';
-  if (e.vis === 'available') {
-    actions = `
-      <a class="govuk-button" href="/build?knowledge=${attr(e.id)}" role="button">Build an agent with it</a>
-      <a class="govuk-button govuk-button--secondary" href="/ask?entry=${attr(e.id)}" role="button">Use it in a question</a>`;
+  const chatButton =
+    e.cat === 'Agent' && chat?.allowed
+      ? `<a class="govuk-button" href="/agent/${attr(e.id)}/chat" target="_blank" rel="opener" role="button">Chat with this agent</a>
+         <p class="govuk-body-s">Opens in a new window. ${chat.policy === 'all-staff' ? 'Every member of staff can chat with every agent in this phase.' : ''}</p>`
+      : '';
+  if (e.cat === 'Agent' && chatButton && e.vis !== 'available') {
+    actions = chatButton;
+  } else if (e.vis === 'available') {
+    actions = `${chatButton}
+      <a class="govuk-button${e.cat === 'Agent' ? ' govuk-button--secondary' : ''}" href="/build?knowledge=${attr(e.id)}" role="button">Build an agent with it</a>
+      <a class="govuk-button govuk-button--secondary" href="/ask?entry=${attr(e.id)}" role="button">Use it in a question</a>
+      ${e.cat === 'Agent' ? `<p class="govuk-body-s"><a class="govuk-link" href="/agent/${attr(e.id)}">Test, inspect or publish it</a></p>` : ''}`;
   } else if (e.vis === 'request') {
     actions = requested
       ? `<div class="govuk-panel">
@@ -296,6 +368,8 @@ ${
         'agent'
       )}
     </dl>
+
+    ${e.cat === 'Data' ? groundingPanel(e, grounding, built) : ''}
 
     <h2 class="govuk-heading-m">Something wrong with this entry?</h2>
     <form method="post" action="/entry/${attr(e.id)}/correction">

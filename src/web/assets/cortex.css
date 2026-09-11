@@ -95,14 +95,12 @@ summary:focus,
 .govuk-grid-column-two-thirds { width: 66.6666%; padding: 0 15px; }
 .govuk-grid-column-one-quarter { width: 25%; padding: 0 15px; }
 .govuk-grid-column-three-quarters { width: 75%; padding: 0 15px; }
-.govuk-grid-column-one-half { width: 50%; padding: 0 15px; }
 .govuk-grid-column-full { width: 100%; padding: 0 15px; }
 @media (max-width: 800px) {
   .govuk-grid-column-one-third,
   .govuk-grid-column-two-thirds,
   .govuk-grid-column-one-quarter,
-  .govuk-grid-column-three-quarters,
-  .govuk-grid-column-one-half { width: 100%; }
+  .govuk-grid-column-three-quarters { width: 100%; }
 }
 
 /* -------------------------------------------------------------- header */
@@ -303,7 +301,6 @@ summary:focus,
 .govuk-list { margin: 0 0 20px; padding: 0; list-style: none; }
 .govuk-list > li { margin-bottom: 5px; }
 .govuk-list--bullet { padding-left: 20px; list-style: disc; }
-.govuk-list--number { padding-left: 20px; list-style: decimal; }
 .govuk-list--spaced > li { margin-bottom: 10px; }
 
 /* ------------------------------------------------------------- buttons */
@@ -506,11 +503,6 @@ summary:focus,
 }
 .govuk-error-summary__title { font-size: 24px; font-weight: 700; margin: 0 0 15px; }
 
-.govuk-details { margin-bottom: 20px; font-size: 19px; }
-.govuk-details__summary { cursor: pointer; color: var(--govuk-blue); text-decoration: underline; }
-.govuk-details__summary:hover { color: var(--govuk-dark-blue); }
-.govuk-details__text { margin-top: 10px; padding: 15px 0 5px 15px; border-left: 5px solid var(--govuk-border); }
-
 /* --------------------------------------------------------- summary list */
 .govuk-summary-list { margin: 0 0 30px; padding: 0; display: table; width: 100%; font-size: 19px; }
 .govuk-summary-list__row { display: table-row; }
@@ -632,250 +624,34 @@ summary:focus,
   font-size: 16px;
 }
 
-/* ==================================================================== ABOUT
-   The story page. Everything here is CSS and inline SVG — no client script —
-   and every visual has a text alternative in the markup, so the page reads
-   the same with images off or a screen reader on.
-   ========================================================================== */
-
-/* ---- hero: the banner image sits under a left-weighted dark gradient so the
-   headline is readable whatever the picture does. Falls back to solid black. */
-.cortex-about-hero {
-  display: flex;
-  align-items: center;
-  min-height: 360px;
-  margin: 0 0 30px;
-  padding: 45px 40px;
-  color: var(--govuk-white);
-  background-color: var(--govuk-black);
-  background-image:
-    linear-gradient(90deg, rgba(11, 12, 12, 0.9) 0%, rgba(11, 12, 12, 0.78) 42%, rgba(11, 12, 12, 0.3) 72%, rgba(11, 12, 12, 0.08) 100%),
-    url("/assets/about-hero.jpg");
-  background-size: cover;
-  background-position: center right;
-  background-repeat: no-repeat;
-}
-.cortex-about-hero__inner { max-width: 640px; }
-.cortex-about-hero__caption { color: var(--govuk-mid-grey); }
-.cortex-about-hero__title { color: var(--govuk-white); margin-bottom: 15px; }
-.cortex-about-hero__lede { color: var(--govuk-light-grey); }
-.cortex-about-hero__actions { display: flex; align-items: center; gap: 25px; flex-wrap: wrap; }
-.cortex-about-hero__button { margin-bottom: 0; }
-.cortex-about-hero__link { color: var(--govuk-white); }
-.cortex-about-hero__link:hover { color: var(--govuk-light-grey); }
-.cortex-about-hero__note { font-size: 14px; color: var(--govuk-mid-grey); margin: 25px 0 0; }
-@media (max-width: 640px) {
-  .cortex-about-hero { min-height: 0; padding: 25px 15px; }
-}
-
-/* ---- "on this page" contents, sticky beside the body on wide screens */
-.cortex-about-contents { position: sticky; top: 15px; font-size: 16px; }
-.cortex-about-contents__list { margin: 10px 0 0; }
-.cortex-about-contents__list li { margin-bottom: 8px; padding-left: 12px; border-left: 3px solid var(--govuk-border); }
-@media (max-width: 800px) {
-  .cortex-about-contents { position: static; margin-bottom: 20px; }
-  .cortex-about-contents__list { display: flex; flex-wrap: wrap; gap: 6px 20px; }
-}
-
-.cortex-about-section { padding-top: 25px; margin-bottom: 40px; border-top: 1px solid var(--govuk-border); }
-.cortex-about-body .cortex-about-section:first-child { border-top: 0; padding-top: 0; }
-.cortex-about-strap { color: var(--govuk-dark-grey); }
-
-/* ---- three numbered statements */
-.cortex-about-three {
-  list-style: none;
-  margin: 0 0 30px;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-}
-.cortex-about-three > li { border-top: 4px solid var(--govuk-green); padding-top: 12px; }
-.cortex-about-three > li p:last-child { margin-bottom: 0; }
-.cortex-about-three__n {
-  display: inline-block;
-  width: 30px;
-  height: 30px;
-  line-height: 30px;
-  text-align: center;
-  background: var(--govuk-green);
-  color: var(--govuk-white);
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-.cortex-about-three--safe > li { border-top-color: var(--govuk-blue); }
-.cortex-about-three--safe .cortex-about-three__n { background: var(--govuk-blue); }
-@media (max-width: 800px) { .cortex-about-three { grid-template-columns: 1fr; } }
-
-/* ---- live register strip */
-.cortex-about-register { background: var(--govuk-light-grey); padding: 20px 20px 12px; margin-bottom: 10px; }
-.cortex-about-register .cortex-stats { margin-bottom: 10px; }
-.cortex-about-register .cortex-stat { flex: 1 1 160px; }
-.cortex-about-register .cortex-src { margin-top: 0; }
-
-.cortex-about-callout { border-left: 10px solid var(--govuk-dark-grey); background: var(--govuk-light-grey); padding: 15px; margin-bottom: 20px; }
-
-/* ---- side-by-side comparison of two lists of steps */
-.cortex-about-compare {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 30px;
-  margin: 20px 0 10px;
-}
-.cortex-about-compare__col { padding: 20px; background: var(--govuk-light-grey); }
-.cortex-about-compare__col--to-be { background: var(--govuk-white); border: 3px solid var(--govuk-green); }
-@media (max-width: 800px) { .cortex-about-compare { grid-template-columns: 1fr; } }
-
-.cortex-about-handoffs { list-style: none; margin: 0 0 15px; padding: 0; }
-.cortex-about-handoffs__step {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--govuk-border);
-  font-size: 16px;
-}
-.cortex-about-handoffs__step:last-child { border-bottom: 0; }
-.cortex-about-handoffs__n {
-  flex: none;
-  width: 34px;
-  height: 34px;
-  line-height: 34px;
-  text-align: center;
-  font-size: 14px;
-  font-weight: 700;
-  background: var(--govuk-black);
-  color: var(--govuk-white);
-}
-.cortex-about-handoffs--cortex .cortex-about-handoffs__n { background: var(--govuk-green); }
-
-/* ---- as is / to be table */
-.cortex-about-table .govuk-table__header,
-.cortex-about-table .govuk-table__cell { font-size: 16px; padding-right: 15px; }
-.cortex-about-table__theme { width: 18%; }
-.cortex-about-table__to-be { background: var(--govuk-light-grey); padding-left: 10px; }
-.cortex-about-table__n { display: block; font-size: 13px; color: var(--govuk-dark-grey); letter-spacing: 0.05em; }
-
-/* ---- value tiles */
-.cortex-about-tiles {
-  list-style: none;
-  margin: 0 0 30px;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
-}
-.cortex-about-tile { background: var(--govuk-light-grey); border-top: 4px solid var(--defra-green); padding: 15px 20px 20px; }
-@media (max-width: 640px) { .cortex-about-tiles { grid-template-columns: 1fr; } }
-
-/* ---- the virtuous cycle, as four chevroned steps */
-.cortex-about-cycle {
-  list-style: none;
-  margin: 0 0 20px;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  counter-reset: cycle;
-}
-.cortex-about-cycle > li {
-  counter-increment: cycle;
-  position: relative;
-  padding: 12px 26px 12px 15px;
-  background: var(--govuk-light-grey);
-  border-right: 4px solid var(--govuk-white);
-  font-size: 16px;
-}
-.cortex-about-cycle > li::before {
-  content: counter(cycle);
-  display: block;
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--govuk-green);
-  margin-bottom: 4px;
-}
-.cortex-about-cycle > li::after {
-  content: "";
-  position: absolute;
-  right: -12px;
-  top: 50%;
-  margin-top: -10px;
-  border: 10px solid transparent;
-  border-left: 10px solid var(--govuk-black);
-  border-right: 0;
-  z-index: 1;
-}
-.cortex-about-cycle > li:last-child::after { display: none; }
-@media (max-width: 800px) {
-  .cortex-about-cycle { grid-template-columns: 1fr; }
-  .cortex-about-cycle > li { border-right: 0; border-bottom: 4px solid var(--govuk-white); }
-  .cortex-about-cycle > li::after { display: none; }
-}
-.cortex-about-chip { text-transform: none; letter-spacing: 0; font-weight: 400; margin: 2px 4px 2px 0; }
-
-/* ---- the user journey */
-.cortex-about-journey {
-  list-style: none;
-  margin: 0 0 30px;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-}
-.cortex-about-journey__step { border: 1px solid var(--govuk-border); padding: 15px; display: flex; flex-direction: column; }
-.cortex-about-journey__step > p { flex: 1 1 auto; }
-.cortex-about-journey__n {
-  display: inline-block;
-  width: 30px;
-  height: 30px;
-  line-height: 30px;
-  text-align: center;
-  border-radius: 50%;
-  background: var(--govuk-blue);
-  color: var(--govuk-white);
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-.cortex-about-journey__title { margin-bottom: 8px; }
-.cortex-about-journey__step .govuk-tag { align-self: flex-start; }
-@media (max-width: 800px) { .cortex-about-journey { grid-template-columns: 1fr; } }
-
-/* ---- the six visibility states, with the marks the Marketplace uses */
-.cortex-about-states {
-  margin: 0 0 20px;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0 30px;
-  font-size: 16px;
-}
-.cortex-about-states__row {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--govuk-border);
-}
-.cortex-about-states__row dt,
-.cortex-about-states__row dd { margin: 0; }
-.cortex-about-states__row dd { color: var(--govuk-dark-grey); text-align: right; white-space: nowrap; }
-@media (max-width: 640px) { .cortex-about-states { grid-template-columns: 1fr; } }
-
-/* ---- architecture diagram */
-.cortex-about-figure { margin: 0 0 10px; }
-.cortex-about-diagram { display: block; width: 100%; height: auto; background: var(--govuk-white); border: 1px solid var(--govuk-border); }
-.cortex-about-details { font-size: 16px; margin-bottom: 30px; }
-
-.cortex-about-summary { font-size: 16px; }
-.cortex-about-summary .govuk-summary-list__key { width: 32%; }
-.cortex-about-summary--status .govuk-summary-list__key { width: 78%; font-weight: 400; }
-.cortex-about-summary--status .govuk-summary-list__value { text-align: right; padding-right: 0; }
-
-/* ---- the ask */
-.cortex-about-ask { border: 3px solid var(--govuk-green); padding: 20px 25px; margin: 10px 0 30px; }
-.cortex-about-ask .govuk-heading-m { color: var(--govuk-green); }
-
 @media print {
-  .cortex-nav, .cortex-persona, .govuk-header__search, .cortex-filters, .cortex-about-contents { display: none; }
-  .cortex-about-hero { background: none; color: var(--govuk-black); border: 1px solid var(--govuk-border); min-height: 0; }
-  .cortex-about-hero__title, .cortex-about-hero__lede, .cortex-about-hero__link, .cortex-about-hero__caption, .cortex-about-hero__note { color: var(--govuk-black); }
-  .cortex-about-details > .govuk-details__text { display: block; }
+  .cortex-nav, .cortex-persona, .govuk-header__search, .cortex-filters { display: none; }
 }
+
+/* ------------------------------------------------------------ chat window */
+.cortex-chat { max-width: 900px; }
+.cortex-chat__head { display: flex; gap: 24px; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #b1b4b6; padding-bottom: 12px; margin-bottom: 12px; }
+.cortex-chat__side { flex: 0 0 260px; text-align: right; font-size: 16px; }
+.cortex-chat__side details { text-align: left; }
+.cortex-chat__policy { color: #505a5f; border-left: 4px solid #b1b4b6; padding-left: 12px; }
+.cortex-chat__thread { display: flex; flex-direction: column; gap: 18px; margin: 16px 0 20px; }
+.cortex-chat__turn { display: flex; flex-direction: column; gap: 10px; }
+.cortex-chat__q, .cortex-chat__a { padding: 12px 16px; border-radius: 4px; max-width: 88%; }
+.cortex-chat__q { background: #f3f2f1; align-self: flex-end; border-right: 5px solid #1d70b8; }
+.cortex-chat__a { background: #fff; border: 1px solid #b1b4b6; border-left: 5px solid #00703c; align-self: flex-start; }
+.cortex-chat__q .govuk-body, .cortex-chat__a .govuk-body { margin-bottom: 4px; }
+.cortex-chat__who { display: block; font-size: 14px; font-weight: 700; color: #505a5f; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.cortex-chat__form { position: sticky; bottom: 0; background: #fff; padding: 12px 0 8px; border-top: 1px solid #b1b4b6; }
+.cortex-chat__form textarea { max-width: 100%; }
+@media (max-width: 640px) { .cortex-chat__head { flex-direction: column; } .cortex-chat__side { flex: none; text-align: left; } }
+
+/* ------------------------------------------------------------ automations */
+.cortex-run { border: 1px solid #b1b4b6; border-left: 5px solid #1d70b8; padding: 12px 16px; margin-bottom: 12px; background: #fff; }
+.cortex-run--failed { border-left-color: #d4351c; }
+.cortex-four { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0 24px; }
+.cortex-four > div { background: #f3f2f1; padding: 12px 14px; }
+.cortex-four strong { display: block; font-size: 14px; color: #505a5f; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+
+/* -------------------------------------------------------- data grounding */
+.cortex-assets td, .cortex-assets th { font-size: 16px; }
+.cortex-chip { display: inline-block; background: #f3f2f1; border: 1px solid #b1b4b6; border-radius: 3px; padding: 1px 6px; font-size: 14px; margin: 0 4px 4px 0; }

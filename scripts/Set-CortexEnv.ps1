@@ -101,6 +101,19 @@ try {
   if ($v['FOUNDRY_MODEL_DEPLOYMENT']) { $env:FOUNDRY_MODEL = $v['FOUNDRY_MODEL_DEPLOYMENT'] }
   if ($v['APIM_PRODUCT_ID'])          { $env:APIM_PRODUCT_ID = $v['APIM_PRODUCT_ID'] }
 
+  # Round 4 — the Foundry project's ARM location (project connections), the
+  # Purview account (Data Map), the sample-data account and the search service.
+  $env:FOUNDRY_ACCOUNT_NAME   = $v['FOUNDRY_ACCOUNT_NAME']
+  $env:FOUNDRY_PROJECT_NAME   = $v['FOUNDRY_PROJECT_NAME']
+  $env:FOUNDRY_RESOURCE_GROUP = $v['FOUNDRY_ACCOUNT_RESOURCE_GROUP']
+  $env:PURVIEW_ACCOUNT_NAME   = $v['PURVIEW_ACCOUNT_NAME']
+  $env:DATA_STORAGE_ACCOUNT   = $v['DATA_STORAGE_ACCOUNT']
+  $env:DATA_CONTAINER         = $v['DATA_CONTAINER']
+  $env:DATA_RESOURCE_GROUP    = $v['AZURE_RESOURCE_GROUP']
+  $env:DATA_STORAGE_LOCATION  = $v['AZURE_LOCATION']
+  $env:SEARCH_ENDPOINT        = $v['SEARCH_ENDPOINT']
+  $env:SEARCH_SERVICE_NAME    = $v['SEARCH_SERVICE_NAME']
+
   # Deliberately NOT set. The vault is unreachable from here, and leaving this
   # empty is what makes the adapter skip cleanly instead of spending its whole
   # 15-second timeout budget failing before it falls back to these values.
@@ -131,6 +144,10 @@ try {
     Write-Host "    Web          : $($env:PUBLIC_BASE_URL)"
     Write-Host "    MCP          : $($env:PURVIEW_MCP_URL)"
     Write-Host "    Identity     : $($env:CORTEX_IDENTITY_PRINCIPAL_ID)  (granted Purview roles by bootstrap)"
+    Write-Host "    Data Map     : $(if ($env:PURVIEW_ACCOUNT_NAME) { $env:PURVIEW_ACCOUNT_NAME } else { 'NOT SET' })"
+    Write-Host "    Sample data  : $(if ($env:DATA_STORAGE_ACCOUNT) { "$($env:DATA_STORAGE_ACCOUNT)/$($env:DATA_CONTAINER)" } else { 'NOT SET (re-provision creates it)' })"
+    Write-Host "    AI Search    : $(if ($env:SEARCH_ENDPOINT) { $env:SEARCH_ENDPOINT } else { 'NOT SET (re-provision creates it)' })"
+    Write-Host "    Foundry ARM  : $(if ($env:FOUNDRY_ACCOUNT_NAME) { "$($env:FOUNDRY_RESOURCE_GROUP)/$($env:FOUNDRY_ACCOUNT_NAME)/$($env:FOUNDRY_PROJECT_NAME)" } else { 'NOT SET' })"
     Write-Host "    APIM key     : $(if ($env:APIM_SUBSCRIPTION_KEY) { 'loaded (not shown)' } else { 'NOT SET' })"
     Write-Host ''
     Write-Host '  This session only. Nothing was written to disk.' -ForegroundColor DarkGray

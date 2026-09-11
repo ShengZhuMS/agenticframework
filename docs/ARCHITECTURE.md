@@ -110,15 +110,35 @@ That last state is the deck's problem rendered as a UI state rather than a dead 
 | Component | Default | Action |
 |---|---|---|
 | API Management | `prdcoreapimneu001` | Reuse — role assignment + a `cortex` product |
-| Purview | `prdcorepurvieweus` | Reuse — roles are a manual portal step either way |
+| Purview | `prdcorepurvieweus` | Reuse — Unified Catalog and Data Map roles granted by bootstrap through the policy APIs |
 | Foundry | `prdcorefdryeus001` / `prdcorefdryproj-default` | Reuse — role assignments |
 | Key Vault | `prdcorekveus` | Reuse — Secrets User |
 | Container registry | `prdcoreamlacr001` | Reuse — AcrPull |
 | Monitoring | `prdcoreamlneu08774392429` | Reuse |
 | **Container Apps** | — | **Create** |
 | **Managed identity** | — | **Create** |
+| **Azure AI Search** (Basic) | — | **Create** — one index per data product |
+| **Storage** (ADLS Gen2 sample data; Azure Files state share) | — | **Create** |
 
-Only two things are always created: the container apps, and an identity of Cortex's own. Reusing an identity that belongs to another workload would make its permissions impossible to reason about and impossible to revoke without collateral damage.
+Cortex creates its own small footprint and nothing shared: the container apps, an identity of its own, a search service and two storage accounts, all in one resource group. Reusing an identity that belongs to another workload would make its permissions impossible to reason about and impossible to revoke without collateral damage.
+
+### The data behind a data product
+
+The Unified Catalog describes data; the Data Map records the real files a scan found; Azure AI Search holds an index built from those same files; a Foundry agent reads the index through a keyless project connection. Cortex orchestrates the chain and holds none of the data:
+
+```
+data product ─► catalogue data asset ─► Data Map asset (schema, classifications)
+                                              │
+                          storage: products/<id>/<id>.csv ─► indexer ─► AI Search index cortex-<id>
+                                                                              ▲
+                                                             agent ── azure_ai_search (connection cortex-search)
+```
+
+The files are synthetic — generated from a fixed seed, with a data dictionary beside each — because the proof of concept has no real data and must never appear to. What is real is every hop: the account, the scan, the assets, the index, the tool call.
+
+### Agents and their tools
+
+An agent's tools are API Management MCP servers. Each has a Foundry **project connection** carrying the gateway subscription key, so the call is authenticated without a key ever appearing in an agent definition. Tool calls run with approval required; Cortex approves them server-side, records server, tool and arguments, and shows the record under the answer. That is the governance shape the backlog asks for — every action visible and attributable — in a form that does not interrupt a conversation.
 
 ### Identity and configuration
 
@@ -132,13 +152,13 @@ One user-assigned managed identity holds every permission. No secrets in code, n
 
 The source backlog holds **190 capabilities across 359 rows**, and made no PoC decisions — 326 rows `Undecided`, none marked `Yes`. The prioritisation was ours, scored on demo weight, proof weight and build cost.
 
-**Built:** Marketplace, entry standard, map, Build an agent with computed gates, publish as MCP, Ask with provenance, Share your data, and the Requests lifecycle.
+**Built:** Marketplace, entry standard, map, the data behind each product (Data Map assets and a search index), Build an agent with computed gates and grounded tools, test and chat, publish as MCP, Ask with provenance, Share your data, the Requests lifecycle, and propose-only Automations.
 
 **Deliberately not built:**
 
 | Excluded | Reason |
 |---|---|
-| Automations that write | The backlog's own rule limits agents to read, summarise and cite this phase |
+| Automations that write | The backlog's own rule limits agents to read, summarise and cite this phase. Automations exist and run on a schedule; each run is a draft in a history and nothing else |
 | Reference data, canonical entities | The backlog records that the owning role **does not exist**. Do not build on a dependency the client has flagged as absent |
 | Standards conformance | Same — no owner for data standards |
 | Impact assessments, sharing agreements | Governance workflow. Essential to the product, invisible in a demo |

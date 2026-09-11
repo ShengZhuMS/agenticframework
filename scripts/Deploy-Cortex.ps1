@@ -105,6 +105,17 @@ param(
   [string[]]$GroupMap           = @(),
   [string]$DefaultGroups        = 'all-staff',
 
+  # Round 4: the sample-data account, the AI Search service and the state
+  # share are created by default. -NoData / -NoSearch leave them out;
+  # -NoScanWait starts the Purview scan and moves on rather than waiting.
+  [switch]$NoData,
+  [switch]$NoSearch,
+  [ValidateSet('free','basic','standard')]
+  [string]$SearchSku            = 'basic',
+  [ValidateSet('all-staff','visibility')]
+  [string]$ChatPolicy           = 'all-staff',
+  [switch]$NoScanWait,
+
   [switch]$WhatIfResources,
   [switch]$SkipProvision,
   [switch]$SkipBootstrap,
@@ -653,7 +664,17 @@ try {
       MONITORING_RG                 = $MonitoringResourceGroup
       CREATE_MONITORING             = (-not $found.Monitoring).ToString().ToLower()
       APIM_PUBLISHER_EMAIL          = $acct.user.name
+      # Round 4
+      CREATE_DATA                   = (-not $NoData).ToString().ToLower()
+      CREATE_SEARCH                 = (-not $NoSearch).ToString().ToLower()
+      SEARCH_SKU                    = $SearchSku
+      CORTEX_CHAT_POLICY            = $ChatPolicy
     }
+    # Who is deploying, so the template can grant Storage Blob Data
+    # Contributor on the sample-data account: bootstrap uploads as you, and an
+    # Owner still cannot write a blob without a data-plane role.
+    $me = az ad signed-in-user show --query id -o tsv 2>$null
+    if ($me) { $settings['DEPLOYER_PRINCIPAL_ID'] = $me } else { Warn2 'Could not read your object id; bootstrap may be refused when uploading sample data.' }
     foreach ($k in $settings.Keys) { azd env set $k $settings[$k] | Out-Null }
 
     azd up --no-prompt
@@ -877,10 +898,13 @@ try {
   # starts. `$env:` here is inherited by npm, which is exactly what is wanted;
   # nothing is written to disk.
   if (-not $SkipBootstrap) {
-    Step 11 'Granting Purview access to the Cortex identity and creating the Defra content'
+    Step 11 'Granting Purview access, creating the Defra content, the sample data and the indexes'
     Info 'The roles are granted with YOUR signed-in account through the Unified Catalog Policies API.'
     Info 'If Purview refuses you (403), add yourself as a Data Governance Administrator in the'
     Info 'Purview portal (Settings → Solution settings → Unified Catalog → Roles and permissions).'
+    Info 'Then: Foundry connections for every MCP server, sample files into storage, a Data Map scan'
+    Info '(3–10 minutes — bootstrap waits unless -NoScanWait), assets attached to the products, one'
+    Info 'AI Search index per product. Every section is idempotent and can be re-run on its own.'
 
     # The app's azure-resource-group is the group holding API MANAGEMENT — it
     # exists to build APIM ARM resource ids. Not the Cortex group, which is
@@ -897,19 +921,37 @@ try {
     $env:CORTEX_IDENTITY_PRINCIPAL_ID = $v['CORTEX_IDENTITY_PRINCIPAL_ID']
     if ($apimKey) { $env:APIM_SUBSCRIPTION_KEY = $apimKey }
 
+    # Round 4 — where the Foundry project lives (for project connections), the
+    # Purview account (Data Map), the sample-data account and the search service.
+    $env:FOUNDRY_ACCOUNT_NAME     = $v['FOUNDRY_ACCOUNT_NAME']
+    $env:FOUNDRY_PROJECT_NAME     = $v['FOUNDRY_PROJECT_NAME']
+    $env:FOUNDRY_RESOURCE_GROUP   = $v['FOUNDRY_ACCOUNT_RESOURCE_GROUP']
+    $env:PURVIEW_ACCOUNT_NAME     = $v['PURVIEW_ACCOUNT_NAME']
+    $env:DATA_STORAGE_ACCOUNT     = $v['DATA_STORAGE_ACCOUNT']
+    $env:DATA_CONTAINER           = $v['DATA_CONTAINER']
+    $env:DATA_RESOURCE_GROUP      = $CortexResourceGroup
+    $env:DATA_STORAGE_LOCATION    = $Location
+    $env:SEARCH_ENDPOINT          = $v['SEARCH_ENDPOINT']
+    $env:SEARCH_SERVICE_NAME      = $v['SEARCH_SERVICE_NAME']
+    if (-not $v['FOUNDRY_ACCOUNT_PRINCIPAL_ID']) {
+      Warn2 'The Foundry account has no system-assigned identity, so agents cannot read AI Search keylessly.'
+      Info  "Azure portal → $($v['FOUNDRY_ACCOUNT_NAME']) → Identity → System assigned → On, then re-run this script."
+    }
+
     # Only point bootstrap at the vault when the vault is actually usable from
     # here. An unreachable vault name costs the timeout budget and supplies
     # nothing; empty makes the adapter skip straight to these values.
     $env:KEYVAULT_NAME = if ($configSource -eq 'keyvault') { $kv } else { '' }
 
-    npm run bootstrap
+    if ($NoScanWait) { npm run bootstrap -- --no-wait } else { npm run bootstrap }
     if ($LASTEXITCODE -ne 0) {
       Warn2 'Bootstrap reported failures. It is idempotent — fix the cause and re-run.'
       Info  'To re-run by hand, load the configuration into your session first:'
       Info  '    . .\scripts\Set-CortexEnv.ps1'
       Info  '    npm run bootstrap'
       Info  'Without that first line the values above are gone and every one is reported missing.'
-    } else { Ok 'Purview access granted; domains and data products created' }
+    } else { Ok 'Purview access granted; content, connections, sample data and indexes in place' }
+    if ($NoScanWait) { Info 'When the Data Map scan has finished:  . .\scripts\Set-CortexEnv.ps1; node scripts/bootstrap.js --only=link' }
 
     # The app refreshes its register every 15 minutes. Ask it to do so now, so
     # the Marketplace shows the content the moment this script finishes. The
@@ -930,7 +972,7 @@ try {
     # A container app that has just taken a new revision needs a moment. Three
     # attempts with a short back-off turns a spurious red into a real signal.
     $behindSignIn = $false
-    foreach ($p in @('/api/health','/api/health/keyvault','/api/health/purview','/api/health/apim','/api/health/foundry')) {
+    foreach ($p in @('/api/health','/api/health/keyvault','/api/health/purview','/api/health/apim','/api/health/foundry','/api/health/search','/api/health/storage','/api/health/state')) {
       $passed = $false
       $lastError = ''
       foreach ($attempt in 1..3) {
@@ -976,6 +1018,11 @@ try {
   Write-Host " What was automated this run:"
   Write-Host "  - Purview: the Cortex identity ($($v['CORTEX_IDENTITY_PRINCIPAL_ID'])) holds its Unified Catalog roles"
   Write-Host "    (granted by bootstrap). If the Help page still shows Purview as unavailable, wait a minute and reload."
+  if ($v['SEARCH_SERVICE_NAME']) { Write-Host "  - AI Search: $($v['SEARCH_SERVICE_NAME']) — one index per data product, built from the sample files." }
+  if ($v['DATA_STORAGE_ACCOUNT']) { Write-Host "  - Sample data: $($v['DATA_STORAGE_ACCOUNT'])/$($v['DATA_CONTAINER']) — scanned by the Data Map and attached to the products." }
+  if ($v['STATE_STORAGE_ACCOUNT']) { Write-Host "  - State: requests, chats and automations persist on the $($v['STATE_STORAGE_ACCOUNT']) file share." }
+  Write-Host "  - Foundry: a project connection per MCP server carries the API Management key, so agents can call their tools."
+  Write-Host "  - Chat: every member of staff can open a chat window with every agent (policy: $ChatPolicy)."
   Write-Host "  - Sign-in: Entra, with the groups claim. Every signed-in user is treated as: $DefaultGroups"
   if ($GroupMap.Count -eq 0) {
     Write-Host "    To map real Entra groups onto access-rule names:  .\scripts\Set-CortexAuth.ps1 -GroupMap 'waste-crime=<group name>'"

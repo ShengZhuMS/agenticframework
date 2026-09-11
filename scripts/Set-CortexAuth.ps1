@@ -317,7 +317,10 @@ try {
     # lower-case, spaces to hyphens — so /profile stops showing raw ids. Access
     # changes only where a derived name happens to match a rule (all-staff,
     # analysts, waste-crime, cortex-official-sensitive, cortex-commercial-licence).
-    $raw = az rest --method get --url 'https://graph.microsoft.com/v1.0/me/memberOf?$select=id,displayName&$top=999' --only-show-errors 2>$null
+    # No query string in the URL: on Windows `az` is a .cmd whose arguments pass
+    # through cmd.exe, where an unquoted `&` splits the command. Parameters go
+    # through --uri-parameters, one argument each, and the CLI encodes them.
+    $raw = az rest --method get --url 'https://graph.microsoft.com/v1.0/me/memberOf' --uri-parameters '$select=id,displayName' '$top=999' --only-show-errors 2>$null
     $mine = @()
     if ($LASTEXITCODE -eq 0 -and $raw) {
       $mine = @(($raw | ConvertFrom-Json).value | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.group' })

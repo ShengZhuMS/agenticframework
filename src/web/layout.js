@@ -27,8 +27,7 @@ export const NAV = [
   ['/build', 'Build an agent', 'build'],
   ['/share', 'Share your data', 'share'],
   ['/requests', 'Requests', 'requests'],
-  ['/automate', 'Automate a task', 'automate'],
-  ['/about', 'About', 'about']
+  ['/automate', 'Automate a task', 'automate']
 ];
 
 /** Escape untrusted values for HTML. Every interpolation goes through this. */
@@ -138,36 +137,44 @@ ${
       <span>Data Driven Defra</span>
     </div>
     <div class="govuk-header__org">Department for Environment, Food &amp; Rural Affairs</div>
-    <form class="govuk-header__search" method="get" action="/marketplace" role="search">
+    ${
+      ctx.compact
+        ? ''
+        : `<form class="govuk-header__search" method="get" action="/marketplace" role="search">
       <label class="govuk-skip-link" for="site-search">Search the marketplace</label>
       <input id="site-search" type="search" name="q" placeholder="Search" value="${attr(ctx.query?.q || '')}">
       <button type="submit">Search</button>
-    </form>
+    </form>`
+    }
   </div>
 </header>
 
-${nav(ctx.section)}
+${ctx.compact ? '' : nav(ctx.section)}
 ${identityBar(ctx)}
 
 <div class="govuk-width-container">
   <div class="govuk-phase-banner">
     <p class="govuk-phase-banner__content">
       <strong class="govuk-tag">Alpha</strong>
-      <span>This is a prototype built by CCoE for SIT  - all live services with mock data. Please contact steven.steward@defra.gov.uk for reqirements; Please contact sheng.zhu@defra.gov.uk to report bugs.</span>
+      <span>This is a prototype. Usage, cost and carbon figures are illustrative.</span>
     </p>
   </div>
 
   <main class="govuk-main-wrapper" id="main-content" role="main" tabindex="-1">
     ${content}
 
-    <div class="cortex-feedback">
+    ${
+      ctx.compact
+        ? ''
+        : `<div class="cortex-feedback">
       <form method="post" action="/feedback">
         <input type="hidden" name="page" value="${attr(ctx.path)}">
         <span>Was this page useful?</span>
         <button class="govuk-link" style="border:0;background:none;cursor:pointer;padding:0 4px" name="useful" value="yes" type="submit">Yes</button>
         <button class="govuk-link" style="border:0;background:none;cursor:pointer;padding:0 4px" name="useful" value="no" type="submit">No</button>
       </form>
-    </div>
+    </div>`
+    }
   </main>
 </div>
 
@@ -176,7 +183,6 @@ ${identityBar(ctx)}
     <div class="govuk-footer__meta">
       <div>
         <ul class="govuk-footer__inline-list">
-          <li><a class="govuk-link" href="/about">About Cortex</a></li>
           <li><a class="govuk-link" href="/help">Help</a></li>
           <li><a class="govuk-link" href="/help/accessibility">Accessibility statement</a></li>
           <li><a class="govuk-link" href="/help/privacy">Privacy</a></li>

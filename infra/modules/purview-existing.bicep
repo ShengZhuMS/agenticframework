@@ -33,6 +33,9 @@ resource readerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 
 output name string = purview.name
 output id string = purview.id
+// The account's identity runs the Data Map scans, so data.bicep grants it
+// Storage Blob Data Reader on the sample-data account.
+output principalId string = purview.?identity.?principalId ?? ''
 // The account-scoped host is the LEGACY form. The Unified Catalog API lives
 // at https://api.purview-service.microsoft.com — the app uses that.
 output legacyAtlasEndpoint string = purview.properties.endpoints.catalog

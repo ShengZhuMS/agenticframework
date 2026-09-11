@@ -41,9 +41,25 @@
 import index from '../index/store.js';
 import config from '../config.js';
 import { visibilityFor, VIS } from './visibility.js';
+import { collection } from '../state/store.js';
 
-/** In-memory threads. WP-scope: a demo needs history, not durability. */
-const threads = new Map();
+/**
+ * Threads, persisted through state/store.js (a file on the mounted share in
+ * Azure; memory locally). Shaped like a Map so the code below reads naturally.
+ */
+const threadStore = () => collection('ask-threads', {});
+const threads = {
+  get: (id) => threadStore().data[id],
+  set: (id, t) => {
+    threadStore().data[id] = t;
+    threadStore().save();
+  },
+  values: () => Object.values(threadStore().data),
+  clear: () => {
+    const d = threadStore().data;
+    for (const k of Object.keys(d)) delete d[k];
+  }
+};
 
 let threadSeq = 0;
 function newThreadId() {
@@ -354,7 +370,7 @@ function describeUse(entry, ts, ref) {
 
 /** CAP-003 — previous conversations, grouped Today / Yesterday / Earlier. */
 export function threadsFor(user) {
-  const mine = [...threads.values()].filter((t) => t.user === user.id);
+  const mine = threads.values().filter((t) => t.user === user.id);
   const today = [];
   const yesterday = [];
   const earlier = [];
