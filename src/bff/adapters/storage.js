@@ -19,6 +19,42 @@ import { getToken } from './token.js';
 const bearer = (token) => ['Bearer', token].join(' ');
 const API_VERSION = '2023-11-03';
 
+/**
+ * Storage answers two different 403s, and telling them apart is the whole
+ * diagnosis. The first live run reported the network one with the fix for the
+ * role one, which sent the person deploying off to grant a role they already
+ * held.
+ *
+ *   AuthorizationFailure              the account's NETWORK RULES refused the
+ *                                     caller: public network access is off or
+ *                                     the default action is Deny. The Bicep
+ *                                     opens both; a tenant policy closed it.
+ *   AuthorizationPermissionMismatch   the caller holds no data-plane ROLE
+ *   KeyBasedAuthenticationNotPermitted a key was used where only Entra is allowed
+ *
+ * Exported so the message is pinned by a test, not just by a reader.
+ */
+export function explainStorageError(status, text, account, method = 'GET') {
+  const body = String(text || '');
+  const code = body.match(/<Code>([A-Za-z]+)<\/Code>/)?.[1] || body.match(/"code"\s*:\s*"([A-Za-z]+)"/)?.[1] || '';
+  let hint = '';
+  if (status === 403 && code === 'AuthorizationFailure') {
+    hint =
+      ` — the network rules on ${account} refused this machine (AuthorizationFailure is the FIREWALL code, not a missing role).` +
+      ' Public network access or the default action has been changed since the account was created, almost always by a tenant Azure Policy.' +
+      ' Repair and exempt it:  .\\scripts\\Set-CortexStorageAccess.ps1   then run this again.';
+  } else if (status === 403 && code === 'AuthorizationPermissionMismatch') {
+    hint =
+      ` — the signed-in account holds no data-plane role on ${account} (AuthorizationPermissionMismatch).` +
+      ' Grant Storage Blob Data Contributor (Deploy-Cortex.ps1 does this when it knows who is deploying); a new assignment can take up to five minutes to apply.';
+  } else if (status === 403 && code === 'KeyBasedAuthenticationNotPermitted') {
+    hint = ` — ${account} only accepts Entra sign-in and something used an account key.`;
+  } else if (status === 403) {
+    hint = ` — refused by ${account}; the <Code> in the response says whether it is the network rules (AuthorizationFailure) or a missing role (AuthorizationPermissionMismatch).`;
+  }
+  return { code, message: `Storage ${method} failed ${status}${code ? ` (${code})` : ''}: ${body.slice(0, 300)}${hint}` };
+}
+
 class LiveStorage {
   constructor(cfg) {
     this.cfg = cfg;
@@ -50,11 +86,14 @@ class LiveStorage {
     });
     if (!res.ok && !ok.includes(res.status)) {
       const text = await res.text().catch(() => '');
-      const hint =
-        res.status === 403
-          ? ` — grant the signed-in account Storage Blob Data Contributor on ${this.cfg.storageAccount} (Deploy-Cortex.ps1 does this when it knows who is deploying)`
-          : '';
-      throw new Error(`Storage ${method} ${new URL(url).pathname} failed ${res.status}: ${text.slice(0, 300)}${hint}`);
+      const explained = explainStorageError(res.status, text, this.cfg.storageAccount, `${method} ${new URL(url).pathname}`);
+      const err = new Error(explained.message);
+      err.status = res.status;
+      err.storageCode = explained.code;
+      // The network code means nothing else against this account will work
+      // either; callers use this to stop rather than fail fourteen more times.
+      err.blocked = res.status === 403 && explained.code === 'AuthorizationFailure';
+      throw err;
     }
     return res;
   }
@@ -76,6 +115,13 @@ class LiveStorage {
       }
     });
     return { url: this.blobUrl(container, blobPath), dfsUrl: this.dfsUrl(container, blobPath), bytes: body.length };
+  }
+
+  /** The whole blob as text, or null when it does not exist. State blobs are small JSON documents. */
+  async download(container, blobPath) {
+    const res = await this._fetch(this.blobUrl(container, blobPath), { ok: [404] });
+    if (res.status === 404) return null;
+    return res.text();
   }
 
   /** The first `bytes` of a blob — enough for a CSV header line. */

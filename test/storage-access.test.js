@@ -67,6 +67,23 @@ describe('LiveStorage against a firewalled account', () => {
     clearTokenCache();
   });
 
+  test('download returns null for a blob that does not exist, and the text otherwise', async () => {
+    const realFetch2 = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes('IDENTITY')) return { ok: true, status: 200, json: async () => ({ access_token: 't', expires_on: '99999999999' }), text: async () => '' };
+      if (url.endsWith('/state/missing.json')) return { ok: false, status: 404, text: async () => '', json: async () => ({}) };
+      return { ok: true, status: 200, text: async () => '{"seq":1}', json: async () => ({}) };
+    };
+    try {
+      const s = new LiveStorage({ storageAccount: 'ststate', container: 'state', scope: 'https://storage.azure.com/.default' });
+      assert.equal(await s.download('state', 'missing.json'), null);
+      assert.equal(await s.download('state', 'requests.json'), '{"seq":1}');
+    } finally {
+      globalThis.fetch = realFetch2;
+    }
+  });
+
   test('the error carries the code and the blocked flag so callers stop after one failure', async () => {
     const s = new LiveStorage({ storageAccount: 'stfirewalled', container: 'products', scope: 'https://storage.azure.com/.default' });
     await assert.rejects(s.ensureContainer('products'), (err) => {

@@ -207,6 +207,34 @@ param searchSemantic string = 'disabled'
 @description('Object id of the person (or pipeline identity) deploying, so bootstrap can upload the sample files. Deploy-Cortex.ps1 fills it in.')
 param deployerPrincipalId string = ''
 
+// ------------------------------------------------ round 6: the perimeter
+//
+// The tenant's SFI policy closes the public endpoint on every storage account
+// "excluding NSP configured resources". So the two Cortex accounts live inside
+// a Network Security Perimeter (modules/nsp.bicep) that admits managed
+// identities from this subscription, and their public network access is set
+// to SecuredByPerimeter — the value the policy leaves alone.
+//
+// storagePublicNetworkAccess starts as Enabled because the perimeter
+// association cannot exist before the account does. Deploy-Cortex.ps1 flips
+// it to SecuredByPerimeter once the association is in place and records that
+// in the azd environment (STORAGE_PUBLIC_NETWORK_ACCESS), so every later
+// provision writes the right value directly.
+@description('Create the Network Security Perimeter around the storage accounts (and the search service). False leaves the accounts on their own network rules.')
+param createPerimeter bool = true
+
+@description('Access mode for the storage accounts in the perimeter. Enforced is what the policy exclusion needs.')
+@allowed(['Enforced', 'Learning'])
+param storageAccessMode string = 'Enforced'
+
+@description('Access mode for the AI Search service in the perimeter. Learning changes nothing and logs what Enforced would block.')
+@allowed(['Enforced', 'Learning'])
+param searchAccessMode string = 'Learning'
+
+@description('Public network access on the storage accounts. Enabled on the first run; SecuredByPerimeter once associated. The deploy script manages this.')
+@allowed(['Enabled', 'SecuredByPerimeter', 'Disabled'])
+param storagePublicNetworkAccess string = 'Enabled'
+
 @description('Who may open a chat window with an agent: all-staff (this phase) or visibility (Marketplace rules).')
 @allowed(['all-staff', 'visibility'])
 param chatPolicy string = 'all-staff'
@@ -237,6 +265,7 @@ var dataAccountName = take('st${replace(prefix, '-', '')}data${uniq}', 24)
 var stateAccountName = take('st${replace(prefix, '-', '')}state${uniq}', 24)
 var searchServiceName = 'srch-${prefix}-${uniq}'
 var searchEndpoint = createSearch ? 'https://${searchServiceName}.search.windows.net' : ''
+var perimeterName = 'nsp-${prefix}'
 
 // ------------------------------------------------------- resource group
 
@@ -447,10 +476,28 @@ module data 'modules/data.bicep' = if (createData) {
     tags: tags
     dataAccountName: dataAccountName
     stateAccountName: stateAccountName
+    publicNetworkAccess: storagePublicNetworkAccess
     cortexPrincipalId: identity.outputs.principalId
     purviewPrincipalId: createPurview ? purviewNew!.outputs.principalId : purviewExisting!.outputs.principalId
     searchPrincipalId: createSearch ? search!.outputs.principalId : ''
     deployerPrincipalId: deployerPrincipalId
+  }
+}
+
+// ------------------------------------------------------------- perimeter
+// After the accounts (it associates them) and after search (optional member).
+module perimeter 'modules/nsp.bicep' = if (createData && createPerimeter) {
+  name: 'perimeter'
+  scope: cortexRg
+  params: {
+    name: perimeterName
+    location: location
+    tags: tags
+    dataAccountId: data!.outputs.dataAccountId
+    stateAccountId: data!.outputs.stateAccountId
+    searchServiceId: createSearch ? search!.outputs.id : ''
+    storageAccessMode: storageAccessMode
+    searchAccessMode: searchAccessMode
   }
 }
 
@@ -510,7 +557,8 @@ module containerApps 'modules/containerapps.bicep' = {
     dataContainer: createData ? data!.outputs.dataContainerName : 'products'
     dataResourceGroup: cortexResourceGroup
     stateAccountName: createData ? data!.outputs.stateAccountName : ''
-    stateShareName: createData ? data!.outputs.stateShareName : ''
+    stateContainerName: createData ? data!.outputs.stateContainerName : 'state'
+    identityPrincipalId: identity.outputs.principalId
 
     // The APIM subscription key and the App Insights connection string are
     // deliberately NOT passed. Deploy-Cortex.ps1 writes them onto the app after
@@ -591,11 +639,17 @@ output SEARCH_ENDPOINT string = searchEndpoint
 output DATA_STORAGE_ACCOUNT string = createData ? data!.outputs.dataAccountName : ''
 output DATA_CONTAINER string = createData ? data!.outputs.dataContainerName : 'products'
 output STATE_STORAGE_ACCOUNT string = createData ? data!.outputs.stateAccountName : ''
+output STATE_CONTAINER string = createData ? data!.outputs.stateContainerName : 'state'
 output CORTEX_CHAT_POLICY string = chatPolicy
+output CORTEX_BOOTSTRAP_JOB string = containerApps.outputs.bootstrapJobName
+output NSP_NAME string = (createData && createPerimeter) ? perimeterName : ''
+output STORAGE_ACCESS_MODE string = storageAccessMode
+output SEARCH_ACCESS_MODE string = searchAccessMode
 
 output CREATED_THIS_ROUND array = concat(
   createSearch ? ['AI Search: ${searchServiceName} (${searchSku})'] : [],
-  createData ? ['Storage: ${dataAccountName} (sample data, ADLS Gen2), ${stateAccountName} (state share)'] : []
+  createData ? ['Storage: ${dataAccountName} (sample data, ADLS Gen2), ${stateAccountName} (state blobs)'] : [],
+  (createData && createPerimeter) ? ['Network Security Perimeter: ${perimeterName}'] : []
 )
 
 output REUSED array = concat(

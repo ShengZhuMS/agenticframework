@@ -41,7 +41,7 @@ import { chatPage, chatRefusedPage } from '../web/views/chat.js';
 import { automationsPage, automationFormPage, automationPage } from '../web/views/automate.js';
 import { explainError } from './services/explain.js';
 import { groundingStatus, buildIndex, forgetAssets } from './services/grounding.js';
-import { configureState, stateHealth } from './state/store.js';
+import { configureState, configureStateBlob, primeState, stateHealth } from './state/store.js';
 import {
   knowledgeOptions,
   toolOptions,
@@ -1060,8 +1060,20 @@ export async function start() {
   // Key Vault first: every adapter is constructed from configuration, so the
   // vault must be read before anything reads config.
   await hydrateConfig();
-  // State on the mounted share (or memory locally) — before anything reads a collection.
-  configureState(config.state.dir);
+  // State — before anything reads a collection. Blobs on the state account
+  // when deployed (read first, so a start with storage unreachable never
+  // overwrites what is there), a directory locally, memory otherwise.
+  if (config.state.blobAccount) {
+    configureStateBlob({ account: config.state.blobAccount, container: config.state.blobContainer, scope: config.state.scope });
+    const primed = await primeState({ timeoutMs: config.state.primeTimeoutMs });
+    console.log(
+      primed.error
+        ? `[state] blob storage unavailable — ${primed.error}. Serving with memory state.`
+        : `[state] ${primed.primed} collection(s) loaded from ${config.state.blobAccount}/${config.state.blobContainer}`
+    );
+  } else {
+    configureState(config.state.dir);
+  }
   await index.init();
   auto.startScheduler();
 

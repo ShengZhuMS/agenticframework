@@ -138,9 +138,18 @@ export const config = {
     scope: 'https://storage.azure.com/.default'
   },
 
-  /** Where application state is written. Empty = memory only. */
+  /**
+   * Where application state is written. A blob account (STATE_STORAGE_ACCOUNT,
+   * read and written with the managed identity — the deployed shape), or a
+   * directory (CORTEX_STATE_DIR, local development), or neither = memory only.
+   */
   state: {
-    dir: env.CORTEX_STATE_DIR || ''
+    dir: env.CORTEX_STATE_DIR || '',
+    blobAccount: env.STATE_STORAGE_ACCOUNT || '',
+    blobContainer: env.STATE_CONTAINER || 'state',
+    scope: 'https://storage.azure.com/.default',
+    /** How long startup waits for the state blobs before serving with memory state. */
+    primeTimeoutMs: Number(env.STATE_PRIME_TIMEOUT_MS || 20_000)
   },
 
   /**

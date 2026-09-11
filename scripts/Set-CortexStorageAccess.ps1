@@ -1,67 +1,56 @@
 <#
 .SYNOPSIS
-  Check — and repair — network access to the storage accounts Cortex created,
-  when a tenant Azure Policy has changed them after provisioning. Safe to
+  Check — and repair — how the Cortex storage accounts are reached, in a
+  tenant whose policy closes every storage account's public endpoint. Safe to
   run repeatedly.
 
 .DESCRIPTION
-  THE FAILURE THIS SCRIPT EXISTS FOR
+  THE POLICY
+  Management-group assignment "MCAPSGovDeployPolicies" applies, with a Modify
+  effect, "SFI - Disable public network access on Storage accounts (excluding
+  NSP configured resources)" and "disable local auth". It rewrites any update
+  that leaves the public endpoint open, and switches account keys off. The
+  first live run of round 4 showed both:
 
-    FAIL  storage — Storage PUT /products failed 403:
-          <Code>AuthorizationFailure</Code>
-          <Message>This request is not authorized to perform this operation.
+    FAIL  storage — 403 AuthorizationFailure       (the firewall code)
+    FailedMount ... mount error(13): Permission denied   (keys are off)
 
-  That is not a missing role. Storage answers two different 403s and the
-  difference is the whole diagnosis:
+  THE ANSWER THE POLICY ITSELF NAMES
+  A storage account inside a Network Security Perimeter, with public network
+  access set to SecuredByPerimeter, is excluded from the policy and governed by
+  the perimeter's rules instead. infra/modules/nsp.bicep creates the perimeter
+  and associates both accounts; the perimeter admits Entra-authenticated
+  traffic from managed identities in this subscription and nothing else. No
+  keys are used anywhere any more (state moved from a file share to blobs).
 
-    AuthorizationFailure             the account's NETWORK RULES refused the
-                                     caller — public network access is off or
-                                     the default action is Deny
-    AuthorizationPermissionMismatch  the caller holds no data-plane ROLE
+  WHAT THIS SCRIPT DOES, IN ORDER
+    1. Reads both accounts: publicNetworkAccess, default action, key access.
+    2. Reads the perimeter's associations and checks both accounts are in it.
+    3. Finds the policy assignments that touched the accounts (Policy
+       Insights), and — belt and braces — creates a policy EXEMPTION for them
+       on the Cortex resource group (Waiver, -ExpiresInDays, default 90).
+       -NoExemption skips it.
+    4. Puts publicNetworkAccess to SecuredByPerimeter (perimeter mode) or
+       Enabled (no perimeter), reads it back, and retries while the policy is
+       still winning — a Modify effect rewrites an update on the way in, so a
+       successful update proves nothing until it is read back.
+    5. Records SecuredByPerimeter in the azd environment so the next provision
+       writes it directly.
 
-  infra/modules/data.bicep creates both accounts with public network access
-  Enabled and the default action Allow. When they later read otherwise,
-  something changed them after the deployment — in a managed sandbox that is
-  a tenant Azure Policy with a Modify or DeployIfNotExists effect, the same
-  family that disabled public access on the Key Vault. The effects for Cortex:
+  Your laptop is outside the perimeter by design, so there is no data-plane
+  check from here in perimeter mode: the bootstrap job (Deploy-Cortex.ps1 step
+  11) is the proof, from inside Azure as the Cortex identity.
 
-    sample-data account   bootstrap cannot upload, the Data Map scan finds
-                          nothing, every AI Search indexer fails
-    state account         the Azure Files share cannot be mounted, so the
-                          cortex-web container never starts and every path on
-                          it answers 404 — from the platform, not the app
-
-  WHAT IT DOES, IN ORDER
-    1. Reads both accounts: publicNetworkAccess, networkAcls.defaultAction,
-       allowSharedKeyAccess (the state share is mounted with the account key).
-    2. Finds the policy assignments that evaluated those accounts with an
-       effect that can change or block them (modify, deployIfNotExists, deny,
-       append) and whose rule touches those three properties.
-    3. Creates a policy EXEMPTION (category Waiver) on the Cortex resource
-       group for each such assignment — narrowed to the offending definitions
-       when the assignment is an initiative — so the settings stay put.
-       Skipped with -NoExemption; nothing is written with -ReportOnly.
-    4. Puts the settings back to what the Bicep intended.
-    5. Verifies from this machine with a data-plane call using your sign-in,
-       and grants you Storage Blob Data Contributor if that is what is missing.
-
-  Exemptions need Microsoft.Authorization/policyExemptions/write on the
-  resource group (Owner or Resource Policy Contributor). Without it the exact
-  command is printed for whoever has it, and the settings are still repaired —
-  a Modify policy may then put them back within about 24 hours, which is why
-  Deploy-Cortex.ps1 runs this on every deployment.
+  Exit codes: 0 nothing was wrong · 2 drift found and repaired · 1 drift found
+  and not repaired (or -ReportOnly).
 
 .EXAMPLE
   .\scripts\Set-CortexStorageAccess.ps1
-  Report, exempt, repair, verify. Reads the account names from the azd environment.
+  Check, exempt, repair. Reads names from the azd environment.
 
 .EXAMPLE
   .\scripts\Set-CortexStorageAccess.ps1 -ReportOnly
   Say what is wrong and which policy did it. Change nothing.
-
-.EXAMPLE
-  .\scripts\Set-CortexStorageAccess.ps1 -NoExemption
-  Repair the settings without touching Azure Policy.
 #>
 [CmdletBinding()]
 param(
@@ -69,6 +58,9 @@ param(
   [string]$ResourceGroup,
   [string]$DataAccount,
   [string]$StateAccount,
+  # The perimeter name. Empty = read NSP_NAME from the azd environment; if that
+  # is empty too, the accounts are expected on their own rules (public Enabled).
+  [string]$Perimeter,
   [switch]$ReportOnly,
   [switch]$NoExemption,
   [int]$ExpiresInDays = 90,
@@ -93,25 +85,33 @@ function Get-AzJson {
   try { return ($out | ConvertFrom-Json) } catch { return $null }
 }
 
-# Exit codes, so Deploy-Cortex.ps1 can tell the three outcomes apart:
-#   0  nothing was wrong          2  drift found and repaired
-#   1  drift found and NOT repaired (report-only, or the repair was refused)
+# Run az, capturing stderr as text, without tripping $ErrorActionPreference.
+function Invoke-AzText {
+  param([string[]]$Arguments)
+  $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  $text = (& az @Arguments 2>&1 | Out-String)
+  $rc = $LASTEXITCODE
+  $ErrorActionPreference = $prev
+  return @{ rc = $rc; text = $text }
+}
+
 $script:exit = 0
 
 try {
   # ------------------------------------------------------------ 1 names
-  if (-not $ResourceGroup -or -not $DataAccount -or -not $StateAccount) {
+  $envValues = @{}
+  if (-not $ResourceGroup -or -not $DataAccount -or -not $StateAccount -or -not $PSBoundParameters.ContainsKey('Perimeter')) {
     if ($EnvironmentName) { azd env select $EnvironmentName 2>$null | Out-Null }
-    azd env get-values 2>$null | ForEach-Object {
-      if (-not $ResourceGroup -and $_ -match '^AZURE_RESOURCE_GROUP="?([^"]*)"?$')     { $ResourceGroup = $Matches[1] }
-      if (-not $DataAccount   -and $_ -match '^DATA_STORAGE_ACCOUNT="?([^"]*)"?$')    { $DataAccount   = $Matches[1] }
-      if (-not $StateAccount  -and $_ -match '^STATE_STORAGE_ACCOUNT="?([^"]*)"?$')   { $StateAccount  = $Matches[1] }
-    }
+    azd env get-values 2>$null | ForEach-Object { if ($_ -match '^(\w+)="?([^"]*)"?$') { $envValues[$Matches[1]] = $Matches[2] } }
+    if (-not $ResourceGroup) { $ResourceGroup = $envValues['AZURE_RESOURCE_GROUP'] }
+    if (-not $DataAccount)   { $DataAccount   = $envValues['DATA_STORAGE_ACCOUNT'] }
+    if (-not $StateAccount)  { $StateAccount  = $envValues['STATE_STORAGE_ACCOUNT'] }
+    if (-not $PSBoundParameters.ContainsKey('Perimeter')) { $Perimeter = $envValues['NSP_NAME'] }
   }
   if (-not $ResourceGroup) { throw 'No resource group. Pass -ResourceGroup, or run from a folder with an azd environment.' }
   $accounts = @()
-  if ($DataAccount)  { $accounts += @{ Name = $DataAccount;  Role = 'sample data'; SharedKey = $null } }
-  if ($StateAccount) { $accounts += @{ Name = $StateAccount; Role = 'state share'; SharedKey = $true } }
+  if ($DataAccount)  { $accounts += @{ Name = $DataAccount;  Role = 'sample data' } }
+  if ($StateAccount) { $accounts += @{ Name = $StateAccount; Role = 'state blobs' } }
   if ($accounts.Count -eq 0) {
     Keep 'No storage accounts in this environment (deployed with -NoData). Nothing to check.'
     exit 0
@@ -119,28 +119,55 @@ try {
 
   $sub  = az account show --query id -o tsv 2>$null
   $rgId = "/subscriptions/$sub/resourceGroups/$ResourceGroup"
+  $perimeterMode = [bool]$Perimeter
+  $wantPna = if ($perimeterMode) { 'SecuredByPerimeter' } else { 'Enabled' }
 
-  if (-not $Quiet) { Write-Host "`nStorage network access in $ResourceGroup`n" }
+  if (-not $Quiet) {
+    Write-Host "`nStorage network access in $ResourceGroup" -NoNewline
+    Write-Host $(if ($perimeterMode) { " — perimeter $Perimeter`n" } else { " — no perimeter`n" })
+  }
 
-  # ----------------------------------------------------------- 2 read
-  # What the Bicep set, and what is live. Drift in any of the three is the
-  # signal; which of them drifted says what broke.
+  # -------------------------------------------------- 2 the perimeter
+  # Associations are read from ARM directly: no CLI extension needed, and the
+  # same call works whether or not `az network perimeter` is installed.
+  $associated = @{}
+  if ($perimeterMode) {
+    $assoc = Get-AzJson @('rest','--method','get','--url',"https://management.azure.com$rgId/providers/Microsoft.Network/networkSecurityPerimeters/$Perimeter/resourceAssociations?api-version=2024-07-01")
+    if (-not $assoc) {
+      Fail "Perimeter $Perimeter was not found in $ResourceGroup (or could not be read). Provision first: .\scripts\Deploy-Cortex.ps1"
+      $script:exit = 1
+    } else {
+      foreach ($a in @($assoc.value)) {
+        $rid = "$($a.properties.privateLinkResource.id)".ToLower()
+        $associated[$rid] = @{ mode = $a.properties.accessMode; state = $a.properties.provisioningState; name = $a.name }
+      }
+    }
+  }
+
+  # ----------------------------------------------------------- 3 read
   $drifted = @()
   foreach ($a in $accounts) {
     $live = Get-AzJson @('storage','account','show','-n',$a.Name,'-g',$ResourceGroup,'-o','json')
     if (-not $live) { Fail "$($a.Name) not found in $ResourceGroup"; $script:exit = 1; continue }
     $a.Id        = $live.id
-    $a.Pna       = $live.publicNetworkAccess
-    $a.Action    = $live.networkRuleSet.defaultAction
-    $a.Bypass    = $live.networkRuleSet.bypass
+    $a.Pna       = "$($live.publicNetworkAccess)"
+    $a.Action    = "$($live.networkRuleSet.defaultAction)"
     $a.KeyAccess = $live.allowSharedKeyAccess
     $problems = @()
-    # Unset means the Azure default, which is open; only an explicit value can be drift.
-    if ($a.Pna -and $a.Pna -ne 'Enabled')     { $problems += "public network access is $($a.Pna)" }
-    if ($a.Action -and $a.Action -ne 'Allow') { $problems += "default action is $($a.Action)" }
-    if ($a.SharedKey -eq $true -and $a.KeyAccess -eq $false) { $problems += 'shared-key access is off (the share is mounted with the account key)' }
+    if ($perimeterMode) {
+      $assocInfo = $associated["$($a.Id)".ToLower()]
+      if ($assoc -and -not $assocInfo) { $problems += "not associated with perimeter $Perimeter" }
+      elseif ($assocInfo -and $assocInfo.state -and $assocInfo.state -ne 'Succeeded') { $problems += "association is $($assocInfo.state)" }
+      if ($a.Pna -ne 'SecuredByPerimeter') { $problems += "public network access is $($a.Pna) (wanted SecuredByPerimeter)" }
+      $a.Repairable = [bool]$assocInfo   # the value is only accepted once the association exists
+    } else {
+      if ($a.Pna -and $a.Pna -ne 'Enabled')     { $problems += "public network access is $($a.Pna)" }
+      if ($a.Action -and $a.Action -ne 'Allow') { $problems += "default action is $($a.Action)" }
+      $a.Repairable = $true
+    }
     if ($problems.Count -eq 0) {
-      Ok "$($a.Name) ($($a.Role)) — public endpoint open, default action Allow"
+      $how = if ($perimeterMode) { "SecuredByPerimeter, $($associated["$($a.Id)".ToLower()].mode) in $Perimeter" } else { 'public endpoint open, default action Allow' }
+      Ok "$($a.Name) ($($a.Role)) — $how$(if ($a.KeyAccess -eq $false) { ', keyless' })"
     } else {
       Fail "$($a.Name) ($($a.Role)) — $($problems -join '; ')"
       $a.Problems = $problems
@@ -148,199 +175,156 @@ try {
     }
   }
 
-  if ($drifted.Count -eq 0) {
-    if (-not $Quiet) { Write-Host '' }
-    exit 0
-  }
-
-  Info 'infra/modules/data.bicep created these with public access Enabled and default action Allow.'
-  Info 'Something changed them after provisioning — in a managed sandbox that is a tenant Azure Policy.'
-
-  # -------------------------------------------------- 3 which policy did it
-  # Policy Insights records every assignment that evaluated a resource, with
-  # the effect it applied. Only effects that can CHANGE or BLOCK a resource
-  # matter here; audit and auditIfNotExists only report.
-  $culprits = @{}   # assignmentId -> @{ Name; Refs = [set of definition reference ids]; Effects }
-  $changing = @('modify','deployifnotexists','deny','append')
-  $fields = 'publicNetworkAccess|networkAcls|defaultAction|allowSharedKeyAccess'
-  $definitionCache = @{}
-  foreach ($a in $drifted) {
-    $states = Get-AzJson @('policy','state','list','--resource',$a.Id,'-o','json')
-    if (-not $states) { continue }
-    foreach ($s in @($states)) {
-      $effect = "$($s.policyDefinitionAction)".ToLower()
-      if ($effect -notin $changing) { continue }
-      $defId = $s.policyDefinitionId
-      if (-not $definitionCache.ContainsKey($defId)) {
-        # Works for built-in, subscription and management-group definitions alike.
-        $def = Get-AzJson @('rest','--method','get','--url',"https://management.azure.com${defId}?api-version=2023-04-01")
-        $rule = if ($def) { ($def.properties.policyRule | ConvertTo-Json -Depth 30 -Compress) } else { '' }
-        $definitionCache[$defId] = @{ Touches = ($rule -match 'Microsoft.Storage/storageAccounts' -and $rule -match $fields); Name = $def.properties.displayName }
+  # ------------------------------------------------ 4 which policy, exemption
+  # Policy Insights records every assignment that evaluated a resource and the
+  # effect it applied. Run every time — the exemption is insurance for demo
+  # day, not only a repair — but only against assignments whose rule touches
+  # the network or key settings of storage accounts.
+  $culprits = @{}
+  if (-not $NoExemption -or $drifted.Count -gt 0) {
+    $changing = @('modify','deployifnotexists','deny','append')
+    $fields = 'publicNetworkAccess|networkAcls|defaultAction|allowSharedKeyAccess'
+    $definitionCache = @{}
+    foreach ($a in $accounts) {
+      if (-not $a.Id) { continue }
+      $states = Get-AzJson @('policy','state','list','--resource',$a.Id,'-o','json')
+      foreach ($s in @($states)) {
+        $effect = "$($s.policyDefinitionAction)".ToLower()
+        if ($effect -notin $changing) { continue }
+        $defId = $s.policyDefinitionId
+        if (-not $definitionCache.ContainsKey($defId)) {
+          $def = Get-AzJson @('rest','--method','get','--url',"https://management.azure.com${defId}?api-version=2023-04-01")
+          $rule = if ($def) { ($def.properties.policyRule | ConvertTo-Json -Depth 30 -Compress) } else { '' }
+          $definitionCache[$defId] = @{ Touches = ($rule -match 'Microsoft.Storage/storageAccounts' -and $rule -match $fields); Name = "$($def.properties.displayName)" }
+        }
+        if (-not $definitionCache[$defId].Touches) { continue }
+        $key = $s.policyAssignmentId
+        if (-not $culprits.ContainsKey($key)) {
+          $culprits[$key] = @{ Name = $s.policyAssignmentName; Display = $definitionCache[$defId].Name; Refs = @(); Effects = @(); Initiative = [bool]$s.policySetDefinitionId }
+        }
+        if ($s.policyDefinitionReferenceId -and $culprits[$key].Refs -notcontains $s.policyDefinitionReferenceId) { $culprits[$key].Refs += $s.policyDefinitionReferenceId }
+        if ($culprits[$key].Effects -notcontains $effect) { $culprits[$key].Effects += $effect }
       }
-      if (-not $definitionCache[$defId].Touches) { continue }
-      $key = $s.policyAssignmentId
-      if (-not $culprits.ContainsKey($key)) {
-        $culprits[$key] = @{ Name = $s.policyAssignmentName; Display = $definitionCache[$defId].Name; Refs = @(); Effects = @(); Initiative = [bool]$s.policySetDefinitionId }
-      }
-      if ($s.policyDefinitionReferenceId -and $culprits[$key].Refs -notcontains $s.policyDefinitionReferenceId) { $culprits[$key].Refs += $s.policyDefinitionReferenceId }
-      if ($culprits[$key].Effects -notcontains $effect) { $culprits[$key].Effects += $effect }
     }
-  }
-
-  if ($culprits.Count -gt 0) {
     foreach ($k in $culprits.Keys) {
       $c = $culprits[$k]
-      Warn2 "Policy assignment '$($c.Name)' ($($c.Effects -join ', ')) — $($c.Display)"
-      Info  $k
+      Info "Policy '$($c.Name)' ($($c.Effects -join ', ')) applies to these accounts — $($c.Display)"
     }
-  } else {
-    Warn2 'No policy assignment with a changing effect could be attributed to these accounts.'
-    # The Activity Log names whoever wrote the account. A policy remediation
-    # shows the assignment's managed identity as the caller.
-    foreach ($a in $drifted) {
-      # No `&&` or `|` in the query: on Windows `az` is a .cmd and its arguments
-      # pass through cmd.exe. The status is filtered here instead.
-      $log = Get-AzJson @('monitor','activity-log','list','--resource-id',$a.Id,'--offset','3d','--query',"[?operationName.value=='Microsoft.Storage/storageAccounts/write'].{time:eventTimestamp, caller:caller, status:status.value}",'-o','json')
-      foreach ($e in (@($log) | Where-Object { $_.status -eq 'Succeeded' } | Select-Object -First 5)) { Info "$($a.Name) written $($e.time) by $($e.caller)" }
-    }
-    Info 'If the settings come back after this repair, that caller is what to exempt.'
   }
 
   if ($ReportOnly) {
     Write-Host ''
-    Warn2 'Report only — nothing was changed. Run without -ReportOnly to repair.'
-    exit 1
+    if ($drifted.Count -gt 0) { Warn2 'Report only — nothing was changed. Run without -ReportOnly to repair.'; exit 1 }
+    exit 0
   }
 
-  # ---------------------------------------------------------- 4 exempt
-  # An exemption is scoped to the Cortex resource group and, for an
-  # initiative, to the definitions that actually touch these settings — the
-  # rest of the initiative keeps applying. Waiver, because the sandbox has no
-  # private endpoints or VNet for a compliant alternative; the expiry keeps
-  # it honest.
-  $expires = (Get-Date).ToUniversalTime().AddDays($ExpiresInDays).ToString('yyyy-MM-ddTHH:mm:ssZ')
   if ($culprits.Count -gt 0 -and -not $NoExemption) {
+    # The timestamp is formatted with the invariant culture ON PURPOSE. ':' in
+    # a .NET format string is the time-separator placeholder, and a Danish
+    # Windows renders it as '.', which the CLI then refuses to parse. That is
+    # the bug that stopped the first exemption being created.
+    $expires = (Get-Date).ToUniversalTime().AddDays($ExpiresInDays).ToString('yyyy-MM-ddTHH:mm:ssZ', [System.Globalization.CultureInfo]::InvariantCulture)
     foreach ($k in $culprits.Keys) {
       $c = $culprits[$k]
       $hash = [BitConverter]::ToString([System.Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes($k))).Replace('-','').Substring(0,10).ToLower()
       $exName = "cortex-storage-$hash"
       $have = Get-AzJson @('policy','exemption','show','--name',$exName,'--scope',$rgId,'-o','json')
-      if ($have) { Keep "Exemption $exName already covers '$($c.Name)'"; continue }
+      if ($have) { Keep "Exemption $exName already covers '$($c.Name)' (expires $("$($have.expiresOn)".Substring(0, [Math]::Min(10, "$($have.expiresOn)".Length))))"; continue }
       $exArgs = @('policy','exemption','create','--name',$exName,'--policy-assignment',$k,'--scope',$rgId,
-                '--exemption-category','Waiver','--expires-on',$expires,
-                '--display-name',"Cortex PoC — storage public endpoint ($($c.Name))",
-                '--description','Cortex proof of concept: the sample-data and state storage accounts are reached over the public endpoint with Entra authentication. No VNet or private endpoints exist in this phase. Remove when the full build adds them.',
-                '--only-show-errors','-o','none')
+                  '--exemption-category','Waiver','--expires-on',$expires,
+                  '--display-name',"Cortex PoC — storage accounts inside perimeter ($($c.Name))",
+                  '--description','Cortex proof of concept: the sample-data and state storage accounts are reached with Entra tokens through a Network Security Perimeter. Insurance against the policy changing under a demo. Remove when the full build lands.',
+                  '--only-show-errors','-o','none')
       if ($c.Initiative -and $c.Refs.Count -gt 0) { $exArgs += '--policy-definition-reference-ids'; $exArgs += $c.Refs }
-      $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-      $err = (& az @exArgs 2>&1 | Out-String)
-      $rc = $LASTEXITCODE
-      $ErrorActionPreference = $prev
-      if ($rc -eq 0) {
+      $r = Invoke-AzText $exArgs
+      if ($r.rc -eq 0) {
         Ok "Exemption $exName created for '$($c.Name)' (expires $($expires.Substring(0,10)))"
       } else {
         Warn2 "Could not create the exemption for '$($c.Name)'."
-        if ($err -match 'AuthorizationFailed|does not have authorization') {
-          Info 'You lack Microsoft.Authorization/policyExemptions/write on the resource group. Ask an Owner to run:'
+        if ($r.text -match 'AuthorizationFailed|does not have authorization') {
+          Info 'You lack Microsoft.Authorization/policyExemptions/write on the resource group. An Owner can run:'
         } else {
-          Info ((($err.Trim() -split "`n") | Select-Object -First 2) -join ' ')
+          Info ((($r.text.Trim() -split "`n") | Select-Object -First 2) -join ' ')
           Info 'Command to run by hand:'
         }
         $refs = if ($c.Initiative -and $c.Refs.Count -gt 0) { " --policy-definition-reference-ids $($c.Refs -join ' ')" } else { '' }
         Write-Host "    az policy exemption create --name $exName --policy-assignment '$k' --scope '$rgId' --exemption-category Waiver --expires-on $expires --display-name 'Cortex PoC storage'$refs"
-        Info 'Without it a Modify policy can put the settings back within about a day; re-running this script repairs them again.'
       }
     }
-  } elseif ($NoExemption -and $culprits.Count -gt 0) {
-    Warn2 'Exemptions skipped (-NoExemption). The policy may revert the settings within about a day.'
+  }
+
+  if ($drifted.Count -eq 0) {
+    if (-not $Quiet) { Write-Host '' }
+    exit $script:exit
   }
 
   # ---------------------------------------------------------- 5 repair
-  # Two ways a policy fights back, both handled by waiting for the exemption:
+  # Two ways a policy fights back, both handled by reading the result back:
   #   Deny    — the update is refused outright (RequestDisallowedByPolicy).
   #   Modify  — the update "succeeds" but the effect rewrites the properties
-  #             on the way in, so the account reads exactly as before. That is
-  #             why every update is read back rather than trusted.
-  # Exemptions take a minute or two to apply, hence the pauses.
+  #             on the way in, so the account reads exactly as before.
+  # In perimeter mode SecuredByPerimeter is the value the policy excludes, so
+  # the first attempt should stick; the retries cover an exemption that is
+  # still propagating when the perimeter is not enough.
   $repaired = 0
   foreach ($a in $drifted) {
-    $update = @('storage','account','update','-n',$a.Name,'-g',$ResourceGroup,
-                '--public-network-access','Enabled','--default-action','Allow','--bypass','AzureServices','--only-show-errors','-o','none')
-    if ($a.SharedKey -eq $true) { $update += @('--allow-shared-key-access','true') }
+    if ($perimeterMode -and -not $a.Repairable) {
+      Fail "$($a.Name) is not associated with $Perimeter, so SecuredByPerimeter cannot be set. Provision first: .\scripts\Deploy-Cortex.ps1"
+      $script:exit = 1
+      continue
+    }
+    $update = @('storage','account','update','-n',$a.Name,'-g',$ResourceGroup,'--public-network-access',$wantPna,'--only-show-errors','-o','none')
+    if (-not $perimeterMode) { $update += @('--default-action','Allow','--bypass','AzureServices') }
     $done = $false
-    $err = ''
+    $last = ''
     foreach ($attempt in 1..5) {
-      $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-      $err = (& az @update 2>&1 | Out-String)
-      $rc = $LASTEXITCODE
-      $ErrorActionPreference = $prev
-      if ($rc -eq 0) {
+      $r = Invoke-AzText $update
+      $last = $r.text
+      if ($r.rc -eq 0) {
         $after = Get-AzJson @('storage','account','show','-n',$a.Name,'-g',$ResourceGroup,'-o','json')
-        $stillLocked = ($after.publicNetworkAccess -and $after.publicNetworkAccess -ne 'Enabled') -or
-                       ($after.networkRuleSet.defaultAction -and $after.networkRuleSet.defaultAction -ne 'Allow') -or
-                       ($a.SharedKey -eq $true -and $after.allowSharedKeyAccess -eq $false)
-        if (-not $stillLocked) { $done = $true; break }
-        $err = 'a Modify policy rewrote the settings on the way in'
-        if ($attempt -lt 5) { Info "The update went through but a Modify policy put the lock straight back — waiting 30 seconds for the exemption to take effect (attempt $attempt of 5)"; Start-Sleep -Seconds 30 }
-      } elseif ($err -match 'RequestDisallowedByPolicy') {
-        if ($attempt -lt 5) { Info "A Deny policy still refuses the change — waiting 30 seconds for the exemption to apply (attempt $attempt of 5)"; Start-Sleep -Seconds 30 }
+        $stillWrong = ("$($after.publicNetworkAccess)" -ne $wantPna) -or
+                      (-not $perimeterMode -and $after.networkRuleSet.defaultAction -and $after.networkRuleSet.defaultAction -ne 'Allow')
+        if (-not $stillWrong) { $done = $true; break }
+        $last = "a Modify policy rewrote publicNetworkAccess to $($after.publicNetworkAccess) on the way in"
+        if ($attempt -lt 5) { Info "The update went through but the policy put it back — waiting 30 seconds for the exemption to take effect (attempt $attempt of 5)"; Start-Sleep -Seconds 30 }
+      } elseif ($r.text -match 'RequestDisallowedByPolicy') {
+        if ($attempt -lt 5) { Info "A Deny policy refuses the change — waiting 30 seconds for the exemption to apply (attempt $attempt of 5)"; Start-Sleep -Seconds 30 }
       } else {
-        Fail "$($a.Name) — $((($err.Trim()) -split "`n" | Select-Object -First 1))"
+        Fail "$($a.Name) — $((($r.text.Trim()) -split "`n" | Select-Object -First 1))"
         break
       }
     }
     if ($done) {
       $repaired++
-      Ok "$($a.Name) — public endpoint re-enabled, default action Allow$(if ($a.SharedKey) { ', shared-key access on' })"
+      Ok "$($a.Name) — public network access is now $wantPna"
     } else {
       $script:exit = 1
-      Fail "$($a.Name) could not be repaired ($((($err.Trim()) -split "`n" | Select-Object -First 1)))."
-      if ($err -match 'RequestDisallowedByPolicy|Modify policy') {
-        Info 'The policy is still winning. An exemption can take several minutes to take effect: wait, then run this again.'
-        Info 'If no exemption could be created, an Owner needs to create it (command above), or deploy without the share:'
-        Info '    .\scripts\Deploy-Cortex.ps1 -NoStateShare   (state in memory; the data chain still needs the sample-data account open)'
+      Fail "$($a.Name) could not be repaired ($((($last.Trim()) -split "`n" | Select-Object -First 1)))."
+      if ($perimeterMode) {
+        Info 'SecuredByPerimeter should be excluded from the policy by name. If it is still being rewritten, paste the'
+        Info 'policy rule (docs/DEPLOY.md §6 has the command) — the exclusion may key on something other than this value.'
       }
     }
   }
 
-  # ---------------------------------------------------------- 6 verify
-  # The proof is a data-plane call from here with your own sign-in — the same
-  # thing bootstrap does. Network rules take a few seconds to apply.
-  if ($DataAccount -and ($drifted | Where-Object { $_.Name -eq $DataAccount })) {
-    $me = az ad signed-in-user show --query id -o tsv 2>$null
-    $verified = $false
-    foreach ($attempt in 1..4) {
-      $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-      $err = (az storage container list --account-name $DataAccount --auth-mode login --only-show-errors -o none 2>&1 | Out-String)
-      $rc = $LASTEXITCODE
-      $ErrorActionPreference = $prev
-      if ($rc -eq 0) { $verified = $true; break }
-      if ($err -match 'AuthorizationPermissionMismatch|required permissions|does not have permission') {
-        # Network is fine; the role is what is missing. Grant it and try once more.
-        if ($me) {
-          Warn2 'The network answers; your account holds no data-plane role on it. Granting Storage Blob Data Contributor.'
-          $dataId = ($drifted | Where-Object { $_.Name -eq $DataAccount }).Id
-          az role assignment create --assignee-object-id $me --assignee-principal-type User --role 'Storage Blob Data Contributor' --scope $dataId --only-show-errors -o none 2>$null
-          Info 'A new role assignment can take up to five minutes to apply — trying again in 20 seconds.'
-          Start-Sleep -Seconds 20
-        }
-      } elseif ($err -match 'AuthorizationFailure|blocked by network rules|network rule' -and $attempt -lt 4) {
-        Info "Network rules not applied yet — retrying in 15 seconds (attempt $attempt of 4)"
-        Start-Sleep -Seconds 15
-      } else { break }
-    }
-    if ($verified) { Ok "$DataAccount answers a data-plane call from this machine" }
-    elseif ($err -match 'AuthorizationPermissionMismatch|required permissions|does not have permission') { Warn2 "$DataAccount is reachable; the role grant is still propagating. Re-run bootstrap in a few minutes." }
-    else { $script:exit = 1; Fail "$DataAccount still refuses this machine — $((($err.Trim()) -split "`n" | Select-Object -First 1))" }
+  # ------------------------------------------------ 6 remember the choice
+  # Bicep writes publicNetworkAccess on every provision. Once the perimeter
+  # holds, the template should write SecuredByPerimeter itself rather than
+  # Enabled-then-repair on every run.
+  if ($perimeterMode -and $repaired -gt 0 -and $script:exit -eq 0 -and (Get-Command azd -ErrorAction SilentlyContinue)) {
+    azd env set STORAGE_PUBLIC_NETWORK_ACCESS SecuredByPerimeter 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { Ok 'Recorded STORAGE_PUBLIC_NETWORK_ACCESS=SecuredByPerimeter for the next provision' }
   }
 
   if ($repaired -gt 0 -and $script:exit -eq 0) { $script:exit = 2 }
   Write-Host ''
   if ($script:exit -eq 2) {
-    Ok 'Repaired. If cortex-web was down, restart its revision (Deploy-Cortex.ps1 does this) and re-run bootstrap:'
-    Info '    . .\scripts\Set-CortexEnv.ps1'
-    Info '    node scripts/bootstrap.js --only=data'
-    Info '    node scripts/bootstrap.js --only=search'
+    if ($perimeterMode) {
+      Ok 'Repaired. Your laptop is outside the perimeter by design; the bootstrap job is the proof from inside Azure:'
+      Info '    .\scripts\Deploy-Cortex.ps1 -SkipProvision -SkipAuth   (runs the job and the rest of bootstrap)'
+    } else {
+      Ok 'Repaired. Re-run bootstrap:  . .\scripts\Set-CortexEnv.ps1;  node scripts/bootstrap.js --only=data;  node scripts/bootstrap.js --only=search'
+    }
   }
   exit $script:exit
 }

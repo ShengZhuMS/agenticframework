@@ -60,6 +60,11 @@
     "searchSku":              { "value": "${SEARCH_SKU=basic}" },
     "searchSemantic":         { "value": "${SEARCH_SEMANTIC=disabled}" },
     "deployerPrincipalId":    { "value": "${DEPLOYER_PRINCIPAL_ID=}" },
-    "chatPolicy":             { "value": "${CORTEX_CHAT_POLICY=all-staff}" }
+    "chatPolicy":             { "value": "${CORTEX_CHAT_POLICY=all-staff}" },
+
+    "createPerimeter":        { "value": "${CREATE_PERIMETER=true}" },
+    "storageAccessMode":      { "value": "${STORAGE_ACCESS_MODE=Enforced}" },
+    "searchAccessMode":       { "value": "${SEARCH_ACCESS_MODE=Learning}" },
+    "storagePublicNetworkAccess": { "value": "${STORAGE_PUBLIC_NETWORK_ACCESS=Enabled}" }
   }
 }

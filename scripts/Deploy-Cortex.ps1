@@ -57,6 +57,18 @@
   Full deployment, and map an Entra group onto the name the access rules use.
 
 .EXAMPLE
+  .\scripts\Deploy-Cortex.ps1 -DemoIdentities -DemoUserEmail colleague@defra.gov.uk
+  Full deployment, plus the "same page, different eyes" set-up: the demo Entra
+  groups are created and mapped, you are put in all of them, and the colleague
+  is invited into the analysts group only.
+
+.EXAMPLE
+  .\scripts\Deploy-Cortex.ps1 -NoPerimeter
+  Leave the storage accounts on their own network rules instead of inside the
+  Network Security Perimeter. Only sensible in a tenant without the SFI
+  storage policy; in this one the accounts are then closed by policy.
+
+.EXAMPLE
   .\scripts\Deploy-Cortex.ps1 -Reset
   Delete everything Cortex created and start clean. Prompts first.
 #>
@@ -116,6 +128,35 @@ param(
   [string]$ChatPolicy           = 'all-staff',
   [switch]$NoScanWait,
 
+  # Round 6: the two storage accounts live inside a Network Security Perimeter
+  # (the tenant's storage policy excludes NSP-configured resources), state is
+  # blobs read with the managed identity, and bootstrap's storage-touching
+  # section runs as a Container Apps job inside the perimeter. Step 7b checks
+  # the accounts are SecuredByPerimeter and repairs them; a policy exemption
+  # on the Cortex resource group is created as insurance unless
+  # -NoPolicyExemption. -NoPerimeter switches the whole thing off.
+  [switch]$NoPolicyExemption,
+  [switch]$NoPerimeter,
+  [ValidateSet('Enforced','Learning')]
+  [string]$StorageAccessMode    = 'Enforced',
+  [ValidateSet('Enforced','Learning')]
+  [string]$SearchAccessMode     = 'Learning',
+
+  # Round 5: the demo identities. -DemoIdentities creates the Entra groups the
+  # access rules read, adds you to all of them and maps them; each
+  # -DemoUserEmail is invited (or found) and put in the -DemoUserGroups only,
+  # so the two accounts see different Marketplaces.
+  [switch]$DemoIdentities,
+  [string[]]$DemoUserEmail      = @(),
+  [string[]]$DemoGroupMap       = @(
+    'analysts=Cortex Analysts',
+    'waste-crime=Cortex Waste Crime Observatory',
+    'ne-evidence=Cortex NE Evidence',
+    'ea-flood-risk=Cortex EA Flood Risk',
+    'cortex-official-sensitive=Cortex Official-Sensitive'
+  ),
+  [string[]]$DemoUserGroups     = @('Cortex Analysts'),
+
   [switch]$WhatIfResources,
   [switch]$SkipProvision,
   [switch]$SkipBootstrap,
@@ -165,10 +206,97 @@ function Get-CortexJson {
   param([string]$Uri, [string]$Method = 'GET')
   try {
     $r = Invoke-WebRequest -Uri $Uri -Method $Method -MaximumRedirection 0 -SkipHttpErrorCheck -TimeoutSec 120 -ErrorAction Stop
-  } catch { return @{ ok = $false; error = $_.Exception.Message } }
+  } catch {
+    # The ingress holds a request open while a replica is still starting and
+    # gives up after a couple of minutes — the browser's "stream timeout".
+    # That is the platform, not the app, exactly like a 404 below.
+    if ($_.Exception.Message -match 'timeout|timed out|canceled|cancelled') { return @{ ok = $false; notServing = $true; error = 'timed out — the app is not answering' } }
+    return @{ ok = $false; error = $_.Exception.Message }
+  }
   if ($r.StatusCode -in 301,302,303,307,308,401) { return @{ ok = $false; behindSignIn = $true; status = $r.StatusCode } }
-  try { $j = $r.Content | ConvertFrom-Json } catch { return @{ ok = $false; error = "not JSON (HTTP $($r.StatusCode))" } }
+  # A 404 or 5xx with a non-JSON body did not come from Cortex: the app answers
+  # every health path with JSON. It is the platform answering for a revision
+  # that is not serving — see Wait-CortexRevision.
+  if ($r.StatusCode -in 404,502,503,504) { return @{ ok = $false; notServing = $true; status = $r.StatusCode; error = "HTTP $($r.StatusCode) from the platform — the app is not answering" } }
+  try { $j = $r.Content | ConvertFrom-Json } catch { return @{ ok = $false; error = "not JSON (HTTP $($r.StatusCode))"; status = $r.StatusCode } }
   return @{ ok = [bool]$j.ok; json = $j; status = $r.StatusCode }
+}
+
+# Is the app's newest revision actually serving? `az containerapp show` reports
+# the template happily while the revision behind it has failed — a volume that
+# cannot be mounted, an image that cannot be pulled, a container that exits on
+# start. The platform then answers 404 on every path, which reads like a
+# routing fault and is not. This waits for a revision that is still coming up,
+# restarts one that has failed (once, when asked), and reports what it saw.
+function Wait-CortexRevision {
+  param([string]$App, [string]$Rg, [int]$TimeoutSeconds = 150, [switch]$RestartIfFailed)
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $restartedAt = $null
+  $rev = ''; $health = ''; $running = ''; $prov = ''
+  while ($true) {
+    $live = Get-AzJson @('containerapp','show','-n',$App,'-g',$Rg,'-o','json')
+    if (-not $live) { return @{ ok = $false; revision = ''; health = 'not found'; running = ''; provisioning = '' } }
+    $rev = $live.properties.latestRevisionName
+    $state = Get-AzJson @('containerapp','revision','show','-n',$App,'-g',$Rg,'--revision',$rev,'-o','json')
+    $health  = "$($state.properties.healthState)"
+    $running = "$($state.properties.runningState)"
+    $prov    = "$($state.properties.provisioningState)"
+    if ($running -in @('Running','RunningAtMaxScale','ScaledToZero') -and $health -ne 'Unhealthy' -and $prov -ne 'Failed') {
+      return @{ ok = $true; revision = $rev; health = $health; running = $running; provisioning = $prov }
+    }
+    $failed = ($prov -eq 'Failed') -or ($running -in @('Failed','Degraded','Stopped')) -or ($health -eq 'Unhealthy')
+    if ($failed) {
+      if ($RestartIfFailed -and -not $restartedAt) {
+        Warn2 "$App revision $rev is $running ($health). Restarting it once — the usual cure after a storage account has been repaired."
+        az containerapp revision restart -n $App -g $Rg --revision $rev --only-show-errors -o none 2>$null
+        $restartedAt = Get-Date
+        $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+      } elseif (-not $restartedAt) {
+        break   # nothing else to try
+      } elseif (((Get-Date) - $restartedAt).TotalSeconds -gt 45) {
+        break   # it was restarted and has failed again — final
+      }
+    }
+    if ((Get-Date) -gt $deadline) { break }
+    Start-Sleep -Seconds 10
+  }
+  return @{ ok = $false; revision = $rev; health = $health; running = $running; provisioning = $prov }
+}
+
+# Why is it not serving? The replica's container states carry the reason the
+# revision cannot; the platform's system log carries the text (a mount that
+# failed, an image pull that was refused). Both are printed so the cause is on
+# screen rather than three portal blades away.
+function Show-CortexRevisionFailure {
+  param([string]$App, [string]$Rg, [hashtable]$Result)
+  Fail "$App revision '$($Result.revision)' is not serving — provisioning: $($Result.provisioning), running: $($Result.running), health: $($Result.health)"
+  if ($Result.revision) {
+    $replicas = Get-AzJson @('containerapp','replica','list','-n',$App,'-g',$Rg,'--revision',$Result.revision,'-o','json')
+    foreach ($r in @($replicas)) {
+      foreach ($c in @($r.properties.containers)) {
+        Info "replica $($r.name): container $($c.name) is $($c.runningState) (restarts: $($c.restartCount)) $($c.runningStateDetails)"
+      }
+    }
+  }
+  $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  $raw = @(az containerapp logs show -n $App -g $Rg --type system --tail 60 --only-show-errors 2>$null)
+  $ErrorActionPreference = $prev
+  $lines = @()
+  foreach ($l in $raw) {
+    $text = $l
+    try { $o = $l | ConvertFrom-Json; $text = "$($o.TimeStamp) $($o.Reason) $($o.Msg)$($o.Log)".Trim() } catch { }
+    if ($text) { $lines += $text }
+  }
+  $telling = @($lines | Where-Object { $_ -match 'error|fail|mount|volume|unhealthy|backoff|pull|exit|denied|timeout|unauthori' })
+  if ($telling.Count -eq 0) { $telling = @($lines | Select-Object -Last 8) }
+  foreach ($l in ($telling | Select-Object -Last 12)) { Info "log: $l" }
+  if (($telling -join ' ') -match 'mount|volume|azurefile|cifs|smb') {
+    Warn2 'A revision is still trying to mount the old Azure Files state share. That share was replaced by blobs'
+    Warn2 'in round 6 (the tenant policy disables account keys, so it could never mount here).'
+    Info  'Re-provision so the template without the volume is applied:  .\scripts\Deploy-Cortex.ps1'
+  }
+  Info "Everything the platform logged:  az containerapp logs show -n $App -g $Rg --type system --tail 100"
+  Info "What the app itself logged:      az containerapp logs show -n $App -g $Rg --type console --tail 100"
 }
 
 try {
@@ -311,7 +439,16 @@ try {
     azd deploy --no-prompt
     if ($LASTEXITCODE -ne 0) { throw 'azd deploy failed. See the output above.' }
     Ok 'Images built and pushed'
+    # A pushed image is not a running app. Wait for the new revisions to serve
+    # and say so — or say exactly why they do not.
+    $broken = 0
+    foreach ($app in @('cortex-web','cortex-purview-mcp')) {
+      $rv = Wait-CortexRevision -App $app -Rg $CortexResourceGroup -TimeoutSeconds 180
+      if ($rv.ok) { Ok "$app revision $($rv.revision) is serving" }
+      else { $broken++; Show-CortexRevisionFailure -App $app -Rg $CortexResourceGroup -Result $rv }
+    }
     Write-Host ''
+    if ($broken) { throw "$broken container app(s) did not come up. Fix the cause above and run again." }
     exit 0
   }
 
@@ -669,7 +806,16 @@ try {
       CREATE_SEARCH                 = (-not $NoSearch).ToString().ToLower()
       SEARCH_SKU                    = $SearchSku
       CORTEX_CHAT_POLICY            = $ChatPolicy
+      # Round 6
+      CREATE_PERIMETER              = (-not $NoPerimeter).ToString().ToLower()
+      STORAGE_ACCESS_MODE           = $StorageAccessMode
+      SEARCH_ACCESS_MODE            = $SearchAccessMode
+      # Enabled on the first run (the perimeter association cannot exist before
+      # the account does); SecuredByPerimeter once step 7b has confirmed the
+      # association and recorded the value. Never downgraded here.
+      STORAGE_PUBLIC_NETWORK_ACCESS = $(if (-not $NoPerimeter -and $current['STORAGE_PUBLIC_NETWORK_ACCESS'] -eq 'SecuredByPerimeter') { 'SecuredByPerimeter' } else { 'Enabled' })
     }
+    if ($NoPerimeter) { Warn2 'No perimeter (-NoPerimeter): in this tenant the storage policy will close both accounts and nothing can write to them.' }
     # Who is deploying, so the template can grant Storage Blob Data
     # Contributor on the sample-data account: bootstrap uploads as you, and an
     # Owner still cannot write a blob without a data-plane role.
@@ -719,6 +865,60 @@ try {
   if (-not $configSource) { $configSource = if ($useKeyVault) { 'keyvault' } else { 'direct' } }
   Ok "Configuration source: $configSource"
 
+  # Everything that goes wrong from here is collected and reported honestly at
+  # the end. A deployment with a container app that is not serving used to
+  # finish with a green "Cortex is deployed" — that is the one thing this
+  # script must never do again.
+  $problems = @()
+
+  # --------------------------------------------------- 7b storage and perimeter
+  #
+  # THE TENANT-POLICY TRAP, AND ITS ANSWER. The tenant's SFI policy (a Modify
+  # effect at management-group scope) closes the public endpoint on every
+  # storage account and disables account keys — "excluding NSP configured
+  # resources". The first live run showed both halves: bootstrap refused with
+  # "403 AuthorizationFailure" (the network code), and cortex-web never
+  # starting because its Azure Files share could not be mounted with a key.
+  # Round 6 answers it the way the policy names: both accounts are inside a
+  # Network Security Perimeter with public network access SecuredByPerimeter,
+  # state is blobs read with the managed identity, and the storage-touching
+  # bootstrap section runs as a job inside Azure (step 11). This step checks
+  # the accounts are in that state, repairs them when the policy has been at
+  # work, and keeps a policy exemption on the resource group as insurance.
+  $storageRepaired = $false
+  $perimeter = if ($NoPerimeter) { '' } else { $v['NSP_NAME'] }
+  if ($v['DATA_STORAGE_ACCOUNT'] -or $v['STATE_STORAGE_ACCOUNT']) {
+    Step '7b' $(if ($perimeter) { "Checking the storage accounts are secured by perimeter $perimeter" } else { 'Checking a tenant policy has not locked the storage accounts' })
+    $saArgs = @{ EnvironmentName = $EnvironmentName; ResourceGroup = $CortexResourceGroup; Perimeter = $perimeter; Quiet = $true }
+    if ($v['DATA_STORAGE_ACCOUNT'])  { $saArgs.DataAccount  = $v['DATA_STORAGE_ACCOUNT'] }
+    if ($v['STATE_STORAGE_ACCOUNT']) { $saArgs.StateAccount = $v['STATE_STORAGE_ACCOUNT'] }
+    if ($NoPolicyExemption) { $saArgs.NoExemption = $true }
+    $prevEap2 = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    & (Join-Path $root 'scripts/Set-CortexStorageAccess.ps1') @saArgs
+    $saRc = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap2
+    switch ($saRc) {
+      0 { Ok $(if ($perimeter) { 'Both storage accounts are inside the perimeter and secured by it' } else { 'Both storage accounts are reachable over their public endpoint' }) }
+      2 { $storageRepaired = $true; Ok 'Storage access repaired' }
+      default {
+        $problems += 'a storage account is not in the state the perimeter needs (see step 7b)'
+        Warn2 'Storage access could not be fully repaired. The bootstrap job and the state blobs will fail until it is.'
+      }
+    }
+
+    # Round 4 left an environment-level Azure Files definition behind. The
+    # template no longer mounts it; the definition is harmless but points at a
+    # key that the policy has revoked, so tidy it away.
+    $envName = $v['CORTEX_CONTAINER_ENVIRONMENT']
+    if ($envName) {
+      $oldShare = Get-AzJson @('containerapp','env','storage','show','-n',$envName,'-g',$CortexResourceGroup,'--storage-name','cortex-state')
+      if ($oldShare) {
+        az containerapp env storage remove -n $envName -g $CortexResourceGroup --storage-name cortex-state --yes --only-show-errors -o none 2>$null
+        if ($LASTEXITCODE -eq 0) { Ok 'Removed the round-4 file-share definition from the environment (state is blobs now)' }
+      }
+    }
+  }
+
   # A partly-finished provision leaves the outputs absent. Saying so plainly
   # beats five confusing failures in the steps that follow.
   if (-not $webUrl) {
@@ -728,7 +928,7 @@ try {
     throw 'Incomplete deployment — no web URL was published.'
   }
 
-  # -------------------------------------------------- 10b reconcile the apps
+  # --------------------------------------------------- 8 reconcile the apps
   # WHY THIS EXISTS
   # `azd deploy` updates the container image and nothing else. Anything else
   # about the app was written during provisioning, while the placeholder image
@@ -752,6 +952,8 @@ try {
       Warn2 "$app is still running the placeholder image."
       Info  'Its code was never pushed. Build and push it with:'
       Info  "    .\scripts\Deploy-Cortex.ps1 -AppOnly"
+      $problems += "$app is still on the placeholder image"
+      continue
     } else {
       Ok "$app runs $image"
     }
@@ -761,6 +963,17 @@ try {
       az containerapp ingress update -n $app -g $CortexResourceGroup --target-port $appPort --only-show-errors | Out-Null
       if ($LASTEXITCODE -eq 0) { Ok "$app ingress now targets $appPort" }
       else { Fail "Could not update ingress on $app. Fix by hand: az containerapp ingress update -n $app -g $CortexResourceGroup --target-port $appPort" }
+    }
+
+    # The template can say one thing and the revision another. This is the
+    # check that was missing when cortex-web answered 404 on every path while
+    # the script reported it as running: the revision had never come up.
+    $rv = Wait-CortexRevision -App $app -Rg $CortexResourceGroup -RestartIfFailed
+    if ($rv.ok) {
+      Ok "$app revision $($rv.revision) is serving ($($rv.running), $($rv.health))"
+    } else {
+      Show-CortexRevisionFailure -App $app -Rg $CortexResourceGroup -Result $rv
+      $problems += "$app is not serving (revision $($rv.revision): $($rv.running), $($rv.health))"
     }
   }
 
@@ -842,6 +1055,24 @@ try {
         if ($LASTEXITCODE -eq 0) { Ok 'cortex-web reads APIM_SUBSCRIPTION_KEY from that secret' }
         else { Fail 'Could not map APIM_SUBSCRIPTION_KEY on cortex-web.' }
       }
+
+      # The bootstrap job runs bootstrap.js, for which the key is required
+      # configuration. Same secret, same reference, on the job.
+      $job = $v['CORTEX_BOOTSTRAP_JOB']
+      if ($job) {
+        $jobKey = az containerapp job secret show -n $job -g $CortexResourceGroup --secret-name 'apim-subscription-key' --query value -o tsv 2>$null
+        if ($jobKey -ne $apimKey) {
+          az containerapp job secret set -n $job -g $CortexResourceGroup --secrets "apim-subscription-key=$apimKey" --only-show-errors -o none 2>$null
+          if ($LASTEXITCODE -eq 0) { Ok "apim-subscription-key stored on the bootstrap job $job" } else { Fail "Could not set the secret on $job." }
+        }
+        $jobRef = az containerapp job show -n $job -g $CortexResourceGroup `
+                    --query "properties.template.containers[0].env[?name=='APIM_SUBSCRIPTION_KEY'].secretRef | [0]" -o tsv 2>$null
+        if ($jobRef -ne 'apim-subscription-key') {
+          az containerapp job update -n $job -g $CortexResourceGroup `
+            --set-env-vars 'APIM_SUBSCRIPTION_KEY=secretref:apim-subscription-key' --only-show-errors -o none 2>$null
+          if ($LASTEXITCODE -eq 0) { Ok "$job reads APIM_SUBSCRIPTION_KEY from that secret" } else { Fail "Could not map APIM_SUBSCRIPTION_KEY on $job." }
+        }
+      }
     }
 
     # App Insights is optional, and its connection string embeds an
@@ -878,9 +1109,43 @@ try {
     if ($LASTEXITCODE -ne 0) {
       Warn2 'Sign-in could not be configured. The app will show "Sign-in is not configured" until it is.'
       Info  'Re-run by hand:  .\scripts\Set-CortexAuth.ps1'
+      $problems += 'sign-in could not be configured (step 10)'
     } else { Ok 'Sign-in configured' }
+
+    # ------------------------------------------------- 10b demo identities
+    #
+    # "The same page through different eyes" needs two accounts in different
+    # groups. The groups are the ones the bootstrap content's access rules
+    # already name (analysts, waste-crime, ne-evidence, ea-flood-risk, and the
+    # Official-Sensitive clearance), so no content changes: you are put in all
+    # of them and see everything; each demo user is put in -DemoUserGroups
+    # only and sees the "Open to all staff" entries plus what those groups
+    # unlock. Idempotent — existing groups and members are left alone.
+    if ($DemoIdentities) {
+      Step '10b' 'Setting up the demo identities'
+      $demoArgs = @{ EnvironmentName = $EnvironmentName; DefaultGroups = $DefaultGroups; GroupMap = $DemoGroupMap; CreateGroups = $true; Quiet = $true }
+      & (Join-Path $root 'scripts/Set-CortexAuth.ps1') @demoArgs
+      if ($LASTEXITCODE -ne 0) {
+        Warn2 'The demo groups could not all be created or mapped. Re-run by hand:'
+        Info  "    .\scripts\Set-CortexAuth.ps1 -CreateGroups -GroupMap '$($DemoGroupMap -join "','")'"
+        $problems += 'demo groups not fully set up (step 10b)'
+      } else { Ok "Demo groups created, mapped, and you are a member of all $($DemoGroupMap.Count)" }
+      foreach ($email in $DemoUserEmail) {
+        & (Join-Path $root 'scripts/Add-CortexUser.ps1') -Email $email -Groups $DemoUserGroups -EnvironmentName $EnvironmentName
+        if ($LASTEXITCODE -ne 0) {
+          Warn2 "$email could not be added. Re-run by hand:  .\scripts\Add-CortexUser.ps1 -Email $email -Groups '$($DemoUserGroups -join "','")'"
+          $problems += "demo user $email not added (step 10b)"
+        } else { Ok "$email is in: $($DemoUserGroups -join ', ') (and all-staff, like everyone signed in)" }
+      }
+      if ($DemoUserEmail.Count -eq 0) {
+        Info 'No -DemoUserEmail given. Invite the second account later with:'
+        Info "    .\scripts\Add-CortexUser.ps1 -Email <address> -Groups '$($DemoUserGroups -join "','")'"
+      }
+      Info 'Anyone who signed in before the groups existed must sign out and in again to pick them up.'
+    }
   } else {
     Step 10 'Skipping sign-in configuration'
+    if ($DemoIdentities) { Warn2 '-DemoIdentities needs sign-in; run without -SkipAuth to set the demo groups up.' }
   }
 
   # ---------------------------------------------------------- 12 bootstrap
@@ -943,15 +1208,108 @@ try {
     # nothing; empty makes the adapter skip straight to these values.
     $env:KEYVAULT_NAME = if ($configSource -eq 'keyvault') { $kv } else { '' }
 
-    if ($NoScanWait) { npm run bootstrap -- --no-wait } else { npm run bootstrap }
-    if ($LASTEXITCODE -ne 0) {
+    # BOOTSTRAP IN THREE PARTS, BECAUSE OF THE PERIMETER.
+    #   here      roles, Purview content, API Management, Foundry connections —
+    #             none of it touches storage, and the Purview roles must be
+    #             granted by YOU (a Unified Catalog administrator), not by the
+    #             Cortex identity.
+    #   the job   the data section — upload the sample files, register and run
+    #             the Data Map scan, attach the scanned assets — as the Cortex
+    #             identity, inside Azure, because your laptop is outside the
+    #             perimeter by design.
+    #   here      the AI Search indexes, which are created through the search
+    #             service (public, learning mode) and verified by reading each
+    #             indexer's result — the first proof the perimeter lets the
+    #             search service into the storage account.
+    # Without a perimeter (-NoPerimeter, or a tenant without the policy) the
+    # data section runs here as before.
+    $job = $v['CORTEX_BOOTSTRAP_JOB']
+    $useJob = [bool]$perimeter -and [bool]$job -and [bool]$v['DATA_STORAGE_ACCOUNT']
+    $noWaitArg = if ($NoScanWait) { @('--no-wait') } else { @() }
+
+    if ($useJob) { node scripts/bootstrap.js --skip=data,search @noWaitArg }
+    elseif ($NoScanWait) { npm run bootstrap -- --no-wait }
+    else { npm run bootstrap }
+    $bootstrapRc = $LASTEXITCODE
+    if ($bootstrapRc -ne 0) {
       Warn2 'Bootstrap reported failures. It is idempotent — fix the cause and re-run.'
       Info  'To re-run by hand, load the configuration into your session first:'
       Info  '    . .\scripts\Set-CortexEnv.ps1'
-      Info  '    npm run bootstrap'
+      Info  $(if ($useJob) { '    node scripts/bootstrap.js --skip=data,search' } else { '    npm run bootstrap' })
       Info  'Without that first line the values above are gone and every one is reported missing.'
-    } else { Ok 'Purview access granted; content, connections, sample data and indexes in place' }
-    if ($NoScanWait) { Info 'When the Data Map scan has finished:  . .\scripts\Set-CortexEnv.ps1; node scripts/bootstrap.js --only=link' }
+      $problems += 'bootstrap reported failures (step 11)'
+    } elseif (-not $useJob) { Ok 'Purview access granted; content, connections, sample data and indexes in place' }
+    else { Ok 'Purview access granted; content and connections in place' }
+
+    $jobOk = $false
+    if ($useJob) {
+      Step '11b' "Running the sample-data section inside the perimeter (job $job)"
+      Info 'Uploads the files, registers and runs the Data Map scan, attaches the assets — as the Cortex identity.'
+
+      # azd deploys services, not jobs: give the job the image the web app is
+      # running, and the wait flag through the environment (see bootstrap.js).
+      $webImage = az containerapp show -n 'cortex-web' -g $CortexResourceGroup --query 'properties.template.containers[0].image' -o tsv 2>$null
+      $jobImage = az containerapp job show -n $job -g $CortexResourceGroup --query 'properties.template.containers[0].image' -o tsv 2>$null
+      $flag = if ($NoScanWait) { '--no-wait' } else { '--wait' }
+      if ($webImage -and $webImage -notmatch 'k8se/quickstart') {
+        $jobArgs = @('containerapp','job','update','-n',$job,'-g',$CortexResourceGroup,'--set-env-vars',"BOOTSTRAP_ARGS=$flag",'--only-show-errors','-o','none')
+        if ($jobImage -ne $webImage) { $jobArgs += @('--image',$webImage) }
+        az @jobArgs 2>$null
+        if ($LASTEXITCODE -eq 0) { Ok "Job runs $(($webImage -split '/')[-1])" } else { Warn2 'Could not update the job definition; starting it as it is.' }
+      } else {
+        Warn2 'cortex-web is still on the placeholder image, so the job has no code to run. Deploy first (-AppOnly), then re-run.'
+      }
+
+      $started = Get-AzJson @('containerapp','job','start','-n',$job,'-g',$CortexResourceGroup,'-o','json')
+      $execName = $started.name
+      if (-not $execName) {
+        Fail 'The job could not be started.'
+        $problems += 'bootstrap job could not be started (step 11b)'
+      } else {
+        Info "Execution $execName — waiting (the Data Map scan is the slow part; 3–10 minutes, $(if ($NoScanWait) { 'not waited for' } else { 'waited for' }))"
+        $deadline = (Get-Date).AddMinutes(25)
+        $status = ''
+        while ((Get-Date) -lt $deadline) {
+          Start-Sleep -Seconds 15
+          $status = az containerapp job execution show -n $job -g $CortexResourceGroup --job-execution-name $execName --query properties.status -o tsv 2>$null
+          if ($status -in @('Succeeded','Failed','Stopped')) { break }
+        }
+        # The job's own log is the record of what happened to the data chain.
+        $prevEap3 = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        $jobLog = @(az containerapp job logs show -n $job -g $CortexResourceGroup --execution $execName --container bootstrap --tail 300 --only-show-errors 2>$null)
+        $ErrorActionPreference = $prevEap3
+        foreach ($l in $jobLog) {
+          $text = $l
+          try { $o = $l | ConvertFrom-Json; $text = "$($o.Log)" } catch { }
+          if ($text) { Write-Host "    | $text" -ForegroundColor DarkGray }
+        }
+        if ($status -eq 'Succeeded') { $jobOk = $true; Ok "Job $execName succeeded — the sample files are in storage and the products carry their assets" }
+        elseif ($status) {
+          $problems += "bootstrap job $status (step 11b) — see its log above"
+          Fail "Job $execName finished as $status. The log above names the cause; the common ones:"
+          Info '  403 AuthorizationFailure — the perimeter did not admit the Cortex identity: check the subscription rule and that the account is SecuredByPerimeter (step 7b)'
+          Info '  Missing required configuration — the APIM key is not on the job yet (step 9); re-run this script'
+          Info '  scan Failed — the Purview account identity is refused: it needs Storage Blob Data Reader (Bicep) and the perimeter rule'
+          Info "  Re-run the job on its own:  az containerapp job start -n $job -g $CortexResourceGroup   then   az containerapp job logs show -n $job -g $CortexResourceGroup --container bootstrap --tail 200"
+        } else {
+          $problems += 'bootstrap job did not finish within 25 minutes (step 11b)'
+          Warn2 "Job $execName was still running after 25 minutes. It carries on in Azure; check it with:  az containerapp job execution list -n $job -g $CortexResourceGroup -o table"
+        }
+      }
+
+      Step '11c' 'Building the AI Search indexes'
+      if ($jobOk -or $NoScanWait) {
+        node scripts/bootstrap.js --only=search @noWaitArg
+        if ($LASTEXITCODE -ne 0) {
+          $problems += 'AI Search indexes reported failures (step 11c)'
+          Warn2 'One or more indexes did not build. An indexer refused with "not authorized" means the perimeter is not admitting the search service.'
+          Info  'Re-run on its own:  . .\scripts\Set-CortexEnv.ps1;  node scripts/bootstrap.js --only=search'
+        } else { Ok 'Indexes built and verified' }
+      } else {
+        Warn2 'Skipped: the sample files are not in storage yet. When the job succeeds:  . .\scripts\Set-CortexEnv.ps1;  node scripts/bootstrap.js --only=search'
+      }
+    }
+    if ($NoScanWait) { Info 'When the Data Map scan has finished:  . .\scripts\Set-CortexEnv.ps1; node scripts/bootstrap.js --only=link   (or re-run the job without -NoScanWait)' }
 
     # The app refreshes its register every 15 minutes. Ask it to do so now, so
     # the Marketplace shows the content the moment this script finishes. The
@@ -962,6 +1320,8 @@ try {
       Warn2 'The register could not be refreshed: sign-in is intercepting /api/index/refresh.'
       Info  'Set-CortexAuth.ps1 excludes the machine paths from sign-in — run it, then: curl -X POST <web url>/api/index/refresh'
       Info  'Otherwise the app refreshes itself within 15 minutes.'
+    } elseif ($refresh.notServing) {
+      Warn2 "The register could not be refreshed: cortex-web is not answering ($($refresh.error)). See step 8."
     } elseif ($refresh.json) { Ok "Register refreshed ($($refresh.json.entries) entries)" }
     else { Warn2 "Could not refresh the register now — it refreshes itself within 15 minutes ($($refresh.error))" }
   }
@@ -969,15 +1329,27 @@ try {
   # ------------------------------------------------------------- 13 check
   if (-not $SkipHealthCheck) {
     Step 12 'Checking the deployment'
+    # Steps 9 and 10 write secrets and settings onto cortex-web, and each write
+    # is a new revision. Make sure the newest one is serving before reading
+    # its health endpoints, or a revision still starting reads as a broken app.
+    $rv = Wait-CortexRevision -App 'cortex-web' -Rg $CortexResourceGroup -TimeoutSeconds 150 -RestartIfFailed
+    if ($rv.ok) { Ok "cortex-web revision $($rv.revision) is serving" }
+    else {
+      Show-CortexRevisionFailure -App 'cortex-web' -Rg $CortexResourceGroup -Result $rv
+      $problems += "cortex-web is not serving (revision $($rv.revision): $($rv.running), $($rv.health))"
+    }
     # A container app that has just taken a new revision needs a moment. Three
     # attempts with a short back-off turns a spurious red into a real signal.
     $behindSignIn = $false
-    foreach ($p in @('/api/health','/api/health/keyvault','/api/health/purview','/api/health/apim','/api/health/foundry','/api/health/search','/api/health/storage','/api/health/state')) {
+    $notServing = $false
+    $healthFailures = @()
+    foreach ($p in @('/api/health','/api/health/keyvault','/api/health/purview','/api/health/apim','/api/health/foundry','/api/health/search','/api/health/storage','/api/health/datamap','/api/health/state')) {
       $passed = $false
       $lastError = ''
       foreach ($attempt in 1..3) {
         $r = Get-CortexJson -Uri "$webUrl$p"
         if ($r.behindSignIn) { $behindSignIn = $true; $lastError = 'redirected to sign-in'; break }
+        if ($r.notServing) { $notServing = $true; $lastError = $r.error; break }
         if ($r.ok) { $passed = $true; break }
         $lastError = if ($r.error) { $r.error } else {
           $detail = if ($r.json.error) { $r.json.error } elseif ($r.json.sourceErrors) { ($r.json.sourceErrors | ConvertTo-Json -Compress) } elseif ($r.json.missingRequired) { "missing: $($r.json.missingRequired -join ', ')" } else { 'returned ok=false' }
@@ -985,24 +1357,40 @@ try {
         }
         if ($attempt -lt 3) { Start-Sleep -Seconds 10 }
       }
-      if ($passed) { Ok $p } else { Warn2 "$p — $($lastError.ToString().Substring(0, [Math]::Min(300, $lastError.ToString().Length)))" }
+      if ($passed) { Ok $p } else { $healthFailures += $p; Warn2 "$p — $($lastError.ToString().Substring(0, [Math]::Min(300, $lastError.ToString().Length)))" }
     }
     if ($behindSignIn) {
       Warn2 'Sign-in is guarding the health endpoints, so nothing above could be checked from here.'
       Info  'Set-CortexAuth.ps1 excludes /api/health*, /api/index/refresh and /shim/* from sign-in. Run it and check again with Test-Cortex.ps1.'
     }
+    if ($notServing) {
+      Warn2 'cortex-web is not answering at all — the platform is replying for a revision that is not running.'
+      Info  'Step 8 above shows the revision state and the platform log. A revision that still mounts the old state'
+      Info  'share (round 4) needs a re-provision; anything else is named in the log lines.'
+    }
+    if ($healthFailures.Count -gt 0) { $problems += "health checks failing: $($healthFailures -join ', ')" }
 
     if ($mcpUrl) {
       try {
         $m = Invoke-RestMethod -Uri "$mcpUrl/health" -TimeoutSec 30
-        if ($m.ok) { Ok "/health (MCP server, $($m.tools) tools)" } else { Warn2 'MCP server returned ok=false' }
-      } catch { Warn2 "MCP server — $($_.Exception.Message)" }
+        if ($m.ok) { Ok "/health (MCP server, $($m.tools) tools)" } else { Warn2 'MCP server returned ok=false'; $problems += 'MCP server returned ok=false' }
+      } catch { Warn2 "MCP server — $($_.Exception.Message)"; $problems += 'MCP server not answering' }
     }
   }
 
-  Write-Host "`n===========================================================" -ForegroundColor Green
-  Write-Host " Cortex is deployed." -ForegroundColor Green
-  Write-Host "===========================================================" -ForegroundColor Green
+  if ($problems.Count -eq 0) {
+    Write-Host "`n===========================================================" -ForegroundColor Green
+    Write-Host " Cortex is deployed and every check passed." -ForegroundColor Green
+    Write-Host "===========================================================" -ForegroundColor Green
+  } else {
+    Write-Host "`n===========================================================" -ForegroundColor Red
+    Write-Host " Cortex is deployed, but it is NOT fully working." -ForegroundColor Red
+    Write-Host "===========================================================" -ForegroundColor Red
+    foreach ($pr in $problems) { Write-Host "  - $pr" -ForegroundColor Yellow }
+    Write-Host ''
+    Write-Host '  Fix the causes named above and run this script again — every step is safe to repeat.' -ForegroundColor Yellow
+    Write-Host '  For a paste-able diagnosis:  .\scripts\Test-Cortex.ps1 -Diagnose' -ForegroundColor Yellow
+  }
   Write-Host "`n  Web : $webUrl"
   if ($mcpUrl) { Write-Host "  MCP : $mcpUrl/mcp" }
   Write-Host "  Model: $effectiveDeploymentName ($ModelName $effectiveVersion)"
@@ -1020,17 +1408,24 @@ try {
   Write-Host "    (granted by bootstrap). If the Help page still shows Purview as unavailable, wait a minute and reload."
   if ($v['SEARCH_SERVICE_NAME']) { Write-Host "  - AI Search: $($v['SEARCH_SERVICE_NAME']) — one index per data product, built from the sample files." }
   if ($v['DATA_STORAGE_ACCOUNT']) { Write-Host "  - Sample data: $($v['DATA_STORAGE_ACCOUNT'])/$($v['DATA_CONTAINER']) — scanned by the Data Map and attached to the products." }
-  if ($v['STATE_STORAGE_ACCOUNT']) { Write-Host "  - State: requests, chats and automations persist on the $($v['STATE_STORAGE_ACCOUNT']) file share." }
+  if ($v['STATE_STORAGE_ACCOUNT']) { Write-Host "  - State: requests, chats and automations persist as blobs on $($v['STATE_STORAGE_ACCOUNT']), read with the managed identity." }
+  if ($perimeter) { Write-Host "  - Perimeter: $perimeter secures the storage accounts (SecuredByPerimeter); the AI Search service is a member in $SearchAccessMode mode." }
+  if ($v['CORTEX_BOOTSTRAP_JOB']) { Write-Host "  - Bootstrap job: $($v['CORTEX_BOOTSTRAP_JOB']) runs the sample-data section inside the perimeter as the Cortex identity." }
+  if ($storageRepaired) { Write-Host "  - Storage: the accounts had been changed by the tenant policy and were repaired (step 7b)." }
   Write-Host "  - Foundry: a project connection per MCP server carries the API Management key, so agents can call their tools."
   Write-Host "  - Chat: every member of staff can open a chat window with every agent (policy: $ChatPolicy)."
   Write-Host "  - Sign-in: Entra, with the groups claim. Every signed-in user is treated as: $DefaultGroups"
-  if ($GroupMap.Count -eq 0) {
+  if ($DemoIdentities) {
+    Write-Host "  - Demo identities: you are in $($DemoGroupMap.Count) demo groups; demo users are in: $($DemoUserGroups -join ', ')."
+  } elseif ($GroupMap.Count -eq 0) {
     Write-Host "    To map real Entra groups onto access-rule names:  .\scripts\Set-CortexAuth.ps1 -GroupMap 'waste-crime=<group name>'"
+    Write-Host "    For the two-account demo set-up:  .\scripts\Deploy-Cortex.ps1 -SkipProvision -SkipBootstrap -DemoIdentities -DemoUserEmail <address>"
   }
   Write-Host ""
   Write-Host " Check it:  .\scripts\Test-Cortex.ps1   then open $webUrl/profile"
   Write-Host ""
   Write-Host " Re-running this script is safe. For a code-only change use -AppOnly.`n" -ForegroundColor DarkGray
+  if ($problems.Count -gt 0) { exit 1 }
 }
 catch { Fail $_.Exception.Message; exit 1 }
 finally { Pop-Location }

@@ -20,7 +20,13 @@ Or in VS Code: **Ctrl+Shift+P → Tasks: Run Task → Cortex: Deploy to Azure**.
 .\scripts\Deploy-Cortex.ps1 -WhatIfResources
 ```
 
-The script also switches on Entra sign-in **with the groups claim** and grants the Cortex identity its **Purview Unified Catalog roles** — the two steps that used to be manual, and the two most common reasons a working deployment looked broken. **`docs/DEPLOY.md`** walks through it in order.
+The script also switches on Entra sign-in **with the groups claim**, grants the Cortex identity its **Purview Unified Catalog roles**, and keeps the two storage accounts inside a **Network Security Perimeter** — the shape the tenant's storage policy excludes — running the one bootstrap section that touches storage as a **job inside Azure**. Those are the steps that used to be manual, and the most common reasons a working deployment looked broken. It ends with an honest verdict: every check passed, or the list of what did not. **`docs/DEPLOY.md`** walks through it in order.
+
+For the two-account demo ("the same page through different eyes"):
+
+```powershell
+.\scripts\Deploy-Cortex.ps1 -DemoIdentities -DemoUserEmail colleague@defra.gov.uk
+```
 
 ## Run it locally
 
@@ -31,7 +37,7 @@ The script also switches on Entra sign-in **with the groups claim** and grants t
 Local means *your machine, real Azure*. There is no offline mode. Anything you publish is published for real.
 
 ```powershell
-npm test                              # 289 tests, no Azure needed
+npm test                              # 319 tests, no Azure needed
 node scripts/bootstrap.js --dry-run   # validate content, no Azure needed
 node scripts/sample-data.js --list    # what the synthetic data generator produces
 ```
@@ -74,16 +80,17 @@ Usage, error rate and latency come from the API Management Reports API. **Cost p
 
 ```
 docs/             DEPLOY.md · HANDOVER.md · ARCHITECTURE.md
-infra/            Bicep. Every resource name and RG is a parameter.
-scripts/          Deploy-Cortex.ps1, Set-CortexAuth.ps1, Add-CortexUser.ps1, Set-CortexEnv.ps1,
-                  Test-Cortex.ps1, Start-Local.ps1, bootstrap.js, purview-access.js
+infra/            Bicep. Every resource name and RG is a parameter. modules/nsp.bicep is the perimeter.
+scripts/          Deploy-Cortex.ps1, Set-CortexStorageAccess.ps1, Set-CortexAuth.ps1, Add-CortexUser.ps1,
+                  Set-CortexEnv.ps1, Test-Cortex.ps1 (-Diagnose), Start-Local.ps1, bootstrap.js, purview-access.js
 bootstrap/        Defra content — INPUT to a script, not runtime data
 src/bff/          Backend for frontend. All Azure credentials live here.
-  adapters/       purview, apim, foundry, keyvault, token
+  adapters/       purview, apim, foundry, keyvault, token, storage, search, datamap
+  state/          one JSON blob per collection, read with the managed identity
   services/       visibility, assurance, agents, publish, ask, requests, identity
 src/web/          Server-rendered GOV.UK pages
 src/purview-mcp/  Glue 1 — the Purview MCP server
-test/             214 tests, stubbed at the HTTP boundary; smoke.test.js boots the real server
+test/             319 tests, stubbed at the HTTP boundary; smoke.test.js boots the real server
 .vscode/          Tasks, launch configs, extension recommendations
 ```
 
@@ -107,7 +114,7 @@ Zero `<script>` tags. The whole application works with JavaScript disabled.
 
 | | |
 |---|---|
-| **`docs/DEPLOY.md`** | Deploy, check, iterate and troubleshoot — in the order you will need it. |
+| **`docs/DEPLOY.md`** | What you are deploying, before you start, deploy, verify, iterate, demo set-up, troubleshoot, reference — in the order you will need it. |
 | **`docs/HANDOVER.md`** | Read first if you are picking this up as a developer. State of play, verified API facts, traps, next work. |
 | **`docs/ARCHITECTURE.md`** | What it is, why it exists, how it is built, what was deliberately left out. |
 | **`CHANGES.md`** | What the latest round changed, and why. |

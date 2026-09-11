@@ -1,4 +1,4 @@
-// The data behind the data products, and the share that holds application state.
+// The data behind the data products, and the account that holds application state.
 //
 // TWO STORAGE ACCOUNTS, ON PURPOSE
 //   sample data   ADLS Gen2 (hierarchical namespace). The Purview Data Map
@@ -8,21 +8,34 @@
 //                 files underneath. The Unified Catalog also has a native
 //                 ADLSGen2Path asset type. AI Search reads it with an adlsgen2
 //                 data source.
-//   state         a plain account with an Azure Files share, mounted into the
-//                 web app (containerapps.bicep). Files and hierarchical
-//                 namespace do not mix on one account, hence the second.
+//   state         a plain blob account holding one JSON blob per collection
+//                 (requests, chats, automations, agent records), read and
+//                 written by the web app with its managed identity. It used to
+//                 be an Azure Files share mounted into the app with the
+//                 account key — see NO KEYS below for why that could never
+//                 work in this tenant. Kept separate so the Data Map scan of
+//                 the sample data never sees application state.
 //
-// Both are cheap (pennies a month at this size) and both are created only
-// when asked — an existing deployment keeps working without them, it just has
-// no data behind its products and no persistence.
+// NO KEYS, ANYWHERE
+// The tenant's SFI policy disables shared-key access on every storage account
+// and closes the public endpoint unless the account is inside a Network
+// Security Perimeter. So both accounts are keyless (allowSharedKeyAccess
+// false), every caller uses an Entra token, and both are associated with the
+// perimeter in nsp.bicep. publicNetworkAccess is a parameter: 'Enabled' on the
+// very first run (the association does not exist until after the account
+// does), 'SecuredByPerimeter' from then on — the deploy script flips it once
+// the association is in place and records the choice in the azd environment.
 //
 // ROLE GRANTS — the whole point of this file
-//   Purview account identity   Storage Blob Data Reader   scans the files
-//   AI Search identity         Storage Blob Data Reader   indexes the files
-//   Cortex identity            Storage Blob Data Contributor   uploads / repairs
-//   deployer (you)             Storage Blob Data Contributor   bootstrap uploads
+//   Purview account identity   Storage Blob Data Reader        scans the files
+//   AI Search identity         Storage Blob Data Reader        indexes the files
+//   Cortex identity            Storage Blob Data Contributor   the web app reads,
+//                                                              the bootstrap job writes
+//   deployer (you)             Storage Blob Data Contributor   kept for a laptop
+//                                                              inside the perimeter;
+//                                                              harmless otherwise
 // Data-plane roles: an Owner of the subscription still cannot read a blob
-// without one, which is the single most common reason bootstrap says 403.
+// without one.
 
 param location string
 param tags object
@@ -30,14 +43,18 @@ param tags object
 @description('Name of the ADLS Gen2 account for sample data. 3–24 lower-case letters and digits.')
 param dataAccountName string
 
-@description('Name of the account holding the Azure Files share for application state.')
+@description('Name of the blob account holding application state.')
 param stateAccountName string
 
 @description('Container for the sample data products.')
 param dataContainerName string = 'products'
 
-@description('File share for application state.')
-param stateShareName string = 'cortex-state'
+@description('Container for application state (one JSON blob per collection).')
+param stateContainerName string = 'state'
+
+@description('Public network access on both accounts. Enabled on a first run; SecuredByPerimeter once the perimeter association exists.')
+@allowed(['Enabled', 'SecuredByPerimeter', 'Disabled'])
+param publicNetworkAccess string = 'Enabled'
 
 @description('Principal id of the Cortex user-assigned identity.')
 param cortexPrincipalId string
@@ -48,11 +65,24 @@ param purviewPrincipalId string = ''
 @description('Principal id of the AI Search service\'s system-assigned identity. Empty to skip the grant.')
 param searchPrincipalId string = ''
 
-@description('Object id of the person running the deployment, so bootstrap can upload. Empty to skip.')
+@description('Object id of the person running the deployment. Empty to skip.')
 param deployerPrincipalId string = ''
 
 var blobDataReader = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
 var blobDataContributor = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+
+// Shared by both accounts. Keyless everywhere; the perimeter decides who is
+// let in once the account is SecuredByPerimeter, and the bypass keeps the
+// trusted Azure services (the Data Map scan, the indexers) working while it
+// is still Enabled on the first run.
+var networkProperties = {
+  minimumTlsVersion: 'TLS1_2'
+  allowBlobPublicAccess: false
+  supportsHttpsTrafficOnly: true
+  allowSharedKeyAccess: false
+  publicNetworkAccess: publicNetworkAccess
+  networkAcls: { defaultAction: 'Allow', bypass: 'AzureServices' }
+}
 
 // -------------------------------------------------------------- sample data
 
@@ -62,16 +92,7 @@ resource data 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   tags: union(tags, { purpose: 'cortex-sample-data' })
   kind: 'StorageV2'
   sku: { name: 'Standard_LRS' }
-  properties: {
-    isHnsEnabled: true
-    minimumTlsVersion: 'TLS1_2'
-    allowBlobPublicAccess: false
-    supportsHttpsTrafficOnly: true
-    // Keyless everywhere. Bootstrap, the scan, the indexer and the app all use identities.
-    allowSharedKeyAccess: false
-    publicNetworkAccess: 'Enabled'
-    networkAcls: { defaultAction: 'Allow', bypass: 'AzureServices' }
-  }
+  properties: union(networkProperties, { isHnsEnabled: true })
 }
 
 resource dataBlob 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
@@ -127,11 +148,6 @@ resource deployerWrites 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
 }
 
 // -------------------------------------------------------------------- state
-//
-// Container Apps mounts Azure Files with the account KEY (that is how the
-// managedEnvironments/storages resource works today), so shared-key access
-// stays on for this one account. It holds JSON files of requests and
-// automations — nothing sensitive, and the key never leaves the platform.
 
 resource state 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: stateAccountName
@@ -139,27 +155,27 @@ resource state 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   tags: union(tags, { purpose: 'cortex-state' })
   kind: 'StorageV2'
   sku: { name: 'Standard_LRS' }
-  properties: {
-    minimumTlsVersion: 'TLS1_2'
-    allowBlobPublicAccess: false
-    supportsHttpsTrafficOnly: true
-    allowSharedKeyAccess: true
-    publicNetworkAccess: 'Enabled'
-    networkAcls: { defaultAction: 'Allow', bypass: 'AzureServices' }
-  }
+  properties: networkProperties
 }
 
-resource stateFiles 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
+resource stateBlob 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
   parent: state
   name: 'default'
 }
 
-resource stateShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
-  parent: stateFiles
-  name: stateShareName
+resource stateContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: stateBlob
+  name: stateContainerName
+  properties: { publicAccess: 'None' }
+}
+
+resource cortexWritesState 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(state.id, cortexPrincipalId, blobDataContributor)
+  scope: state
   properties: {
-    shareQuota: 5
-    enabledProtocols: 'SMB'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobDataContributor)
+    principalId: cortexPrincipalId
+    principalType: 'ServicePrincipal'
   }
 }
 
@@ -169,4 +185,5 @@ output dataContainerName string = dataContainer.name
 output dataBlobEndpoint string = data.properties.primaryEndpoints.blob
 output dataDfsEndpoint string = data.properties.primaryEndpoints.dfs
 output stateAccountName string = state.name
-output stateShareName string = stateShare.name
+output stateAccountId string = state.id
+output stateContainerName string = stateContainer.name

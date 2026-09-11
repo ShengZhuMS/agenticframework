@@ -87,7 +87,7 @@ param chatPolicy string = 'all-staff'
 
 // ------------------------------------------------ round 4: data and state
 // Where the Foundry project lives in ARM, so the app can create project
-// connections; the search service; the sample-data account; the state share.
+// connections; the search service; the sample-data account; the state account.
 // Any of these may be empty, which switches the matching feature off.
 param foundryAccountName string = ''
 param foundryProjectName string = ''
@@ -99,9 +99,19 @@ param dataStorageAccount string = ''
 param dataContainer string = 'products'
 param dataResourceGroup string = ''
 
-@description('Storage account holding the Azure Files share for application state. Empty = state in memory only.')
+// STATE IS BLOBS NOW, NOT A SHARE.
+// Round 4 mounted an Azure Files share into cortex-web with the account key.
+// The tenant's SFI policy disables shared-key access on every storage account,
+// so the mount failed with "Permission denied", the container never started,
+// and every path on the app timed out. The web app now reads and writes one
+// JSON blob per collection with its managed identity (src/bff/state/store.js),
+// which needs no key, no volume and no environment-level storage resource.
+@description('Blob account holding application state. Empty = state in memory only.')
 param stateAccountName string = ''
-param stateShareName string = 'cortex-state'
+param stateContainerName string = 'state'
+
+@description('Principal id of the Cortex identity — the bootstrap job grants Purview roles to it and needs to know who it is.')
+param identityPrincipalId string = ''
 
 // ---------------------------------------------------------------- secrets
 // Supplied only if you choose to pass them through the deployment. Left empty,
@@ -270,7 +280,8 @@ var roundFourEnv = [
   { name: 'DATA_CONTAINER', value: dataContainer }
   { name: 'DATA_RESOURCE_GROUP', value: dataResourceGroup }
   { name: 'CORTEX_CHAT_POLICY', value: chatPolicy }
-  { name: 'CORTEX_STATE_DIR', value: empty(stateAccountName) ? '' : stateMountPath }
+  { name: 'STATE_STORAGE_ACCOUNT', value: stateAccountName }
+  { name: 'STATE_CONTAINER', value: stateContainerName }
 ]
 
 var optionalEnv = concat(
@@ -281,34 +292,6 @@ var optionalEnv = concat(
   [ { name: 'CORTEX_DEFAULT_GROUPS', value: defaultGroups } ],
   roundFourEnv
 )
-
-// ------------------------------------------------------------- state share
-//
-// Azure Files, mounted into cortex-web at /data. The environment-level
-// storage resource is how Container Apps reaches a share; it wants the
-// account key, read here from the account rather than passed as an output.
-var stateMountPath = '/data'
-var stateStorageName = 'cortex-state'
-
-// Unconditional reference (Bicep does not allow `if` on existing resources);
-// it is only READ inside the conditional resource below, so an empty name is
-// never resolved.
-resource stateAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
-  name: empty(stateAccountName) ? 'none' : stateAccountName
-}
-
-resource stateStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = if (!empty(stateAccountName)) {
-  parent: env
-  name: stateStorageName
-  properties: {
-    azureFile: {
-      accountName: stateAccountName
-      accountKey: stateAccount.listKeys().keys[0].value
-      shareName: stateShareName
-      accessMode: 'ReadWrite'
-    }
-  }
-}
 
 // A secretRef pointing at a secret that does not exist stops the container
 // starting, so each of these appears only when its value was supplied.
@@ -367,9 +350,6 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
             memory: '1.0Gi'
           }
           env: webEnv
-          volumeMounts: empty(stateAccountName) ? [] : [
-            { volumeName: 'state', mountPath: stateMountPath }
-          ]
           probes: webIsPlaceholder ? [] : [
             {
               type: 'Readiness'
@@ -380,18 +360,14 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
           ]
         }
       ]
-      volumes: empty(stateAccountName) ? [] : [
-        { name: 'state', storageType: 'AzureFile', storageName: stateStorageName }
-      ]
       scale: {
         // Never zero. Cold start is the top demo risk. Never more than one
-        // either: the state share is written by one replica — see webMaxReplicas.
+        // either: the state blobs are written by one replica — see webMaxReplicas.
         minReplicas: 1
         maxReplicas: webMaxReplicas
       }
     }
   }
-  dependsOn: [ stateStorage ]
 }
 
 // Glue 1 — the Purview MCP server. There is no official Purview MCP server,
@@ -454,10 +430,88 @@ resource mcp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
+// ------------------------------------------------------- the bootstrap job
+//
+// WHY BOOTSTRAP'S DATA STEP RUNS IN AZURE
+// The storage accounts sit inside a Network Security Perimeter that admits
+// Entra-authenticated traffic from managed identities in this subscription and
+// nothing else. Your laptop is outside it by design. So the one bootstrap
+// section that has to touch storage — upload the sample files, register and
+// run the Data Map scan, attach the scanned assets to the products — runs
+// here, as the Cortex identity, from the same image the web app runs.
+// Deploy-Cortex.ps1 starts it, waits for it and prints its log; everything
+// else in bootstrap (Purview content, API Management, Foundry connections,
+// the AI Search indexes) still runs on your machine, because none of it needs
+// the storage account.
+//
+// The image is the web app's: same source tree, `bootstrap/` included. azd
+// only deploys services, not jobs, so the deploy script sets the job's image
+// to whatever the web app is running before each start.
+//
+// The APIM subscription key is required configuration for bootstrap and is
+// not passed through the template (see the secrets note above); the deploy
+// script sets it on the job exactly as it does on the web app.
+var jobEnv = concat(
+  webEnv,
+  [
+    { name: 'CORTEX_IDENTITY_PRINCIPAL_ID', value: identityPrincipalId }
+    { name: 'DATA_STORAGE_LOCATION', value: location }
+  ]
+)
+
+var jobBaseConfig = {
+  triggerType: 'Manual'
+  replicaTimeout: 3600
+  replicaRetryLimit: 0
+  manualTriggerConfig: {
+    parallelism: 1
+    replicaCompletionCount: 1
+  }
+  registries: [
+    {
+      server: registryLoginServer
+      identity: identityId
+    }
+  ]
+}
+
+var jobConfig = empty(webSecrets) ? jobBaseConfig : union(jobBaseConfig, { secrets: webSecrets })
+
+resource bootstrapJob 'Microsoft.App/jobs@2024-03-01' = {
+  name: '${webAppName}-bootstrap'
+  location: location
+  tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${identityId}': {} }
+  }
+  properties: {
+    environmentId: env.id
+    configuration: jobConfig
+    template: {
+      containers: [
+        {
+          name: 'bootstrap'
+          image: effectiveWebImage
+          // The data section only. BOOTSTRAP_ARGS (set by the deploy script at
+          // start time) can add --no-wait; bootstrap.js merges it with argv.
+          command: [ 'node', 'scripts/bootstrap.js', '--only=data', '--skip-roles' ]
+          resources: {
+            cpu: json('0.5')
+            memory: '1.0Gi'
+          }
+          env: jobEnv
+        }
+      ]
+    }
+  }
+}
+
 output webUrl string = 'https://${web.properties.configuration.ingress.fqdn}'
 output mcpUrl string = 'https://${mcp.properties.configuration.ingress.fqdn}'
 output webName string = web.name
 output mcpName string = mcp.name
+output bootstrapJobName string = bootstrapJob.name
 output environmentId string = env.id
 output environmentName string = env.name
 output configSource string = useKeyVault ? 'keyvault' : 'direct'

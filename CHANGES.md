@@ -1,5 +1,161 @@
 # What changed — 3 September 2026
 
+## Addendum 9 (11 Sep, night): round 6 — the perimeter
+
+Round 5's first run against the tenant named the policy exactly and proved
+the diagnosis:
+
+```
+WARN  Policy assignment 'MCAPSGovDeployPolicies' (modify) — SFI - Disable public
+      network access on Storage accounts (excluding NSP configured resources)
+      … --policy-definition-reference-ids storageaccountpublicnetworkmodify storageaccountdisablelocalauth
+FailedMount … mount //stcortexstatezha7pf.file.core.windows.net/cortex-state …
+      Output: mount error(13): Permission denied
+```
+
+Two consequences, both structural. **The Azure Files state share can never
+work in this tenant**: SMB mounts use the account key, the second policy rule
+disables account keys, and a Network Security Perimeter authorises by managed
+identity or IP — neither of which an SMB mount presents. **The policy names
+its own exception**: a storage account inside a perimeter, with public
+network access `SecuredByPerimeter`, is left alone. Round 6 builds that.
+
+### What changed
+
+| File | Change |
+|---|---|
+| `infra/modules/nsp.bicep` | **New.** A Network Security Perimeter `nsp-cortex`, one profile, one inbound rule (managed identities in this subscription), associations for both storage accounts (Enforced) and the AI Search service (Learning) |
+| `infra/modules/data.bicep` | The state account is a plain blob account with a `state` container — no file share, no keys (`allowSharedKeyAccess: false` on both). `publicNetworkAccess` is a parameter: `Enabled` on the first run, `SecuredByPerimeter` once the association exists. The Cortex identity gets Storage Blob Data Contributor on it |
+| `infra/modules/containerapps.bicep` | The Azure Files volume, mount and environment storage are gone. `STATE_STORAGE_ACCOUNT` / `STATE_CONTAINER` replace `CORTEX_STATE_DIR`. **New: the job `cortex-web-bootstrap`** — the web image, `node scripts/bootstrap.js --only=data --skip-roles`, running as `id-cortex` |
+| `infra/main.bicep`, `infra/main.parameters.json` | `createPerimeter`, `storageAccessMode`, `searchAccessMode`, `storagePublicNetworkAccess`; the perimeter module; outputs `NSP_NAME`, `CORTEX_BOOTSTRAP_JOB`, `STATE_CONTAINER`. `mountState` removed |
+| `infra/modules/search.bicep` | Outputs its resource id for the association |
+| `Dockerfile` | Copies `bootstrap/` — the job reads the content files |
+| `src/bff/state/store.js` | **A blob backend** beside the files backend: `configureStateBlob()` + `primeState()`. One rule: nothing is written unless the blobs were read first — a start with storage unreachable serves from memory, reports `mode: memory` with the reason on `/api/health/state`, and never overwrites what is there. Writes are serialised per collection; a failed write is recorded and retried on the next |
+| `src/bff/adapters/storage.js` | `download()` — a whole blob as text, null when absent |
+| `src/bff/config.js`, `src/bff/server.js` | `state.blobAccount` / `blobContainer` / `primeTimeoutMs`; start-up primes the blobs before the index loads |
+| `scripts/bootstrap.js` | `--skip=section,…`; `BOOTSTRAP_ARGS` in the environment is appended to the command line (last `--only=` wins) — how the job receives `--no-wait`, or is redirected to `--only=link`. `parseArgs()` exported and tested |
+| `scripts/Set-CortexStorageAccess.ps1` | Perimeter-aware: checks the associations, wants `SecuredByPerimeter`, repairs to it and reads it back; records `STORAGE_PUBLIC_NETWORK_ACCESS=SecuredByPerimeter` for the next provision; no laptop data-plane probe in perimeter mode (the job is the proof). **The exemption bug fixed**: the timestamp is now formatted with the invariant culture — a Danish Windows renders the `:` placeholder as `.`, which the CLI refused |
+| `scripts/Deploy-Cortex.ps1` | `-NoPerimeter`, `-StorageAccessMode`, `-SearchAccessMode` (`-NoStateShare` gone). Step 7b in perimeter mode, plus removal of the round-4 file-share definition. Step 9 sets the APIM key on the job too. **Step 11 splits**: roles/content/skills/connections here; **11b** starts the job, waits (25 min budget), prints its log, names the common failures; **11c** builds and verifies the indexes here. A request that times out is reported as "the app is not answering", like a 404 |
+| `scripts/Test-Cortex.ps1` | Storage checks expect `SecuredByPerimeter` + association; reports the job's last execution; `mode: memory` on a deployed app is explained; `-Diagnose` adds the perimeter's associations and rules and the job executions |
+| `test/state-blob.test.js`, `test/bootstrap-args.test.js` | **New** — 13 tests; `test/storage-access.test.js` gains `download()` |
+| `docs/DEPLOY.md`, `README.md` | The perimeter explained once (§1), the job in the step table and the walkthrough (§0, §2), the verify output (§3), iterate rows (§4), troubleshooting (§6), switches, settings, scripts, the perimeter diagram and teardown (§7) |
+
+319 tests pass, up from 305.
+
+### What was NOT changed, and why
+
+- The Container Apps, API Management, Purview, Foundry and Key Vault stay
+  outside the perimeter. The apps' ingress is the front door; the shared
+  services are not Cortex's to move; the vault has its own route (DEPLOY §7).
+- The laptop gets no IP rule. Egress IPs change; the job does not.
+- HANDOVER.md is untouched again and now needs a refresh (rounds 4–6).
+
+### Verified, and not
+
+**Verified here:** all 319 tests; `node --check` on every script; the
+PowerShell files balance; `bootstrap.js --dry-run` with `--skip=` and with
+`BOOTSTRAP_ARGS`. **Not verified — needs your tenant**, in order of how likely
+each is to need a nudge:
+
+1. `Microsoft.Network/networkSecurityPerimeters@2024-07-01` being accepted
+   in North Europe, and the association setting the accounts up so that
+   `SecuredByPerimeter` is accepted (7b sets it after the association exists).
+2. The Modify policy actually leaving `SecuredByPerimeter` alone. If it does
+   not, 7b says so on every run, the exemption covers the gap, and the policy
+   rule (DEPLOY §6 has the command) will show what the exclusion keys on.
+3. The Purview scan and the AI Search indexers being admitted by the
+   subscription rule. The job's log (11b) and the indexer check (11c) are
+   where either would show.
+4. `az containerapp job start` returning the execution name in `name` — the
+   deploy script polls on it.
+
+---
+
+## Addendum 8 (11 Sep, evening): round 5 — back to live
+
+The first run of round 4 against the tenant ended with two faults and a green
+banner. The banner was the third fault. This round fixes all three, and makes
+the deployment tell the truth about itself.
+
+### What the run actually showed
+
+```
+FAIL  storage — Storage PUT /products failed 403: <Code>AuthorizationFailure</Code>
+      … grant the signed-in account Storage Blob Data Contributor …
+WARN  /api/health — not JSON (HTTP 404)          (and every other /api/* path)
+OK    /health (MCP server, 5 tools)
+ Cortex is deployed.
+```
+
+**1. `AuthorizationFailure` is the storage FIREWALL code, not the role code.**
+Storage answers `AuthorizationPermissionMismatch` when a role is missing;
+`AuthorizationFailure` means the account's network rules refused the caller.
+`infra/modules/data.bicep` creates both accounts with public network access
+Enabled and default action Allow, so something changed them after provisioning
+— in this managed sandbox, a tenant Azure Policy, the same family that
+disabled public access on the Key Vault. The hint in `storage.js` sent you to
+grant a role you already held.
+
+**2. `cortex-web` answering 404 on every path while the MCP app was healthy**
+is the platform answering for a revision that never came up. The health
+routes are the first thing in `server.js`; they cannot 404. Round 4 mounted
+the state share into `cortex-web` — Azure Files, account key, public endpoint —
+and a state account locked by the same policy means the volume cannot be
+mounted and the container never starts. Step 8 of the deploy script read the
+template ("cortex-web runs …azd-deploy-…") and never looked at the revision.
+
+**3. Bootstrap carried on** and started fourteen AI Search indexers against an
+account it had just been refused by, then printed "rows appear within a minute
+or two". They would not have.
+
+### What changed
+
+| File | Change |
+|---|---|
+| `scripts/Set-CortexStorageAccess.ps1` | **New.** Reads both storage accounts; names the policy assignment that locked them (Policy Insights, then the Activity Log); creates a **policy exemption** (Waiver, 90 days) on the Cortex resource group — narrowed to the offending definitions when the assignment is an initiative; puts the settings back and **reads them back** (a Modify policy rewrites an update on the way in, so success cannot be trusted); verifies with a data-plane call as you, granting Storage Blob Data Contributor if that is what is actually missing. `-ReportOnly`, `-NoExemption`, `-ExpiresInDays`. Exit 0 fine / 2 repaired / 1 still locked |
+| `scripts/Deploy-Cortex.ps1` | **Step 7b** runs the above on every deployment. **Step 8** now waits for each app's newest **revision** to serve, restarts one that has failed (once), and prints the replica container states and the platform's system log when it still will not — the failed-mount case names the repair. The same gate runs before the health checks in step 12 (steps 9 and 10 create revisions too) and after `-AppOnly`. A 404/5xx on a health path is now reported as "the app is not answering", not "not JSON". Every problem is collected and the run ends with **"Cortex is deployed and every check passed"** or **"Cortex is deployed, but it is NOT fully working"** plus the list, and exit code 1. New switches: `-NoPolicyExemption`, `-NoStateShare`, `-DemoIdentities`, `-DemoUserEmail`, `-DemoGroupMap`, `-DemoUserGroups` |
+| `scripts/Test-Cortex.ps1` | Checks the revisions and the storage accounts before the HTTP endpoints, so the cause prints above the symptom. **`-Diagnose`** prints one paste-able block: revisions, replica states, platform and console logs, storage settings, the policies that evaluated them, the writes in the Activity Log. Nothing secret in it |
+| `infra/main.bicep`, `infra/main.parameters.json` | `mountState` (`MOUNT_STATE`, default true). False keeps the state account but does not mount the share — the escape hatch when the policy cannot be exempted |
+| `src/bff/adapters/storage.js` | `explainStorageError()` tells the two 403s apart and says the right fix for each. Errors carry `status`, `storageCode` and `blocked` (true for the network code) |
+| `scripts/bootstrap-data.js` | The data section stops after the first network refusal instead of failing fourteen times, and reports `blocked`. The search section **verifies** every indexer it starts (up to 90 s; `--no-wait` skips it) and reports rows indexed or the first error — a storage refusal is named as such |
+| `scripts/bootstrap.js` | A full run skips the search section when the data section could not write the files, and says what to run once storage is repaired. `--only=search` still runs on its own |
+| `.vscode/tasks.json` | Four tasks: Diagnose, Repair storage access, Storage access — report only, Set up demo identities |
+| `test/storage-access.test.js` | **New** — 12 tests: the error classification, the `blocked` flag through a stubbed 403, the data section stopping early (and not stopping for a role error), the indexer verification, the `--no-wait` path |
+| `docs/DEPLOY.md` | Rewritten as an ordered runbook: what you are deploying → before you start (with the sandbox's tenant policies explained once) → deploy (what you will see) → verify → iterate → demo set-up → troubleshooting → reference. Same facts, one order |
+| `README.md` | Test count, the new script, the demo set-up |
+
+305 tests pass, up from 293. `node --test test/*.test.js`.
+
+### The demo identities
+
+`-DemoIdentities` creates one Entra group per name the bootstrap content's
+access rules already use — `analysts`, `waste-crime`, `ne-evidence`,
+`ea-flood-risk`, `cortex-official-sensitive` — maps them, and puts you in all
+of them. Each `-DemoUserEmail` is invited (or found) and put in `Cortex
+Analysts` only. You see everything; they see the open entries, the Catchment
+summariser, "Not cleared" on the Official–Sensitive products and "Request
+access" on the NE and EA ones. No content changed for this.
+
+### Verified, and not
+
+**Verified here:** all 305 tests; `node --check` on every script; the
+PowerShell files balance. **Not verified — needs your tenant:** everything
+against Azure, in this order of likelihood to need a nudge:
+
+1. `az policy state list --resource …` attributing the lock to an assignment,
+   and `az policy exemption create` being permitted for your account on the
+   resource group. If neither is, the settings are still repaired and the
+   exemption command is printed for an Owner.
+2. The revision restart bringing `cortex-web` back once the state account is
+   open. If it does not, step 8 prints the platform log; `-NoStateShare` is
+   the fallback and loses nothing but persistence.
+3. The indexer verification reading `lastResult` on the first run.
+
+Not touched this round: `docs/HANDOVER.md` (its §8b list is now partly out of
+date — round 4 has run once) and `FIXES.md` (2 September, historical).
+
+---
+
 ## Addendum 7 (11 Sep): round 4 — agents that can reach their tools and their data
 
 Six requests, all delivered, all re-deployable on their own. Nothing here has run
