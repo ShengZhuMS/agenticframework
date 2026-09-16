@@ -1,5 +1,64 @@
 # What changed — 3 September 2026
 
+## Addendum 10 (11 Sep, late): round 7 — what the first perimeter run showed
+
+The perimeter held. Both accounts went `SecuredByPerimeter` and stayed there
+(the policy's own exclusion, as its name promised); the exemption was created
+(the timestamp fix worked); `cortex-web` came up with no share to mount; the
+web app read its state blobs and listed the sample-data container from inside
+the perimeter — so the subscription rule admits the Cortex identity. Three
+things did not work, and one of them predates every round.
+
+### 1. Chat with an agent: `401 Access denied due to missing subscription key`
+
+The round-4 diagnosis was right and the fix was incomplete. An agent built
+before its tools had project connections — or whose Cortex record did not
+survive a restart, which until round 6 was every agent — still carried tools
+with no connection, and "Rebuild tools" needed a record Cortex no longer had.
+
+- `services/agents.js ensureToolConnections()`: reads the agent's definition
+  **from Foundry** (model, instructions, tools), gives every API Management
+  MCP tool the connection it should carry (created idempotently), and creates
+  a new version when anything changed. No Cortex record needed.
+- `adapters/foundry.js respond()`: when the first call fails with that 401,
+  calls the repair hook and retries the same turn once. Every path — chat,
+  the agent test, automations, requests — goes through it.
+- "Rebuild tools" falls back to the same repair when there is no recorded
+  definition, instead of refusing.
+- `project_connection_id` now carries the **full connection resource id**
+  (what the SDK's `connection.id` returns and the form the `azure_ai_search`
+  tool here has always used), not the bare name round 4 wrote. Switch with
+  `FOUNDRY_CONNECTION_REF=name` if Foundry reports the connection not found.
+  `createAgent({ keepAllTools })` so a repair never drops a tool type.
+
+### 2. The bootstrap job's log was eaten by a prompt
+
+`az containerapp job logs show` is an extension command; the CLI asked
+"Do you want to install it now? (Y/n)" into a captured stream and the log was
+lost, so the job's failure could not be read. Every script now sets
+`AZURE_EXTENSION_USE_DYNAMIC_INSTALL=yes_without_prompt` (process scope).
+Step 11b falls back to Log Analytics when the direct read returns nothing,
+and builds the indexes anyway when the storage health check shows the files
+landed despite a later failure in the job.
+
+### 3. The sign-in sidecar
+
+The secret updates in step 9 produced a revision whose `http-auth` container
+sat in `CreateContainerConfigError` — its client secret missing — while the
+previous revision kept serving. `Set-CortexAuth.ps1` now re-mints the secret
+whenever it is missing from the app or the newest revision's sidecar is in
+that state; step 12 does the same once and waits for the new revision.
+`Test-Cortex.ps1 -Diagnose` lists the app's secret names and the sign-in
+registration.
+
+330 tests pass, up from 319 (`test/tool-repair.test.js`).
+
+**Still to see in the tenant:** the job's log (now readable), and whether
+Foundry accepts the connection reference in id form — the first chat turn
+after this round is the test; the error text, if any, says which.
+
+---
+
 ## Addendum 9 (11 Sep, night): round 6 — the perimeter
 
 Round 5's first run against the tenant named the policy exactly and proved

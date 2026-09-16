@@ -38,6 +38,9 @@ param([switch]$Local, [switch]$Diagnose, [string]$Url, [string]$McpUrl, [string]
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
+# Extension commands (az containerapp job logs …) install themselves rather than prompting. Process scope only.
+$env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = 'yes_without_prompt'
+$env:AZURE_EXTENSION_RUN_AFTER_DYNAMIC_INSTALL = 'true'
 
 # Run az and return parsed JSON, or $null when it fails. Never throws.
 function Get-AzJson {
@@ -349,6 +352,9 @@ try {
       if ($values.ContainsKey($k)) { Write-Host ("{0}={1}" -f $k, $values[$k]) }
     }
     $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    Write-Host "`n--- cortex-web secrets (names only) and sign-in registration ---"
+    az containerapp secret list -n cortex-web -g $ResourceGroup --query "[].name" -o json 2>&1
+    az containerapp auth show -n cortex-web -g $ResourceGroup --query "{enabled:platform.enabled, action:globalValidation.unauthenticatedClientAction, excluded:globalValidation.excludedPaths, clientId:identityProviders.azureActiveDirectory.registration.clientId, secretSetting:identityProviders.azureActiveDirectory.registration.clientSecretSettingName}" -o json 2>&1
     foreach ($app in @('cortex-web','cortex-purview-mcp')) {
       Write-Host "`n--- $app revisions ---"
       az containerapp revision list -n $app -g $ResourceGroup --query "[].{name:name, active:properties.active, traffic:properties.trafficWeight, provisioning:properties.provisioningState, running:properties.runningState, health:properties.healthState, created:properties.createdTime}" -o table 2>&1

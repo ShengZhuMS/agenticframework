@@ -70,6 +70,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
+$env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = 'yes_without_prompt'
+$env:AZURE_EXTENSION_RUN_AFTER_DYNAMIC_INSTALL = 'true'
 
 function Ok($t)    { Write-Host "  OK      $t" -ForegroundColor Green }
 function Keep($t)  { Write-Host "  KEEP    $t" -ForegroundColor DarkGray }

@@ -37,7 +37,7 @@ For the two-account demo ("the same page through different eyes"):
 Local means *your machine, real Azure*. There is no offline mode. Anything you publish is published for real.
 
 ```powershell
-npm test                              # 319 tests, no Azure needed
+npm test                              # 330 tests, no Azure needed
 node scripts/bootstrap.js --dry-run   # validate content, no Azure needed
 node scripts/sample-data.js --list    # what the synthetic data generator produces
 ```
@@ -90,7 +90,7 @@ src/bff/          Backend for frontend. All Azure credentials live here.
   services/       visibility, assurance, agents, publish, ask, requests, identity
 src/web/          Server-rendered GOV.UK pages
 src/purview-mcp/  Glue 1 — the Purview MCP server
-test/             319 tests, stubbed at the HTTP boundary; smoke.test.js boots the real server
+test/             330 tests, stubbed at the HTTP boundary; smoke.test.js boots the real server
 .vscode/          Tasks, launch configs, extension recommendations
 ```
 

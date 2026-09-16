@@ -49,6 +49,7 @@ import {
   validateBuild,
   createAgent,
   rebuildAgent,
+  ensureToolConnections,
   resolveDefinition,
   gatesForDefinition,
   composeInstructions
@@ -1075,6 +1076,9 @@ export async function start() {
     configureState(config.state.dir);
   }
   await index.init();
+  // An agent whose tools lack their project connections is repaired on the
+  // first 401 and the turn retried — see foundry.js respond().
+  index.foundry.repairTools = (name, opts) => ensureToolConnections(name, opts);
   auto.startScheduler();
 
   const server = http.createServer((req, res) => {

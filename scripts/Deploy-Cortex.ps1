@@ -295,6 +295,26 @@ function Show-CortexRevisionFailure {
     Warn2 'in round 6 (the tenant policy disables account keys, so it could never mount here).'
     Info  'Re-provision so the template without the volume is applied:  .\scripts\Deploy-Cortex.ps1'
   }
+  if (Test-CortexAuthSidecarBroken -App $App -Rg $Rg -Revision $Result.revision) {
+    Warn2 'The sign-in sidecar (http-auth) cannot start: its client secret is missing from this revision''s'
+    Warn2 'secrets. The app container itself is fine. Re-minting the secret gives the next revision a good one:'
+    Info  '    .\scripts\Set-CortexAuth.ps1 -RotateSecret'
+  }
+}
+
+# The Easy Auth sidecar reads the Entra client secret from the app's secrets.
+# A revision whose http-auth container sits in CreateContainerConfigError has
+# lost it — the web container runs, the platform never routes to the revision.
+function Test-CortexAuthSidecarBroken {
+  param([string]$App, [string]$Rg, [string]$Revision)
+  if (-not $Revision) { return $false }
+  $replicas = Get-AzJson @('containerapp','replica','list','-n',$App,'-g',$Rg,'--revision',$Revision,'-o','json')
+  foreach ($r in @($replicas)) {
+    foreach ($c in @($r.properties.containers)) {
+      if ($c.name -eq 'http-auth' -and "$($c.runningStateDetails) $($c.runningState)" -match 'CreateContainerConfigError') { return $true }
+    }
+  }
+  return $false
   Info "Everything the platform logged:  az containerapp logs show -n $App -g $Rg --type system --tail 100"
   Info "What the app itself logged:      az containerapp logs show -n $App -g $Rg --type console --tail 100"
 }
@@ -310,6 +330,15 @@ try {
   $nodeMajor = (node --version) -replace 'v(\d+)\..*','$1'
   if ([int]$nodeMajor -lt 20) { throw "Node 20 or later required. Found v$nodeMajor." }
   Ok "az, azd, node v$nodeMajor, npm"
+
+  # Some `az containerapp job …` commands live in the containerapp EXTENSION,
+  # not the core CLI. Without this, the first such command stops the script
+  # with "Do you want to install it now? (Y/n)" — which is exactly what
+  # swallowed the bootstrap job's log on the first perimeter run. Process
+  # scope only: nothing is written to your CLI configuration.
+  $env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = 'yes_without_prompt'
+  $env:AZURE_EXTENSION_RUN_AFTER_DYNAMIC_INSTALL = 'true'
+  Ok 'Azure CLI extensions install themselves when a command needs one'
 
   # THE MARK OF THE WEB. Files that arrive through OneDrive sync, a browser
   # download or an extracted zip carry a Zone.Identifier stream, and PowerShell's
@@ -1275,13 +1304,30 @@ try {
           if ($status -in @('Succeeded','Failed','Stopped')) { break }
         }
         # The job's own log is the record of what happened to the data chain.
+        # `job logs show` is an extension command (installed on demand, step 1);
+        # if it still returns nothing, the same lines are in Log Analytics a few
+        # minutes later, so that is asked as well.
         $prevEap3 = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
         $jobLog = @(az containerapp job logs show -n $job -g $CortexResourceGroup --execution $execName --container bootstrap --tail 300 --only-show-errors 2>$null)
         $ErrorActionPreference = $prevEap3
+        $lines = @()
         foreach ($l in $jobLog) {
           $text = $l
           try { $o = $l | ConvertFrom-Json; $text = "$($o.Log)" } catch { }
-          if ($text) { Write-Host "    | $text" -ForegroundColor DarkGray }
+          if ($text -and $text -notmatch 'requires the extension') { $lines += $text }
+        }
+        if ($lines.Count -eq 0) {
+          $lawId = az monitor log-analytics workspace show -n $LogAnalyticsName -g $MonitoringResourceGroup --query customerId -o tsv 2>$null
+          if ($lawId) {
+            $kql = "ContainerAppConsoleLogs_CL | where ContainerJobName_s == '$job' and TimeGenerated > ago(45m) | project TimeGenerated, Log_s | order by TimeGenerated asc | take 300"
+            $rows = Get-AzJson @('monitor','log-analytics','query','-w',$lawId,'--analytics-query',$kql,'-o','json')
+            foreach ($r in @($rows)) { if ($r.Log_s) { $lines += "$($r.Log_s)" } }
+            if ($lines.Count -eq 0) { Info 'The job log has not reached Log Analytics yet (it takes a few minutes). Read it later with:' }
+          }
+        }
+        foreach ($l in $lines) { Write-Host "    | $l" -ForegroundColor DarkGray }
+        if ($lines.Count -eq 0) {
+          Info "    az containerapp job logs show -n $job -g $CortexResourceGroup --execution $execName --container bootstrap --tail 300"
         }
         if ($status -eq 'Succeeded') { $jobOk = $true; Ok "Job $execName succeeded — the sample files are in storage and the products carry their assets" }
         elseif ($status) {
@@ -1298,7 +1344,16 @@ try {
       }
 
       Step '11c' 'Building the AI Search indexes'
-      if ($jobOk -or $NoScanWait) {
+      # A job that failed on the scan or the linking still uploaded the files;
+      # the indexes only need the files. The web app can see the container
+      # from inside the perimeter, so ask it how many files are there.
+      $filesInStorage = 0
+      if (-not $jobOk) {
+        $st = Get-CortexJson -Uri "$webUrl/api/health/storage"
+        if ($st.json -and $st.json.files) { $filesInStorage = [int]$st.json.files }
+        if ($filesInStorage -gt 0) { Info "$filesInStorage sample file(s) are in storage despite the job's failure, so the indexes are built anyway." }
+      }
+      if ($jobOk -or $NoScanWait -or $filesInStorage -gt 0) {
         node scripts/bootstrap.js --only=search @noWaitArg
         if ($LASTEXITCODE -ne 0) {
           $problems += 'AI Search indexes reported failures (step 11c)'
@@ -1333,6 +1388,14 @@ try {
     # is a new revision. Make sure the newest one is serving before reading
     # its health endpoints, or a revision still starting reads as a broken app.
     $rv = Wait-CortexRevision -App 'cortex-web' -Rg $CortexResourceGroup -TimeoutSeconds 150 -RestartIfFailed
+    if (-not $rv.ok -and -not $SkipAuth -and (Test-CortexAuthSidecarBroken -App 'cortex-web' -Rg $CortexResourceGroup -Revision $rv.revision)) {
+      # The secret updates in step 9 produced a revision whose sign-in sidecar
+      # has no client secret. Re-minting it is the cure, and it is safe to do
+      # here: the running revision keeps serving until the new one is ready.
+      Warn2 "cortex-web revision $($rv.revision): the sign-in sidecar has no client secret. Re-minting it."
+      & (Join-Path $root 'scripts/Set-CortexAuth.ps1') -EnvironmentName $EnvironmentName -DefaultGroups $DefaultGroups -RotateSecret -Quiet
+      $rv = Wait-CortexRevision -App 'cortex-web' -Rg $CortexResourceGroup -TimeoutSeconds 180
+    }
     if ($rv.ok) { Ok "cortex-web revision $($rv.revision) is serving" }
     else {
       Show-CortexRevisionFailure -App 'cortex-web' -Rg $CortexResourceGroup -Result $rv

@@ -67,6 +67,14 @@ export const config = {
     projectEndpoint: env.FOUNDRY_PROJECT_ENDPOINT || '',
     apiVersion: 'v1',
     scope: 'https://ai.azure.com/.default',
+    /**
+     * How a tool names its project connection. 'id' (default) is the full
+     * connection resource id, which is what the Foundry SDK's connection.id
+     * returns and what the REST samples show; 'name' is the bare connection
+     * name. Switch with FOUNDRY_CONNECTION_REF=name if Foundry reports the
+     * connection as not found in the id form.
+     */
+    connectionRef: env.FOUNDRY_CONNECTION_REF === 'name' ? 'name' : 'id',
     model: env.FOUNDRY_MODEL || 'gpt-5-mini',
     /**
      * Further deployments the approved catalogue may offer, comma-separated.

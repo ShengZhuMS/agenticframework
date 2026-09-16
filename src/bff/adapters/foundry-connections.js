@@ -75,6 +75,21 @@ export function connectionsConfigured(cfg = config) {
   return Boolean(projectArmId(cfg));
 }
 
+/**
+ * The value a tool definition carries in project_connection_id for a named
+ * connection. The full resource id by default (FOUNDRY_CONNECTION_REF=id) —
+ * the same form the azure_ai_search tool has always used here and the form
+ * the SDK's connection.id returns — or the bare name (=name). The first
+ * round of this fix wrote the bare name for MCP tools while the search tool
+ * carried the id; one of the two forms is what Foundry resolves, and the
+ * switch makes the other a one-line change rather than a rebuild.
+ */
+export function connectionRef(name, cfg = config) {
+  if (!name) return undefined;
+  if ((cfg.foundry.connectionRef || 'id') === 'name') return name;
+  return connectionArmId(name, cfg) || name;
+}
+
 async function armFetch(pathname, { method = 'GET', body, timeoutMs } = {}) {
   const url = `${ARM}${pathname}?api-version=${API_VERSION}`;
   const token = await getToken(ARM_SCOPE);

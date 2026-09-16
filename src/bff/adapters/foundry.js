@@ -135,7 +135,7 @@ class LiveFoundry {
    *   { type: 'mcp', server_label, server_url, require_approval,
    *     allowed_tools, project_connection_id }
    */
-  async createAgent({ name, model, instructions, tools = [] }) {
+  async createAgent({ name, model, instructions, tools = [], keepAllTools = false }) {
     return this._fetch('/agents', {
       method: 'POST',
       body: {
@@ -144,7 +144,10 @@ class LiveFoundry {
           kind: 'prompt',
           model: model || this.cfg.model,
           instructions,
-          tools: tools.filter((t) => ['mcp', 'openapi', 'function', 'azure_ai_search', 'file_search'].includes(t.type))
+          // keepAllTools: a repair re-creates a version from the definition
+          // Foundry holds, and must not drop a tool type this list has not
+          // heard of.
+          tools: keepAllTools ? tools : tools.filter((t) => ['mcp', 'openapi', 'function', 'azure_ai_search', 'file_search'].includes(t.type))
         }
       }
     });
@@ -175,7 +178,30 @@ class LiveFoundry {
     if (conversationId) body.conversation = conversationId;
     if (previousResponseId) body.previous_response_id = previousResponseId;
 
-    let res = await this._post(body);
+    let res;
+    try {
+      res = await this._post(body);
+    } catch (err) {
+      /**
+       * THE 401 THAT KEPT COMING BACK. "Authentication failed when connecting
+       * to the MCP server … 401 Access denied due to missing subscription
+       * key" means this agent's tool definition carries no usable project
+       * connection — an agent built before connections existed, or one whose
+       * record did not survive. The repair hook (services/agents.js
+       * ensureToolConnections, attached at start-up) gives the tools their
+       * connections in a new version; then the same turn is tried once more.
+       */
+      if (!isToolAuthFailure(err) || typeof this.repairTools !== 'function') throw err;
+      let repair;
+      try {
+        repair = await this.repairTools(agentName, { force: true });
+      } catch (repairErr) {
+        err.message += ` — Cortex tried to repair the agent's tool connections and could not: ${repairErr.message}`;
+        throw err;
+      }
+      if (!repair?.repaired) throw err;
+      res = await this._post(body);
+    }
     const toolCalls = [];
     let rounds = 0;
 
@@ -291,6 +317,12 @@ class LiveFoundry {
     await this.listAgents();
     return { ok: true, mode: 'live', model: this.cfg.model, latencyMs: Date.now() - started };
   }
+}
+
+/** The failure that means an MCP tool has no working project connection. */
+export function isToolAuthFailure(err) {
+  const m = String(err?.message || '');
+  return /Authentication failed when connecting to the MCP server/i.test(m) && /401|subscription key/i.test(m);
 }
 
 /** Pull every tool interaction out of a response's output items. */

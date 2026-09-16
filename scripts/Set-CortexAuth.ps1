@@ -240,6 +240,35 @@ try {
   $configuredFor = $aad.registration.clientId
   $needsSecret = $RotateSecret -or (-not $aad) -or ($configuredFor -ne $app.appId)
 
+  # THE SECRET THAT WENT MISSING. Sign-in is configured on the app once, and
+  # the client secret lives in the app's secrets under clientSecretSettingName.
+  # A later provision or secret update can leave a revision without it — the
+  # web container runs, the http-auth sidecar sits in CreateContainerConfigError,
+  # and the platform never routes to the revision. The first perimeter run
+  # showed exactly that. So: if the secret is absent or empty, or the newest
+  # revision's sidecar is in that state, mint a new one and apply it.
+  if ($aad -and -not $needsSecret) {
+    $secretName = if ($aad.registration.clientSecretSettingName) { $aad.registration.clientSecretSettingName } else { 'microsoft-provider-authentication-secret' }
+    $secretValue = az containerapp secret show -n $webApp -g $rg --secret-name $secretName --query value -o tsv 2>$null
+    if (-not $secretValue) {
+      Warn2 "The sign-in secret '$secretName' is missing from $webApp — re-minting it."
+      $needsSecret = $true
+    } else {
+      $latest = az containerapp show -n $webApp -g $rg --query properties.latestRevisionName -o tsv 2>$null
+      if ($latest) {
+        $replicas = Get-AzJson @('containerapp','replica','list','-n',$webApp,'-g',$rg,'--revision',$latest,'-o','json')
+        foreach ($r in @($replicas)) {
+          foreach ($c in @($r.properties.containers)) {
+            if ($c.name -eq 'http-auth' -and "$($c.runningStateDetails) $($c.runningState)" -match 'CreateContainerConfigError') {
+              Warn2 "The sign-in sidecar on revision $latest cannot start (CreateContainerConfigError) — re-minting the client secret."
+              $needsSecret = $true
+            }
+          }
+        }
+      }
+    }
+  }
+
   if ($needsSecret) {
     # Minted only now. Every reset adds a credential to the app, so this is
     # not done on every run.
