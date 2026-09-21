@@ -53,7 +53,7 @@
   Move an existing model deployment onto the pinned model and version.
 
 .EXAMPLE
-  .\scripts\Deploy-Cortex.ps1 -GroupMap 'waste-crime=Waste Crime Observatory'
+  .\scripts\Deploy-Cortex.ps1 -GroupMap 'operations=Operations'
   Full deployment, and map an Entra group onto the name the access rules use.
 
 .EXAMPLE
@@ -150,9 +150,11 @@ param(
   [string[]]$DemoUserEmail      = @(),
   [string[]]$DemoGroupMap       = @(
     'analysts=Cortex Analysts',
-    'waste-crime=Cortex Waste Crime Observatory',
-    'ne-evidence=Cortex NE Evidence',
-    'ea-flood-risk=Cortex EA Flood Risk',
+    'operations=Cortex Operations',
+    'research=Cortex Research',
+    'finance=Cortex Finance',
+    'people=Cortex People',
+    'cortex-redteam=Cortex Red Team Reviewers',
     'cortex-official-sensitive=Cortex Official-Sensitive'
   ),
   [string[]]$DemoUserGroups     = @('Cortex Analysts'),
@@ -1192,7 +1194,7 @@ try {
   # starts. `$env:` here is inherited by npm, which is exactly what is wanted;
   # nothing is written to disk.
   if (-not $SkipBootstrap) {
-    Step 11 'Granting Purview access, creating the Defra content, the sample data and the indexes'
+    Step 11 'Granting Purview access, creating neutral demo content, sample data and indexes'
     Info 'The roles are granted with YOUR signed-in account through the Unified Catalog Policies API.'
     Info 'If Purview refuses you (403), add yourself as a Data Governance Administrator in the'
     Info 'Purview portal (Settings → Solution settings → Unified Catalog → Roles and permissions).'
@@ -1481,7 +1483,7 @@ try {
   if ($DemoIdentities) {
     Write-Host "  - Demo identities: you are in $($DemoGroupMap.Count) demo groups; demo users are in: $($DemoUserGroups -join ', ')."
   } elseif ($GroupMap.Count -eq 0) {
-    Write-Host "    To map real Entra groups onto access-rule names:  .\scripts\Set-CortexAuth.ps1 -GroupMap 'waste-crime=<group name>'"
+    Write-Host "    To map real Entra groups onto access-rule names:  .\scripts\Set-CortexAuth.ps1 -GroupMap 'operations=<group name>'"
     Write-Host "    For the two-account demo set-up:  .\scripts\Deploy-Cortex.ps1 -SkipProvision -SkipBootstrap -DemoIdentities -DemoUserEmail <address>"
   }
   Write-Host ""

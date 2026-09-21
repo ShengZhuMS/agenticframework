@@ -146,7 +146,7 @@ export function entryPage(ctx, { entry: e, cluster, requested, grounding = null,
   let actions = '';
   const chatButton =
     e.cat === 'Agent' && chat?.allowed
-      ? `<a class="govuk-button" href="/agent/${attr(e.id)}/chat" target="_blank" rel="opener" role="button">Chat with this agent</a>
+      ? `<a class="govuk-button" href="/agent/${attr(e.id)}/chat" data-chat-window target="_blank" rel="noopener" role="button">Chat with this agent</a>
          <p class="govuk-body-s">Opens in a new window. ${chat.policy === 'all-staff' ? 'Every member of staff can chat with every agent in this phase.' : ''}</p>`
       : '';
   if (e.cat === 'Agent' && chatButton && e.vis !== 'available') {
@@ -217,6 +217,8 @@ ${
   <div class="govuk-grid-column-full">
     <span class="govuk-caption-l">${esc(e.cat)} · ${esc(cluster?.name || e.cluster)} · ${esc(cluster?.owner || '')}</span>
     <h1 class="govuk-heading-xl govuk-!-margin-bottom-0">${esc(e.name)}</h1>
+    <p class="govuk-body"><a class="govuk-link" href="/entry/${attr(e.id)}/lineage">View artefact lineage and consumers</a></p>
+    ${e._artefact ? `<p class="govuk-body-s">Version ${esc(e._artefact.version)} · ${esc(e._artefact.sensitivity)} · Support: ${esc(e._artefact.contact)}</p>` : ''}
     <p class="govuk-body-l">${esc(e.desc)}</p>
     ${flags(e)}
     <div style="margin-bottom:20px">${visMark(e.vis)}</div>

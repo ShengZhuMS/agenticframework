@@ -69,7 +69,7 @@ export async function bootstrapConnections({ log, counters, dryRun = false, apim
     return { created: 0, kept: 0 };
   }
   if (dryRun) {
-    log.skip(`would create one RemoteTool connection per MCP server in ${config.apim.serviceName}, e.g. permit-history-lookup-mcp → ${connectionNameFor('permit-history-lookup-mcp')}`);
+    log.skip(`would create one RemoteTool connection per MCP server in ${config.apim.serviceName}, e.g. cx-demo-inventory-lookup-mcp → ${connectionNameFor('cx-demo-inventory-lookup-mcp')}`);
     return { created: 0, kept: 0 };
   }
   let servers = [];
@@ -228,7 +228,7 @@ export async function bootstrapData({
   } catch (err) {
     counters.failed++;
     log.fail(`Data Map — ${err.message}`);
-    log.warn('the files are in storage; register and scan the account by hand in the Purview portal, then run --only=link');
+    log.warn('The uploaded files are preserved. Repair the reported API/access error and rerun the data section; source registration and scanning are automated.');
     return { uploaded, linked: 0 };
   }
 
@@ -318,6 +318,9 @@ export async function linkAssets({
       const reg = await purview.registerDataAsset({
         dataMapAssetId: asset.id,
         name: asset.name || `${p.id}.csv`,
+        qualifiedName: asset.qualifiedName,
+        assetType: asset.type,
+        columns: asset.columns || [],
         ownerId: me,
         ownerName: p.owner || 'Cortex bootstrap',
         openInUrl: `https://purview.microsoft.com/datacatalog/governance/main/catalog/dataasset/${asset.id}`
@@ -378,17 +381,21 @@ export async function bootstrapSearch({
     log.fail(`Foundry → AI Search connection — ${err.message}`);
   }
 
-  // The Basic tier holds 15 indexes; say so before hitting the wall on the 15th.
+  // Preflight the whole pack before partially creating it or starting indexers.
   try {
     const have = await search.listIndexes();
     const ours = new Set(have.filter((n) => n.startsWith(config.search.indexPrefix)));
     const wanted = known.map((p) => indexNameFor(p.id));
     const newOnes = wanted.filter((n) => !ours.has(n)).length;
-    if (have.length + newOnes > 15) {
-      log.warn(`${have.length} indexes exist and ${newOnes} more are needed — the Basic tier allows 15. Move the service to Standard S1 or reduce the products.`);
+    const capacity = search.capacity ? await search.capacity() : { limit: 15 };
+    if (!Number.isFinite(capacity.limit)) throw new Error('Search did not report its index quota.');
+    if (have.length + newOnes > capacity.limit) {
+      throw new Error(`${have.length} indexes exist and ${newOnes} more are needed, but the service quota is ${capacity.limit}. Run the reviewed legacy-index migration or approve a capacity upgrade. No indexes were changed.`);
     }
   } catch (err) {
-    log.warn(`could not list indexes — ${err.message}`);
+    counters.failed++;
+    log.fail(`Search capacity preflight: ${err.message}`);
+    return { built: 0, indexed: 0, failed: 1 };
   }
 
   const storageAccountId =
@@ -462,9 +469,15 @@ export async function verifyIndexers({ names, search, log, sleep, verifySeconds 
       if (!last || !terminal.test(String(last.status || ''))) continue;
       remaining.delete(name);
       const errors = last.errors || [];
-      if (/success/i.test(last.status) && !last.failed) {
-        result.indexed++;
-        log.ok(`${name} — ${last.processed} row${last.processed === 1 ? '' : 's'} indexed`);
+      if (/^success$/i.test(last.status) && !last.failed) {
+        const stats = search.indexStats ? await search.indexStats(name) : { documents: last.processed };
+        if (stats?.documents > 0) {
+          result.indexed++;
+          log.ok(`${name} — ${stats.documents} rows indexed`);
+        } else {
+          // Search statistics lag a successful indexer. Wait before declaring an empty index.
+          remaining.add(name);
+        }
       } else {
         result.failed++;
         const first = errors[0] || `status ${last.status}`;
@@ -474,7 +487,15 @@ export async function verifyIndexers({ names, search, log, sleep, verifySeconds 
     }
     if (remaining.size) await sleep(intervalMs);
   }
-  result.pending += remaining.size;
+  for (const name of remaining) {
+    const stats = search.indexStats ? await search.indexStats(name) : null;
+    if (stats?.documents === 0) {
+      result.failed++;
+      log.fail(`${name} — no indexed rows appeared before the verification deadline; check source folder and file parsing.`);
+    } else {
+      result.pending++;
+    }
+  }
   return result;
 }
 

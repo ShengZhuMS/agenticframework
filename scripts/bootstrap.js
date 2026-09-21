@@ -1,5 +1,5 @@
 /**
- * Bootstrap — create the Defra content in your real Azure resources.
+ * Bootstrap - create the neutral synthetic demo pack in real Azure resources.
  *
  * Grants, in Microsoft Purview:
  *   - the Cortex managed identity its Unified Catalog roles (see
@@ -437,7 +437,9 @@ async function bootstrapDataProducts(products, domainIds, { ownerId = null } = {
       // so it must not pass silently the way it used to. A duplicate here is
       // far more confusing to unpick than a warning is to read.
       log.warn(`could not query existing data products — ${err.message}`);
-      log.warn('proceeding as if every product is new; re-run once the query works');
+      failed++;
+      log.fail('stopping this section to avoid duplicating products; re-run once listing works');
+      return;
     }
   }
 
@@ -941,6 +943,8 @@ async function main() {
   const domains = await read('domains.json');
   const products = await read('data-products.json');
   const skills = await read('skills.json');
+  const productNames = new Map(products.map((p) => [p.id, p.name]));
+  for (const p of products) p.dependsOn = (p.dependsOn || []).map((id) => productNames.get(id) || id);
 
   // Which sections run: everything, or the one named by --only, minus --skip.
   const wants = (section) => (!ONLY || ONLY === section) && !SKIP.has(section);

@@ -1,794 +1,153 @@
-/**
- * About — the case for Cortex, written for senior business leaders.
- *
- * WHO THIS IS FOR
- * A director or a board member with ten minutes, deciding whether to back the
- * next phase. So: the problem in their words first, then what changes, then
- * the argument that matters most in 2026 — that AI alone changes nothing, the
- * SYSTEM running it does — then how it is built, why it is safe, and what we
- * are asking for. Product names appear only where the point is that Cortex
- * sits on platforms Defra already pays for.
- *
- * THE RULES OF THIS PAGE
- *   - No number without a source. Live figures are read from the register and
- *     say so; the worked example says it is a worked example; the coverage
- *     and cost figures that could not be defended were removed, not labelled.
- *   - No client JavaScript. The diagrams are inline SVG with a text
- *     alternative, so the page reads the same with images off or a screen
- *     reader on — and prints cleanly for the people who still read on paper.
- *   - The "AI alone won't change your business" section carries the message
- *     of the Microsoft post it draws on in the post's own title, attributed
- *     and linked, and nothing else from it verbatim. Everything else on the
- *     page is our own words.
- */
+import { esc, layout } from '../layout.js';
 
-import { esc, attr, visMark, layout } from '../layout.js';
-import { VIS, VIS_ORDER } from '../../bff/services/visibility.js';
-
-/* ----------------------------------------------------------- content */
-
-const CONTENTS = [
-  ['in-brief', 'In brief'],
-  ['the-problem', 'The problem we are solving'],
-  ['the-system', 'AI alone won’t change your business'],
-  ['as-is-to-be', 'From four platforms to one front door'],
-  ['what-changes', 'What changes'],
-  ['for-you', 'What it means for your people'],
-  ['how-it-works', 'How it is built'],
-  ['why-safe', 'Why it is safe'],
-  ['where-next', 'Where we are and what we need']
+const ARTICLE = 'https://blogs.microsoft.com/blog/2026/06/02/ai-alone-wont-change-your-business-the-system-running-it-will/';
+const sections = [
+  ['purpose', 'The opportunity'], ['problem', 'The problem'], ['system', 'The system, not just the model'],
+  ['architecture', 'Business architecture'], ['value', 'What changes'], ['journey', 'See it in action'],
+  ['governance', 'Trust and control'], ['readiness', 'The leadership decision']
 ];
 
-/**
- * The message that frames the whole page, from Microsoft's Jay Parikh:
- * "AI alone won't change your business. The system running it will."
- * (The Official Microsoft Blog, 2 June 2026). We use the post's title as the
- * message, attribute and link it, and set its three principles against what
- * Cortex already does. Nothing else from the post is reproduced.
- */
-const ARTICLE = {
-  title: 'AI alone won’t change your business. The system running it will.',
-  author: 'Jay Parikh, Executive Vice President, CoreAI, Microsoft',
-  date: '2 June 2026',
-  url: 'https://blogs.microsoft.com/blog/2026/06/02/ai-alone-wont-change-your-business-the-system-running-it-will/'
-};
-
-/** The post's three principles, each with the one line of what Cortex does about it. */
-const PRINCIPLES = [
-  {
-    title: 'One integrated system',
-    theirs: 'Not tools stitched together after the fact.',
-    ours: 'One front door over the catalogue, the gateway and the agent platform Defra already runs. Nothing new to buy.'
-  },
-  {
-    title: 'Secured and governed by design',
-    theirs: 'Governance native to the system, not bolted on later.',
-    ours: 'Entra decides what you see. An agent never reaches further than its builder. Every answer names its sources.'
-  },
-  {
-    title: 'Improves continuously, under human oversight',
-    theirs: 'The longer it runs, the more its value compounds.',
-    ours: 'Every published agent becomes a part the next team reuses. Every answered request shows owners the demand. A person releases every answer.'
-  }
-];
-
-/** The as-is / to-be comparison, from the architecture review. */
-const COMPARE = [
-  {
-    n: '01',
-    theme: 'Interface',
-    asIs: 'No front door. Copilot and Teams agents are turned off for anyone outside the Cloud Centre of Excellence.',
-    toBe: 'Cortex in the browser is the front door, open to any member of staff who signs in.'
-  },
-  {
-    n: '02',
-    theme: 'Orchestration',
-    asIs: 'The catalogue, the gateway and the agent platform are all live in the landing zone. The plumbing is in.',
-    toBe: 'Unchanged. Nothing is replaced and nothing moves.'
-  },
-  {
-    n: '03',
-    theme: 'Connection',
-    asIs: 'The platforms cannot talk to each other as agents. Four systems, each answering only for itself.',
-    toBe: 'A thin slice of connections, and one principle: every platform exposes an API and an agent interface by default.'
-  },
-  {
-    n: '04',
-    theme: 'Data and agents',
-    asIs: 'Projects, each with its own AI and its own data, each answering only for itself.',
-    toBe: 'The same platforms, now reachable from one place. Data stays where it is.'
-  }
-];
-
-/** Worked example from the architecture review: management information today and with Cortex. */
-const HANDOFFS_TODAY = [
-  ['Manager asks', 'Tells the management information team.'],
-  ['Request goes out', 'By email, spreadsheet or form.'],
-  ['Responder digs', 'Logs in, runs a report, finds the data.'],
-  ['Responder replies', 'The answer comes back by email.'],
-  ['Paste and collate', 'Into a spreadsheet with all the others.'],
-  ['Feeds a dashboard', 'The spreadsheet is connected to a dashboard.'],
-  ['Manager reads', 'Looks at the dashboard.']
-];
-
-const HANDOFFS_CORTEX = [
-  ['Manager asks once', 'In one place. Cortex first checks what they can already reach themselves.'],
-  ['The holder’s agent drafts first', 'Before the responder opens the request, their agent has read it, drafted an answer from data it is allowed to reach, and recorded the method.'],
-  ['The holder reviews and releases', 'Checks the method and the answer, then releases it. Nothing leaves without a person.'],
-  ['Dashboard updates', 'The response feeds the dashboard, with its method attached.']
-];
-
-const VALUE = [
-  {
-    title: 'Governed by default',
-    body: 'Who you are in Microsoft Entra decides what you see. Nothing in Cortex grants access on its own, and an agent can never reach further than the person who built it.'
-  },
-  {
-    title: 'Nothing copied, nothing moves',
-    body: 'Cortex connects to data where it lives. There is no upload, no file picker and no second copy to govern.'
-  },
-  {
-    title: 'Reuse over rebuild',
-    body: 'Every agent anyone publishes becomes a part in the marketplace that the next team can build with. That is the difference between thousands of agents and a platform.'
-  },
-  {
-    title: 'The method comes with the answer',
-    body: 'Every answer names its sources, how fresh they are and what it could not reach. No number appears without a source.'
-  }
-];
-
-const JOURNEY = [
-  {
-    step: 'Find',
-    href: '/marketplace',
-    label: 'Marketplace',
-    body: 'Data, skills and agents from across Defra in one register. Every entry states honestly whether you can use it, and what to do if you cannot.',
-    state: 'Working'
-  },
-  {
-    step: 'Ask',
-    href: '/ask',
-    label: 'Ask a question',
-    body: 'A question answered from the catalogue entries you are allowed to reach, with sources, freshness and what it could not reach.',
-    state: 'Working'
-  },
-  {
-    step: 'Build',
-    href: '/build',
-    label: 'Build an agent',
-    body: 'Pick an approved model, tick the knowledge and actions you may use. Anything you cannot use is greyed out and explained. Seven assurance gates are worked out for you.',
-    state: 'Working'
-  },
-  {
-    step: 'Share',
-    href: '/share',
-    label: 'Share your data',
-    body: 'Publish your agent back as a reusable part, or register data you hold and handle requests for it.',
-    state: 'Working'
-  },
-  {
-    step: 'Request',
-    href: '/requests',
-    label: 'Requests',
-    body: 'Allowed the answer but not the data? Ask the person who holds it. Their agent drafts, they review and release.',
-    state: 'Working'
-  },
-  {
-    step: 'Automate',
-    href: '/automate',
-    label: 'Automate a task',
-    body: 'Recurring runs that draft, with a person at the checkpoint. Everything is propose-only: nothing writes anywhere in this phase.',
-    state: 'Working'
-  }
-];
-
-const SAFE = [
-  {
-    title: 'Access management is unchanged',
-    body: 'Nobody sees data they could not see before. The person who holds it still holds it and still runs the query.'
-  },
-  {
-    title: 'Quality is approved',
-    body: 'The method is recorded with the answer and reviewed before anything is released.'
-  },
-  {
-    title: 'Appropriateness is managed',
-    body: 'A person still decides whether this answer should be given at all. It is released by the person who was always accountable for it.'
-  }
-];
-
-const PATTERN_REUSE = [
-  'Freedom of information',
-  'Parliamentary questions',
-  'Spending Review 27',
-  'Outcome reporting',
-  'Financial requests'
-];
-
-const STATUS = [
-  ['Marketplace, entry standard and map', 'Working'],
-  ['Build an agent → assurance gates → test → publish → reappears in the marketplace', 'Working'],
-  ['Ask, with sources and provenance, answered by a live agent', 'Working'],
-  ['Chat with any published agent, in its own window', 'Working'],
-  ['Requests: draft inside the holder’s permissions, a person releases', 'Working'],
-  ['Share your data and the access-request queue', 'Working'],
-  ['Automate a task — propose-only, a person at the checkpoint', 'Working'],
-  ['The data behind each product: scanned, indexed, readable by an agent', 'Working'],
-  ['Requests and conversations kept across restarts', 'Working'],
-  ['Granting access in the catalogue when a request is approved', 'Next'],
-  ['Repeat requests issued on a schedule', 'Next']
-];
-
-const NOT_BUILT = [
-  ['Automations that write to a source system', 'Agents read, summarise and cite in this phase. Nothing writes until an accountable owner turns it on.'],
-  ['Reference data and canonical entities', 'The owning role does not yet exist. We do not build on a dependency the department has flagged as absent.'],
-  ['Cost per use, carbon and estate coverage figures', 'No live source. Removed rather than labelled illustrative — a figure nobody can defend is worse than an absent one.']
-];
-
-const PROVE = [
-  ['Landing-zone colleagues', 'Build with the people who own the plumbing, so we know it is connected to the interface.'],
-  ['Management information', 'A live issue today. Get the management information function using it for real requests.'],
-  ['Waste Crime observatory', 'A new capability emerging now — a good build, test and learn space. Get them on it as it is being built.']
-];
-
-const ASK = [
-  'Adopt one architecture principle: every platform exposes an API and an agent interface by default. Thin slice first, not the whole estate.',
-  'Turn Copilot and Teams agents on for people outside the Cloud Centre of Excellence, so the front door has somewhere to lead.',
-  'Name a sponsor for each of the three proving grounds and let the proof of concept carry their real requests.',
-  'Fund the next phase as one system — the front door, the connections and the governance loop together — because AI alone will not change the business; the system running it will.'
-];
-
-/* ---------------------------------------------------------- partials */
-
-function tag(state) {
-  const tone = state === 'Working' ? 'green' : state === 'Next' ? 'blue' : 'grey';
-  return `<strong class="govuk-tag govuk-tag--${tone}">${esc(state)}</strong>`;
+function architecture() {
+  return `<figure class="cx-exec-diagram">
+    <svg viewBox="0 0 1080 900" role="img" aria-labelledby="architecture-title architecture-desc" style="display:block;width:100%;height:auto" xmlns="http://www.w3.org/2000/svg">
+      <title id="architecture-title">From a business question to a reusable, governed capability</title>
+      <desc id="architecture-desc">People use one Data Cortex front door to discover, ask, build, test, publish and orchestrate. Purview provides trusted context, Foundry runs agents and assessments, and API Management connects reusable capabilities. Identity, human accountability and operational evidence surround the flow, on an Azure landing-zone foundation.</desc>
+      <defs><marker id="cx-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#54708d"/></marker></defs>
+      <rect x="16" y="16" width="1048" height="868" rx="20" fill="#f0f5fa" stroke="#c5d5e5"/>
+      <text x="540" y="49" text-anchor="middle" font-size="18" fill="#17324d">TRUST THROUGHOUT: identity · access · evidence · human accountability</text>
+      <rect x="126" y="75" width="828" height="66" rx="12" fill="#17324d"/>
+      <text x="540" y="104" text-anchor="middle" font-size="23" fill="white" font-weight="700">Your people. Their questions. Your organisational knowledge.</text>
+      <text x="540" y="128" text-anchor="middle" font-size="16" fill="#d6e5f5">Business users · Data owners · Agent builders · Platform and assurance teams</text>
+      <path d="M540 143V173" stroke="#54708d" stroke-width="3" marker-end="url(#cx-arrow)"/>
+      <rect x="66" y="177" width="948" height="104" rx="12" fill="#0067b8"/>
+      <text x="540" y="215" text-anchor="middle" font-size="28" fill="white" font-weight="700">DATA CORTEX — ONE FRONT DOOR</text>
+      <text x="540" y="251" text-anchor="middle" font-size="21" fill="white">Discover → Ask → Build → Test → Publish → Coordinate agents</text>
+      <path d="M540 283V310M204 337V310H876V337M540 310V337" stroke="#54708d" stroke-width="3" fill="none"/>
+      ${[
+        { x: 46, name: 'TRUSTED CONTEXT', product: 'Microsoft Purview', lines: ['Find data and its owner', 'Understand meaning and access', 'Data Map + Unified Catalog'] },
+        { x: 382, name: 'INTELLIGENT WORK', product: 'Microsoft Foundry', lines: ['Build and run agents', 'Ground answers in knowledge', 'Native red-team assessments'] },
+        { x: 718, name: 'REUSABLE CAPABILITIES', product: 'API Management', lines: ['Connect APIs and MCP tools', 'Publish tested agent endpoints', 'Reuse across teams'] }
+      ].map((c) => `<rect x="${c.x}" y="342" width="316" height="169" rx="12" fill="white" stroke="#9cb6cf"/>
+        <text x="${c.x + 158}" y="371" text-anchor="middle" font-size="16" fill="#44627e" font-weight="700">${c.name}</text>
+        <text x="${c.x + 158}" y="405" text-anchor="middle" font-size="24" fill="#17324d" font-weight="700">${c.product}</text>
+        ${c.lines.map((line, i) => `<text x="${c.x + 158}" y="${437 + i * 25}" text-anchor="middle" font-size="17" fill="#17324d">${line}</text>`).join('')}`).join('')}
+      <rect x="46" y="534" width="988" height="322" rx="12" fill="#dce9f4"/>
+      <text x="540" y="563" text-anchor="middle" font-size="21" fill="#17324d" font-weight="700">Azure landing-zone foundation</text>
+      <text x="540" y="590" text-anchor="middle" font-size="16" fill="#17324d">A governed platform for repeatable AI adoption, not a collection of isolated demos</text>
+      ${[
+        ['Identity and access', 'Entra, workload identities, RBAC', 'Accountable owners and least privilege'],
+        ['Networking and connectivity', 'Perimeter, private endpoints, DNS', 'Controlled ingress and egress'],
+        ['Data and session services', 'Storage, Search, durable state', 'Retention, residency and recovery'],
+        ['Security and governance', 'Policy, secrets, classification', 'Threat protection and assurance'],
+        ['Operate and improve', 'Monitor, traces, evaluation evidence', 'SLOs, incident response and FinOps'],
+        ['Platform engineering', 'Subscriptions, IaC and release stages', 'Reusable deployments and rollback']
+      ].map(([name, line1, line2], i) => {
+        const x = 62 + (i % 3) * 326, y = 610 + Math.floor(i / 3) * 106;
+        return `<rect x="${x}" y="${y}" width="310" height="94" rx="8" fill="white" stroke="#b4cadf"/>
+          <text x="${x + 155}" y="${y + 25}" text-anchor="middle" font-size="17" font-weight="700" fill="#17324d">${name}</text>
+          <text x="${x + 155}" y="${y + 50}" text-anchor="middle" font-size="14" fill="#17324d">${line1}</text>
+          <text x="${x + 155}" y="${y + 73}" text-anchor="middle" font-size="13" fill="#44627e">${line2}</text>`;
+      }).join('')}
+      <text x="540" y="840" text-anchor="middle" font-size="13" fill="#44627e">Foundation cards describe the target design; service availability and controls depend on the deployed estate.</text>
+    </svg>
+    <figcaption class="govuk-body-s">A connected user experience over Microsoft platform services, not a replacement for them. Databricks, Fabric and Microsoft 365 connect through governed adapters; Teams and Copilot delivery use Azure Bot Service after assessment and tenant approval. Foundation cards are the target landing-zone design, not a claim that every control is deployed.</figcaption>
+    <details class="govuk-details"><summary>Architecture text alternative</summary><p class="govuk-body">A business user enters through Data Cortex. Purview identifies data, owners and access routes. Foundry runs agents and native assessments. API Management exposes APIs, GraphQL and MCP capabilities. Databricks, Fabric and Microsoft 365 are connected sources; Azure Bot Service delivers approved agents to Teams and Copilot. The target Azure landing zone combines identity and RBAC; private networking and controlled egress; storage, search and session retention; policy, secrets and threat protection; monitoring, evaluation and FinOps; subscription organisation, infrastructure as code and rollback. These are design areas to implement and validate in each customer estate, not a blanket certification of the sandbox.</p></details>
+  </figure>`;
 }
 
-function hero() {
-  return `
-<section class="cortex-about-hero" aria-labelledby="about-heading">
-  <div class="cortex-about-hero__inner">
-    <span class="govuk-caption-l cortex-about-hero__caption">About Cortex</span>
-    <h1 id="about-heading" class="govuk-heading-xl cortex-about-hero__title">One front door to what Defra already has.</h1>
-    <p class="govuk-body-l cortex-about-hero__lede">
-      Find the data, skills and agents Defra already holds. Build something with them.
-      Share what you build — without changing who is allowed to see what.
-    </p>
-    <div class="cortex-about-hero__actions">
-      <a class="govuk-button cortex-about-hero__button" href="/marketplace" role="button">Open the marketplace</a>
-      <a class="govuk-link cortex-about-hero__link" href="#the-system">Why the system matters</a>
-    </div>
-    <p class="cortex-about-hero__note">
-      A proof of concept by the Cloud Centre of Excellence with the Strategic Innovation Team.
-      Everything on it is live: real catalogue, real gateway, real agents.
-    </p>
-  </div>
-</section>`;
-}
-
-function contents() {
-  return `
-<nav class="cortex-about-contents" aria-label="On this page">
-  <h2 class="govuk-heading-s govuk-!-margin-bottom-0">On this page</h2>
-  <ol class="govuk-list cortex-about-contents__list">
-    ${CONTENTS.map(([id, label]) => `<li><a class="govuk-link" href="#${attr(id)}">${esc(label)}</a></li>`).join('')}
-  </ol>
-</nav>`;
-}
-
-function inBrief(ctx, { stats, coverage }) {
-  const cats = Object.entries(stats.byCat || {})
-    .map(([k, v]) => `${esc(v)} ${esc(String(k).toLowerCase())}`)
-    .join(' · ');
-  const domains = Object.keys(coverage.byDomain || {}).length;
-  return `
-<section id="in-brief" class="cortex-about-section">
-  <h2 class="govuk-heading-l">In brief</h2>
-  <p class="govuk-body-l cortex-about-strap">The plumbing is in. Two gaps. One proof of concept — and one principle for what comes next.</p>
-  <ol class="cortex-about-three">
-    <li>
-      <span class="cortex-about-three__n" aria-hidden="true">1</span>
-      <h3 class="govuk-heading-s">The plumbing is already in</h3>
-      <p class="govuk-body">Defra’s data catalogue, API gateway and agent platform are live in the landing zone.
-      What is missing is the front door, and the connections between them.</p>
-    </li>
-    <li>
-      <span class="cortex-about-three__n" aria-hidden="true">2</span>
-      <h3 class="govuk-heading-s">We built the two pieces nobody ships</h3>
-      <p class="govuk-body">Your catalogue as something an agent can read, and a way to publish an agent back
-      as a reusable part. Neither is a new platform.</p>
-    </li>
-    <li>
-      <span class="cortex-about-three__n" aria-hidden="true">3</span>
-      <h3 class="govuk-heading-s">Every agent becomes a part</h3>
-      <p class="govuk-body">Every agent anyone builds becomes a part everyone else can build with.
-      That is the difference between thousands of agents and a platform — between AI alone and the system running it.</p>
-    </li>
-  </ol>
-
-  <div class="cortex-about-register">
-    <div class="cortex-stats">
-      <div class="cortex-stat">
-        <span class="cortex-stat__n">${esc(stats.entries)}</span>
-        <span class="cortex-stat__l">entries in the register today</span>
-      </div>
-      <div class="cortex-stat">
-        <span class="cortex-stat__n">${esc(domains)}</span>
-        <span class="cortex-stat__l">governance domain${domains === 1 ? '' : 's'}</span>
-      </div>
-      <div class="cortex-stat">
-        <span class="cortex-stat__n">3</span>
-        <span class="cortex-stat__l">platforms behind one front door</span>
-      </div>
-      <div class="cortex-stat">
-        <span class="cortex-stat__n">0</span>
-        <span class="cortex-stat__l">copies of anyone’s data</span>
-      </div>
-    </div>
-    <p class="cortex-src">
-      ${cats ? `${cats}. ` : ''}Read live from the register${ctx.lastRefresh ? `, last refreshed ${esc(ctx.lastRefresh)}` : ''}.
-      What is registered is a fact; what exists unregistered is unknown, and we say so rather than estimate it.
-    </p>
-  </div>
-</section>`;
-}
-
-function problem() {
-  const steps = (list, cls) =>
-    `<ol class="cortex-about-handoffs ${cls}">
-      ${list
-        .map(
-          ([t, d], i) => `<li class="cortex-about-handoffs__step">
-            <span class="cortex-about-handoffs__n" aria-hidden="true">${String(i + 1).padStart(2, '0')}</span>
-            <span class="cortex-about-handoffs__body"><strong>${esc(t)}</strong><br>${esc(d)}</span>
-          </li>`
-        )
-        .join('')}
-    </ol>`;
-  return `
-<section id="the-problem" class="cortex-about-section">
-  <h2 class="govuk-heading-l">The problem we are solving</h2>
-  <p class="govuk-body-l cortex-about-strap">Allowed the answer. Not allowed the data.</p>
-  <div class="govuk-grid-row">
-    <div class="govuk-grid-column-two-thirds">
-      <p class="govuk-body">
-        A manager wants average days sick per employee. They are entitled to that answer. They are not
-        entitled to the individual records behind it. Their AI inherits their access, so it cannot reach
-        the records either — and that means an email, a spreadsheet and a week.
-      </p>
-      <p class="govuk-body">
-        Two failures follow. <strong>No answer</strong>: their AI cannot give them a number they are
-        allowed to have. <strong>No quality assurance</strong>: even with access, the requester is not
-        expert enough in the data to check how the number was reached.
-      </p>
-      <p class="govuk-body">
-        The same shape appears wherever someone must answer for data they hold. Management
-        information is where it hurts most today, so that is where Cortex starts.
-      </p>
-    </div>
-    <div class="govuk-grid-column-one-third">
-      <div class="cortex-about-callout">
-        <p class="govuk-body govuk-!-margin-bottom-0"><strong>What this costs today</strong></p>
-        <ul class="govuk-list govuk-list--bullet govuk-!-margin-bottom-0">
-          <li>A veneer of digitisation over manual work</li>
-          <li>High cost to change anything</li>
-          <li>Many places for it to go wrong</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-
-  <div class="cortex-about-compare cortex-about-compare--steps">
-    <div class="cortex-about-compare__col">
-      <h3 class="govuk-heading-m">Today: seven handoffs to produce one number</h3>
-      ${steps(HANDOFFS_TODAY, 'cortex-about-handoffs--today')}
-    </div>
-    <div class="cortex-about-compare__col cortex-about-compare__col--to-be">
-      <h3 class="govuk-heading-m">With Cortex: the same request, answered before it is opened</h3>
-      ${steps(HANDOFFS_CORTEX, 'cortex-about-handoffs--cortex')}
-      <p class="govuk-body-s govuk-!-margin-bottom-0">
-        <strong>What changed:</strong> one step. Nothing about who holds the data changes. The work
-        happens before the responder opens the request, and the method comes with the answer.
-      </p>
-    </div>
-  </div>
-  <p class="cortex-src">A worked example from the architecture review, not a measurement.</p>
-</section>`;
-}
-
-/**
- * The message that frames the ask, in a highlighted panel: the post's own
- * title as the headline, two sentences of our own, the source, then the three
- * principles in one line each with what Cortex does about them. Short on
- * purpose — it is the part of the page a leader will remember.
- */
-function theSystem() {
-  return `
-<section id="the-system" class="cortex-about-section cortex-about-system">
-  <div class="cortex-about-system__panel">
-    <span class="cortex-about-system__label">The message behind Cortex</span>
-    <h2 class="govuk-heading-l cortex-about-system__title">${esc(ARTICLE.title)}</h2>
-    <p class="govuk-body-l cortex-about-system__lede">
-      A capable model changes nothing by itself. What changes a business is the system around it —
-      how agents are built, grounded in the organisation’s own data, governed while they run, and
-      improved over time under human oversight. Defra already owns the parts of that system.
-      Cortex is what makes them behave as one.
-    </p>
-    <p class="cortex-about-system__source">
-      Microsoft’s argument, in the words of <a class="govuk-link cortex-about-system__link" href="${attr(ARTICLE.url)}" rel="noopener">${esc(ARTICLE.author)}</a>, The Official Microsoft Blog, ${esc(ARTICLE.date)}.
-    </p>
-  </div>
-
-  <ol class="cortex-about-principles">
-    ${PRINCIPLES.map(
-      (p, i) => `<li class="cortex-about-principle">
-        <span class="cortex-about-principle__n" aria-hidden="true">${i + 1}</span>
-        <h3 class="govuk-heading-s cortex-about-principle__title">${esc(p.title)}</h3>
-        <p class="govuk-body-s cortex-about-principle__theirs">${esc(p.theirs)}</p>
-        <p class="govuk-body-s cortex-about-principle__cortex"><strong>Cortex today:</strong> ${esc(p.ours)}</p>
-      </li>`
-    ).join('')}
-  </ol>
-
-  <p class="govuk-body cortex-about-system__close">
-    <strong>The decision in one line:</strong> the AI is bought and running. The investment is in the
-    system that runs it — and that is what compounds.
-  </p>
-</section>`;
-}
-
-function asIsToBe() {
-  return `
-<section id="as-is-to-be" class="cortex-about-section">
-  <h2 class="govuk-heading-l">From four platforms to one front door</h2>
-  <p class="govuk-body-l cortex-about-strap">Two additions make what Defra already owns usable. Neither is a new platform.</p>
-  <table class="govuk-table cortex-about-table">
-    <caption class="govuk-table__caption govuk-skip-link">As is and to be, by layer</caption>
-    <thead>
-      <tr>
-        <th scope="col" class="govuk-table__header cortex-about-table__theme">Layer</th>
-        <th scope="col" class="govuk-table__header">As is</th>
-        <th scope="col" class="govuk-table__header cortex-about-table__to-be">To be</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${COMPARE.map(
-        (c) => `<tr class="govuk-table__row">
-          <th scope="row" class="govuk-table__header cortex-about-table__theme">
-            <span class="cortex-about-table__n" aria-hidden="true">${esc(c.n)}</span>${esc(c.theme)}
-          </th>
-          <td class="govuk-table__cell">${esc(c.asIs)}</td>
-          <td class="govuk-table__cell cortex-about-table__to-be">${esc(c.toBe)}</td>
-        </tr>`
-      ).join('')}
-    </tbody>
-  </table>
-</section>`;
-}
-
-function whatChanges() {
-  return `
-<section id="what-changes" class="cortex-about-section">
-  <h2 class="govuk-heading-l">What changes</h2>
-  <ul class="cortex-about-tiles">
-    ${VALUE.map(
-      (v) => `<li class="cortex-about-tile">
-        <h3 class="govuk-heading-s">${esc(v.title)}</h3>
-        <p class="govuk-body-s govuk-!-margin-bottom-0">${esc(v.body)}</p>
-      </li>`
-    ).join('')}
-  </ul>
-
-  <h3 class="govuk-heading-m">Each answer makes the next one cheaper</h3>
-  <ol class="cortex-about-cycle">
-    <li><strong>Remove the friction.</strong> Manually collected data becomes easy to ask for and easy to share.</li>
-    <li><strong>Requests increase.</strong> More people ask, because asking now works.</li>
-    <li><strong>Owners see demand.</strong> Data owners can see what is being asked of them.</li>
-    <li><strong>Owners publish.</strong> They make a live version available, and the manual burden falls.</li>
-  </ol>
-  <p class="govuk-body">
-    Build it once for management information. The pattern then serves any request where the answer is
-    allowed and the data is not:
-    ${PATTERN_REUSE.map((p) => `<strong class="govuk-tag govuk-tag--grey cortex-about-chip">${esc(p)}</strong>`).join(' ')}
-  </p>
-</section>`;
-}
-
-function forYou() {
-  return `
-<section id="for-you" class="cortex-about-section">
-  <h2 class="govuk-heading-l">What it means for your people</h2>
-  <p class="govuk-body-l cortex-about-strap">They sign in with their normal account. What they can see is what they were already allowed to see.</p>
-  <ol class="cortex-about-journey">
-    ${JOURNEY.map(
-      (j, i) => `<li class="cortex-about-journey__step">
-        <span class="cortex-about-journey__n" aria-hidden="true">${i + 1}</span>
-        <h3 class="govuk-heading-s cortex-about-journey__title">
-          <a class="govuk-link" href="${attr(j.href)}">${esc(j.step)}</a>
-          <span class="cortex-src">${esc(j.label)}</span>
-        </h3>
-        <p class="govuk-body-s">${esc(j.body)}</p>
-        ${tag(j.state)}
-      </li>`
-    ).join('')}
-  </ol>
-
-  <h3 class="govuk-heading-m">Every entry tells them where they stand</h3>
-  <p class="govuk-body">
-    The marketplace never shows a dead end. Each entry carries one of six states, worked out from group
-    membership, and each state says what to do next.
-  </p>
-  <dl class="cortex-about-states">
-    ${VIS_ORDER.map(
-      (s) => `<div class="cortex-about-states__row">
-        <dt>${visMark(s)}</dt>
-        <dd>${esc(VIS[s].next)}</dd>
-      </div>`
-    ).join('')}
-  </dl>
-  <p class="govuk-body">
-    Sign in as a different person and the same page renders differently. Access is shown, not asserted.
-    <a class="govuk-link" href="/profile">See what you can see.</a>
-  </p>
-</section>`;
-}
-
-/**
- * The architecture, as an inline SVG with a text alternative underneath.
- * Product names appear here deliberately: the point of this section is that
- * Cortex sits on things Defra already pays for.
- */
-function diagram() {
-  const f = 'font-family="GDS Transport, arial, sans-serif"';
-  const box = (x, y, w, h, fill, stroke, extra = '') =>
-    `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="2" ${extra}/>`;
-  const text = (x, y, s, size = 15, weight = 400, fill = '#0b0c0c', anchor = 'middle') =>
-    `<text x="${x}" y="${y}" ${f} font-size="${size}" font-weight="${weight}" fill="${fill}" text-anchor="${anchor}">${esc(s)}</text>`;
-  const arrow = (x1, y1, x2, y2) =>
-    `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#505a5f" stroke-width="2" marker-end="url(#about-arrow)"/>`;
-
-  const modules = ['Marketplace', 'Ask', 'Build', 'Publish', 'Requests'];
-  const moduleBoxes = modules
-    .map((m, i) => {
-      const x = 70 + i * 176;
-      return box(x, 186, 156, 44, '#ffffff', '#1d70b8') + text(x + 78, 214, m, 16, 700, '#0b0c0c');
-    })
-    .join('');
-
-  const platforms = [
-    ['Microsoft Purview', 'Data catalogue and governance', 'what exists, who owns it, what it means', 'reads catalogue metadata only'],
-    ['Azure API Management', 'Gateway', 'APIs, agent endpoints, usage figures', 'publishes agents as reusable parts'],
-    ['Microsoft Foundry', 'Agents and models', 'builds, tests and runs agents', 'creates and runs agents']
-  ];
-  const platformBoxes = platforms
-    .map(([name, role, detail, link], i) => {
-      const x = 50 + i * 310;
-      const cx = x + 140;
-      // The label sits on a white plate over the arrow so it stays legible.
-      return (
-        arrow(cx, 330, cx, 398) +
-        box(cx - 115, 350, 230, 20, '#ffffff', '#ffffff') +
-        text(cx, 365, link, 12, 400, '#505a5f') +
-        box(x, 400, 280, 82, '#f3f2f1', '#0b0c0c') +
-        text(cx, 428, name, 17, 700) +
-        text(cx, 450, role, 14, 700, '#505a5f') +
-        text(cx, 470, detail, 13, 400, '#505a5f')
-      );
-    })
-    .join('');
-
-  return `
-<figure class="cortex-about-figure">
-  <svg class="cortex-about-diagram" viewBox="0 0 1000 600" role="img" aria-labelledby="about-arch-title about-arch-desc" focusable="false">
-    <title id="about-arch-title">How Cortex is built</title>
-    <desc id="about-arch-desc">Staff sign in through the browser to Cortex, the front door. Cortex reads the data catalogue, publishes agents through the API gateway and runs them on the agent platform. Data stays on the platforms where it already lives.</desc>
-    <defs>
-      <marker id="about-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-        <path d="M 0 0 L 10 5 L 0 10 z" fill="#505a5f"/>
-      </marker>
-    </defs>
-
-    <!-- people -->
-    ${box(50, 20, 900, 64, '#0b0c0c', '#0b0c0c')}
-    ${text(500, 47, 'Any member of Defra staff', 18, 700, '#ffffff')}
-    ${text(500, 70, 'Signs in with their normal Microsoft Entra account · a browser, nothing to install · works with JavaScript off', 13, 400, '#b1b4b6')}
-    ${arrow(500, 84, 500, 138)}
-    ${text(514, 116, 'group membership decides what they can see', 12, 400, '#505a5f', 'start')}
-
-    <!-- cortex -->
-    ${box(50, 140, 900, 190, '#ffffff', '#00703c', 'stroke-width="3"')}
-    ${text(70, 168, 'Cortex — the front door', 18, 700, '#00703c', 'start')}
-    ${text(930, 168, 'runs in Defra’s Azure landing zone · one identity of its own · no secrets in code', 12, 400, '#505a5f', 'end')}
-    ${moduleBoxes}
-    ${box(70, 246, 860, 36, '#f3f2f1', '#f3f2f1')}
-    ${text(500, 269, 'Visibility engine (six states)  ·  Seven assurance gates  ·  Merged register of everything the platforms hold', 14, 700, '#0b0c0c')}
-    ${box(70, 290, 424, 30, '#ffffff', '#4c2c92', 'stroke-dasharray="6 4"')}
-    ${text(282, 310, 'Glue 1 · the catalogue as something an agent can read', 13, 400, '#4c2c92')}
-    ${box(506, 290, 424, 30, '#ffffff', '#4c2c92', 'stroke-dasharray="6 4"')}
-    ${text(718, 310, 'Glue 2 · an agent published back as a reusable part', 13, 400, '#4c2c92')}
-
-    <!-- platforms -->
-    ${platformBoxes}
-
-    <!-- data -->
-    ${box(50, 520, 900, 60, '#ffffff', '#b1b4b6', 'stroke-dasharray="6 4"')}
-    ${text(500, 545, 'Data and platform agents stay where they already are', 15, 700, '#0b0c0c')}
-    ${text(500, 567, 'Databricks · ServiceNow · AWS · Azure applications and data — nothing is copied and nothing moves', 13, 400, '#505a5f')}
-  </svg>
-  <figcaption class="cortex-src">Cortex sits on what Defra already owns. Only the front door and the two connections are new.</figcaption>
-</figure>
-<details class="govuk-details cortex-about-details">
-  <summary class="govuk-details__summary"><span class="govuk-details__summary-text">Text version of this diagram</span></summary>
-  <div class="govuk-details__text">
-    <ol class="govuk-list govuk-list--number">
-      <li><strong>People.</strong> Any member of Defra staff signs in with their normal Microsoft Entra account, in a browser. Their group membership decides what they can see.</li>
-      <li><strong>Cortex, the front door.</strong> Marketplace, Ask, Build, Publish and Requests, resting on a visibility engine with six states, seven assurance gates and a merged register of everything the platforms hold. It runs in Defra’s Azure landing zone under one identity of its own, with no secrets in code.</li>
-      <li><strong>Two pieces of glue.</strong> The catalogue exposed as something an agent can read — catalogue metadata only, never the underlying data — and a way to publish an agent back through the gateway as a reusable part.</li>
-      <li><strong>The platforms Defra already owns.</strong> Microsoft Purview holds the data catalogue and governance. Azure API Management is the gateway for APIs, agent endpoints and usage figures. Microsoft Foundry builds, tests and runs agents.</li>
-      <li><strong>The data.</strong> Databricks, ServiceNow, AWS and Azure applications and data stay where they already are. Nothing is copied and nothing moves.</li>
-    </ol>
-  </div>
-</details>`;
-}
-
-function howItWorks() {
-  return `
-<section id="how-it-works" class="cortex-about-section">
-  <h2 class="govuk-heading-l">How it is built</h2>
-  <p class="govuk-body-l cortex-about-strap">Cortex is not a new platform. It is the front door to three Defra already runs, and the connections between them.</p>
-  ${diagram()}
-
-  <div class="govuk-grid-row">
-    <div class="govuk-grid-column-one-half">
-      <h3 class="govuk-heading-m">The two pieces of glue</h3>
-      <p class="govuk-body">
-        <strong>Your catalogue as something an agent can read.</strong> There is no off-the-shelf way for an
-        agent to look up a data product. Cortex provides one. It answers “what exists, who owns it, what
-        does it mean” — never “give me the rows”. Catalogue metadata only, so the access-control story
-        stays clean.
-      </p>
-      <p class="govuk-body">
-        <strong>An agent published back as a reusable part.</strong> There is no off-the-shelf way to publish
-        an agent through the gateway so the next agent can use it. Cortex generates the interface,
-        registers it, and writes the endpoint back to the register. The loop closes: what you build is
-        now something another team can build with.
-      </p>
-    </div>
-    <div class="govuk-grid-column-one-half">
-      <h3 class="govuk-heading-m">Built on what Defra already has</h3>
-      <dl class="govuk-summary-list cortex-about-summary">
-        <div class="govuk-summary-list__row">
-          <dt class="govuk-summary-list__key">Reused</dt>
-          <dd class="govuk-summary-list__value">The data catalogue, the API gateway, the agent platform, the container registry and monitoring — as they are, where they are.</dd>
-        </div>
-        <div class="govuk-summary-list__row">
-          <dt class="govuk-summary-list__key">Created</dt>
-          <dd class="govuk-summary-list__value">Two small container apps, a search index over the sample data, two storage accounts inside a network security perimeter, and one identity of Cortex’s own — so its permissions can be reasoned about and revoked without touching anything else.</dd>
-        </div>
-        <div class="govuk-summary-list__row">
-          <dt class="govuk-summary-list__key">Everything is live</dt>
-          <dd class="govuk-summary-list__value">No demo mode. Publish an agent and it is genuinely registered; retire a data product in the catalogue and it leaves the marketplace on the next refresh. The only generated content is the synthetic sample data behind the data products, and it says so.</dd>
-        </div>
-        <div class="govuk-summary-list__row">
-          <dt class="govuk-summary-list__key">Accessible by design</dt>
-          <dd class="govuk-summary-list__value">GOV.UK Design System pages. No client-side scripts, so it works with JavaScript off and reads well with a screen reader. Every state is shown by shape and words, never colour alone.</dd>
-        </div>
-        <div class="govuk-summary-list__row">
-          <dt class="govuk-summary-list__key">Re-runnable</dt>
-          <dd class="govuk-summary-list__value">One command deploys it and can be run again safely. Nothing only works the first time — and the deployment says honestly when something is not working.</dd>
-        </div>
-      </dl>
-    </div>
-  </div>
-</section>`;
-}
-
-function whySafe() {
-  return `
-<section id="why-safe" class="cortex-about-section">
-  <h2 class="govuk-heading-l">Why it is safe</h2>
-  <p class="govuk-body-l cortex-about-strap">None of the controls move. Only the drafting does.</p>
-  <ol class="cortex-about-three cortex-about-three--safe">
-    ${SAFE.map(
-      (s, i) => `<li>
-        <span class="cortex-about-three__n" aria-hidden="true">${i + 1}</span>
-        <h3 class="govuk-heading-s">${esc(s.title)}</h3>
-        <p class="govuk-body">${esc(s.body)}</p>
-      </li>`
-    ).join('')}
-  </ol>
-  <div class="govuk-inset-text">
-    <p class="govuk-body govuk-!-margin-bottom-0">
-      Three rules are enforced in the service and tested, not just described: an agent can never reach
-      further than the person who built it; a request is drafted inside the holder’s permissions, never
-      the requester’s; and nothing reaches a requester until a person releases it. Every tool an agent
-      calls is approved by Cortex on the person’s behalf and listed under the answer — visible and
-      attributable, which is what governance means in practice.
-    </p>
-  </div>
-</section>`;
-}
-
-function whereNext() {
-  return `
-<section id="where-next" class="cortex-about-section">
-  <h2 class="govuk-heading-l">Where we are and what we need</h2>
-  <p class="govuk-body-l cortex-about-strap">An alpha, live against Defra’s own platforms, with an honest list of what is next.</p>
-
-  <div class="govuk-grid-row">
-    <div class="govuk-grid-column-one-half">
-      <h3 class="govuk-heading-m">Where we are</h3>
-      <dl class="govuk-summary-list cortex-about-summary cortex-about-summary--status">
-        ${STATUS.map(
-          ([what, state]) => `<div class="govuk-summary-list__row">
-            <dt class="govuk-summary-list__key">${esc(what)}</dt>
-            <dd class="govuk-summary-list__value">${tag(state)}</dd>
-          </div>`
-        ).join('')}
-      </dl>
-      <p class="govuk-body-s">
-        Backed by an automated test suite, and exercised against the real platforms in live runs. The
-        service status on the <a class="govuk-link" href="/help">Help page</a> shows what is reachable
-        right now.
-      </p>
-    </div>
-    <div class="govuk-grid-column-one-half">
-      <h3 class="govuk-heading-m">Three places to prove it</h3>
-      <p class="govuk-body">Start where the access, the capability and the live problem already are.</p>
+export function aboutPage(ctx, { stats = {}, coverage = {} } = {}) {
+  const cards = (items) => `<div class="cx-exec-grid">${items.map(([title, body]) => `<article class="cx-exec-card"><h3 class="govuk-heading-m">${title}</h3><p class="govuk-body">${body}</p></article>`).join('')}</div>`;
+  return layout({ ...ctx, title: 'About Data Cortex', section: 'about' }, `
+  <div class="cx-exec">
+    <header class="cx-exec-hero">
+      <p class="cx-exec-eyebrow">Microsoft technology accelerator · Leadership briefing</p>
+      <h1>Turn disconnected AI experiments<br>into shared organisational capability.</h1>
+      <p>One place to discover trusted data, build and test agents, and reuse what works — connecting people to the value of your Microsoft AI landing zone.</p>
+      <a class="govuk-button" href="/marketplace">Explore the live marketplace</a>
+      <a class="cx-exec-hero-link" href="#architecture">See the business architecture ↓</a>
+    </header>
+    <nav class="cx-exec-contents" aria-label="About contents">${sections.map(([id, title]) => `<a href="#${id}">${title}</a>`).join('')}</nav>
+    <section id="purpose">
+      <p class="cx-exec-eyebrow">01 / The opportunity</p>
+      <h2 class="govuk-heading-l">Make your platform useful to the whole organisation.</h2>
+      <p class="govuk-body-l">Investing in AI infrastructure is only the beginning. People need a practical way to find information, understand who can use it, turn it into useful agents, and share those capabilities without rebuilding the same connections.</p>
+      <p class="govuk-body">Data Cortex is that demonstration: a customer-neutral front door to Microsoft Purview, API Management and Foundry. The same code and synthetic demonstration pack can introduce the connected platform story to any industry.</p>
+      <div class="cx-exec-metrics"><div><strong>${esc(coverage.registered ?? stats.entries ?? 0)}</strong> registered entries</div><div><strong>${esc(stats.domains ?? stats.clusters ?? 0)}</strong> governance domains</div><div><strong>One</strong> connected experience</div></div>
+      <p class="govuk-hint">Figures are read live from the register. They describe registered content, not total estate coverage or realised business value. Unavailable sources can leave the register incomplete.</p>
+    </section>
+    <section id="problem">
+      <p class="cx-exec-eyebrow">02 / The problem</p>
+      <h2 class="govuk-heading-l">The bottleneck is often the work around the AI.</h2>
+      ${cards([
+        ['Knowledge is hard to find', 'Useful data, APIs and agents sit behind different portals. People rely on personal networks to find the right asset or owner.'],
+        ['Teams repeat the same work', 'Every project reconnects systems and recreates context. A successful pilot does not automatically become a reusable capability.'],
+        ['Trust arrives too late', 'Access, provenance and evaluation can become separate conversations after development. Leaders struggle to see what is ready to share.']
+      ])}
+      <p class="govuk-body">These are common design challenges, not claims about a particular customer. Cortex makes the alternative tangible in a live, synthetic demonstration.</p>
+    </section>
+    <section id="system" class="cx-exec-feature">
+      <p class="cx-exec-eyebrow">03 / The strategic message</p>
+      <h2>“AI alone won’t change your business. The system running it will.”</h2>
+      <p>Microsoft's 2 June 2026 article argues for a coherent operating system around AI: enterprise context, coordinated agents, governance and a human-directed improvement loop — not simply more chatbots or isolated pilots.</p>
+      <p><a href="${ARTICLE}">Read the original Microsoft article</a></p>
+      ${cards([
+        ['One integrated system', '<strong>Cortex makes it visible:</strong> discovery, composition, assessment and publication connect the catalogue, runtime and gateway in one user journey. The model is one component, not the whole solution.'],
+        ['Secured and governed by design', '<strong>Cortex makes it practical:</strong> sign-in, explicit access routes, source context and pre-publication red-team evidence appear in the workflow. Platform controls and accountable owners still matter.'],
+        ['Improve continuously', '<strong>Cortex makes it repeatable:</strong> inspect outputs, review evaluation findings, revise an agent, test again and share a reusable version. This is a governed improvement loop, not autonomous self-training.']
+      ])}
+      <p>The article's broader platform vision includes GitHub, Microsoft IQ, Agent 365 and Microsoft 365. Those are strategic integration opportunities, not capabilities this PoC claims to have implemented.</p>
+    </section>
+    <section id="architecture">
+      <p class="cx-exec-eyebrow">04 / The business architecture</p>
+      <h2 class="govuk-heading-l">One front door. Clear responsibilities behind it.</h2>
+      ${architecture()}
+    </section>
+    <section id="value">
+      <p class="cx-exec-eyebrow">05 / What changes</p>
+      <h2 class="govuk-heading-l">From individual projects to reusable building blocks.</h2>
+      <table class="govuk-table"><caption class="govuk-table__caption">The operating-model shift this accelerator demonstrates</caption><thead><tr><th scope="col">Today’s friction</th><th scope="col">The Cortex experience</th><th scope="col">What to measure in a pilot</th></tr></thead><tbody>
+        <tr><td>Find the right person, then the right system</td><td>Discover products, owners, access routes and dependencies in one register</td><td>Time to find a suitable asset or accountable owner</td></tr>
+        <tr><td>Build a new integration for each question</td><td>Compose agents from existing data, APIs and MCP tools</td><td>Reuse rate and time to first useful draft</td></tr>
+        <tr><td>Demonstrate an answer without its evidence</td><td>Review sources, limits, tool calls and assessment output</td><td>Grounded-answer quality and reviewer acceptance</td></tr>
+        <tr><td>Pass work manually between disconnected tools</td><td>Coordinate ordered agents with step results and a final human-reviewed draft</td><td>Handoffs avoided and exception-handling effort</td></tr>
+      </tbody></table>
+      ${cards([
+        ['For business teams', 'A simpler route from a question to the right capability, with clear next steps when access is restricted.'],
+        ['For data owners and builders', 'Make assets discoverable, see demand, and turn a useful agent into a capability others can reuse.'],
+        ['For platform and assurance leaders', 'Show how existing Microsoft services work together, with visible evidence and an explicit route to production controls.']
+      ])}
+      <p class="govuk-hint">Benefits are hypotheses to measure with a customer, not guaranteed savings, compliance outcomes or return-on-investment figures.</p>
+    </section>
+    <section id="journey">
+      <p class="cx-exec-eyebrow">06 / A five-minute demonstration</p>
+      <h2 class="govuk-heading-l">See the connected journey, not just a model response.</h2>
       <ol class="govuk-list govuk-list--number govuk-list--spaced">
-        ${PROVE.map(([who, why]) => `<li><strong>${esc(who)}.</strong> ${esc(why)}</li>`).join('')}
+        <li><strong>Discover:</strong> browse the marketplace and domain map; open a synthetic product and its owner, schema and access route.</li>
+        <li><strong>Ask and compose:</strong> explore accessible context, then build an agent from available knowledge and read-only tools.</li>
+        <li><strong>Test and publish:</strong> one action starts native Foundry red teaming; publication waits for complete passing evidence and pins the tested version.</li>
+        <li><strong>Coordinate:</strong> chain two or more agents, retaining each result and a final draft for human review.</li>
+        <li><strong>Reuse and improve:</strong> inspect the evidence, revise the capability, and assess it again before sharing a new version.</li>
       </ol>
-
-      <h3 class="govuk-heading-m">Deliberately not built yet</h3>
-      <dl class="govuk-summary-list cortex-about-summary">
-        ${NOT_BUILT.map(
-          ([what, why]) => `<div class="govuk-summary-list__row">
-            <dt class="govuk-summary-list__key">${esc(what)}</dt>
-            <dd class="govuk-summary-list__value">${esc(why)}</dd>
-          </div>`
-        ).join('')}
-      </dl>
-    </div>
-  </div>
-
-  <div class="cortex-about-ask">
-    <h3 class="govuk-heading-m">What we are asking for</h3>
-    <ol class="govuk-list govuk-list--number govuk-list--spaced govuk-!-margin-bottom-0">
-      ${ASK.map((a) => `<li>${esc(a)}</li>`).join('')}
-    </ol>
-  </div>
-
-  <p class="govuk-body">
-    Questions, ideas or a request to join a pilot: email
-    <a class="govuk-link" href="mailto:sheng.zhu@defra.gov.uk">sheng.zhu@defra.gov.uk</a>,
-    or try it now — <a class="govuk-link" href="/marketplace">open the marketplace</a>.
-  </p>
-</section>`;
+      <p class="govuk-body">A second identity can demonstrate access differences. Microsoft-inspired and Novo Nordisk-inspired apps present the same neutral story; branding is not an access or customer-isolation boundary.</p>
+    </section>
+    <section id="governance">
+      <p class="cx-exec-eyebrow">07 / Trust and control</p>
+      <h2 class="govuk-heading-l">Evidence before sharing. Accountability after it.</h2>
+      ${cards([
+        ['Identity and context', 'Entra sign-in and group mappings inform access routes. Agent creation validates attachments server-side; data owners remain accountable for access and meaning.'],
+        ['Assessment in the workflow', 'Native Foundry red teaming runs before new publication. Failed, incomplete or stale assessments block it. Passing an automated scan is not a safety certification.'],
+        ['Human judgement remains central', 'Requests require a human release and multi-agent tasks retain drafts. External tools still need independent authorization and read-only controls.']
+      ])}
+      <p class="govuk-body">Metadata, transcripts and assessment evidence are stored; synthetic files are indexed for grounding. This is not a claim that nothing moves. Scheduled tasks use captured owner permissions, and shared backend services are not a customer isolation boundary.</p>
+    </section>
+    <section id="readiness" class="cx-exec-decision">
+      <p class="cx-exec-eyebrow">08 / The leadership decision</p>
+      <h2 class="govuk-heading-l">Back a measured next step, not an unbounded rollout.</h2>
+      <p class="govuk-body-l">Select a low-risk workflow, name its business and data owners, agree the success measures, and use the accelerator to evaluate the connected platform experience.</p>
+      <p class="govuk-body"><strong>What this PoC demonstrates:</strong> connected discovery, governed composition, evaluation-led publication and ordered multi-agent drafts using real Microsoft services and synthetic content.</p>
+      <p class="govuk-body"><strong>Before production:</strong> validate workload-specific risks, live permission revalidation, scoped identities and tool authorization, durable multi-writer state, network controls, monitoring, retention and operational ownership. Preview API and model availability must be established in the target environment.</p>
+      <p class="govuk-body">No customer endorsement, production certification, medical or other professional decision support, or measured business outcome is implied. The opportunity is to demonstrate the system, then prove its value responsibly.</p>
+      <a class="govuk-button" href="/marketplace">Start with the marketplace</a>
+    </section>
+  </div>`);
 }
-
-/* -------------------------------------------------------------- page */
-
-export function aboutPage(ctx, { stats, coverage }) {
-  const content = `
-${hero()}
-<div class="govuk-grid-row">
-  <div class="govuk-grid-column-one-quarter">
-    ${contents()}
-  </div>
-  <div class="govuk-grid-column-three-quarters cortex-about-body">
-    ${inBrief(ctx, { stats, coverage })}
-    ${problem()}
-    ${theSystem()}
-    ${asIsToBe()}
-    ${whatChanges()}
-    ${forYou()}
-    ${howItWorks()}
-    ${whySafe()}
-    ${whereNext()}
-  </div>
-</div>`;
-  return layout({ ...ctx, title: 'About Cortex', section: 'about' }, content);
-}
-
-export default aboutPage;

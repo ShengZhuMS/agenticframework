@@ -61,6 +61,9 @@
     "searchSemantic":         { "value": "${SEARCH_SEMANTIC=disabled}" },
     "deployerPrincipalId":    { "value": "${DEPLOYER_PRINCIPAL_ID=}" },
     "chatPolicy":             { "value": "${CORTEX_CHAT_POLICY=all-staff}" },
+    "connectorConfiguration": { "value": "${CORTEX_CONNECTORS=[]}" },
+    "fabricConnectorSecret":  { "value": "${CORTEX_FABRIC_SECRET=}" },
+    "studioConnectorSecret":  { "value": "${CORTEX_STUDIO_SECRET=}" },
 
     "createPerimeter":        { "value": "${CREATE_PERIMETER=true}" },
     "storageAccessMode":      { "value": "${STORAGE_ACCESS_MODE=Enforced}" },

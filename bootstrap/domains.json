@@ -1,56 +1,11 @@
 [
-  {
-    "id": "water",
-    "name": "Water",
-    "owner": "EA Water Quality",
-    "description": "Defra governance domain for water."
-  },
-  {
-    "id": "flood",
-    "name": "Flood and coastal",
-    "owner": "EA Flood Risk",
-    "description": "Defra governance domain for flood and coastal."
-  },
-  {
-    "id": "marine",
-    "name": "Marine and fisheries",
-    "owner": "Cefas Data",
-    "description": "Defra governance domain for marine and fisheries."
-  },
-  {
-    "id": "waste",
-    "name": "Waste and resources",
-    "owner": "EA Waste Regulation",
-    "description": "Defra governance domain for waste and resources."
-  },
-  {
-    "id": "air",
-    "name": "Air quality",
-    "owner": "Not claimed",
-    "description": "Defra governance domain for air quality."
-  },
-  {
-    "id": "land",
-    "name": "Land and biodiversity",
-    "owner": "Natural England Evidence",
-    "description": "Defra governance domain for land and biodiversity."
-  },
-  {
-    "id": "farm",
-    "name": "Farming and countryside",
-    "owner": "RPA Land Data",
-    "description": "Defra governance domain for farming and countryside."
-  },
-  {
-    "id": "animal",
-    "name": "Animal and plant health",
-    "owner": "APHA Surveillance Intelligence",
-    "description": "Defra governance domain for animal and plant health."
-  },
-  {
-    "id": "corp",
-    "name": "Corporate services",
-    "owner": "DDTS Performance",
-    "description": "Defra governance domain for corporate services."
-  }
+  {"id":"cx-demo-operations","name":"Demo - Operations","owner":"Operations team","description":"Synthetic Data Cortex demo domain. No customer data."},
+  {"id":"cx-demo-service","name":"Demo - Customer service","owner":"Service team","description":"Synthetic service performance and feedback."},
+  {"id":"cx-demo-supply","name":"Demo - Supply chain","owner":"Supply team","description":"Synthetic inventory and supplier records."},
+  {"id":"cx-demo-quality","name":"Demo - Quality","owner":"Quality team","description":"Synthetic quality checks and improvement actions."},
+  {"id":"cx-demo-research","name":"Demo - Research","owner":"Research team","description":"Synthetic experiment metadata; no clinical or personal information."},
+  {"id":"cx-demo-finance","name":"Demo - Finance","owner":"Finance team","description":"Synthetic financial reporting."},
+  {"id":"cx-demo-people","name":"Demo - People","owner":"People team","description":"Synthetic aggregate workforce metrics; no real employees."},
+  {"id":"cx-demo-technology","name":"Demo - Technology","owner":"Technology team","description":"Synthetic endpoint and application telemetry."},
+  {"id":"cx-demo-governance","name":"Demo - Governance","owner":"Governance team","description":"Synthetic policy and catalogue quality records."}
 ]

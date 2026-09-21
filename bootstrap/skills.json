@@ -1,60 +1,8 @@
 [
-  {
-    "id": "permit-history-lookup",
-    "name": "Permit history lookup",
-    "cat": "Skill",
-    "domain": "waste",
-    "description": "Returns the permit, its variations and its compliance history for a site reference.",
-    "allowedGroups": [
-      "waste-crime",
-      "ea-waste-regulation"
-    ]
-  },
-  {
-    "id": "catchment-summariser",
-    "name": "Catchment summariser",
-    "cat": "Skill",
-    "domain": "water",
-    "description": "Assembles a plain-English picture of a catchment from quality, flow, permit and incident sources.",
-    "allowedGroups": [
-      "analysts",
-      "agent-builders",
-      "ea-water-quality"
-    ]
-  },
-  {
-    "id": "address-matching",
-    "name": "Address and premises matching",
-    "cat": "Skill",
-    "domain": "farm",
-    "description": "Matches free-text addresses to a canonical premises identifier.",
-    "allowedGroups": [
-      "rpa-land-data"
-    ]
-  },
-  {
-    "id": "catchment-data-explorer",
-    "name": "Catchment Data Explorer",
-    "cat": "App",
-    "domain": "water",
-    "description": "Public-facing browser for water body classification, reasons for not achieving good status, and measures.",
-    "allowedGroups": null
-  },
-  {
-    "id": "magic-map",
-    "name": "MAGIC map browser",
-    "cat": "App",
-    "domain": "land",
-    "description": "Map browser for statutory designations, agri-environment schemes and habitat inventories.",
-    "allowedGroups": null
-  },
-  {
-    "id": "air-quality-dashboard",
-    "name": "Air quality dashboard",
-    "cat": "App",
-    "domain": "air",
-    "description": "Monitoring site readings, exceedance counts and trend by pollutant.",
-    "owner": "Not claimed",
-    "allowedGroups": null
-  }
+  {"id":"cx-demo-service-summary","name":"Demo - Service summary","cat":"Skill","domain":"cx-demo-service","description":"Read the synthetic service performance sample and its provenance.","productId":"cx-demo-service-performance","allowedGroups":["all-staff"]},
+  {"id":"cx-demo-inventory-lookup","name":"Demo - Inventory lookup","cat":"Skill","domain":"cx-demo-supply","description":"Read a bounded sample of synthetic inventory rows.","productId":"cx-demo-inventory","allowedGroups":["all-staff"]},
+  {"id":"cx-demo-quality-review","name":"Demo - Quality review","cat":"Skill","domain":"cx-demo-quality","description":"Read the synthetic quality checks sample for draft review.","productId":"cx-demo-quality-checks","allowedGroups":["all-staff"]},
+  {"id":"cx-demo-operations-explorer","name":"Demo - Operations explorer","cat":"App","domain":"cx-demo-operations","description":"Explore a bounded synthetic delivery performance sample.","productId":"cx-demo-delivery","allowedGroups":["all-staff"]},
+  {"id":"cx-demo-technology-summary","name":"Demo - Technology summary","cat":"Skill","domain":"cx-demo-technology","description":"Read synthetic endpoint telemetry; not live operational analytics.","productId":"endpoint-telemetry","allowedGroups":["all-staff"]},
+  {"id":"cx-demo-catalogue-review","name":"Demo - Catalogue review","cat":"Skill","domain":"cx-demo-governance","description":"Read the synthetic catalogue-quality sample with its limitations.","productId":"cx-demo-catalogue-quality","allowedGroups":["all-staff"]}
 ]

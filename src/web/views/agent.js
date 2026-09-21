@@ -114,6 +114,7 @@ ${
   <div class="govuk-grid-column-two-thirds">
     <span class="govuk-caption-l">Agent · built by ${esc(def.builtByTeam || entry.owner)}</span>
     <h1 class="govuk-heading-xl govuk-!-margin-bottom-0">${esc(entry.name)}</h1>
+    <p class="govuk-body"><a class="govuk-link" href="/entry/${attr(entry.id)}/lineage">View artefact lineage</a> · <a class="govuk-link" href="/share?kind=m365">Publish to Teams and Microsoft 365</a></p>
     <p class="govuk-body-l">${esc(def.instructions || entry.desc)}</p>
     ${
       a.published
@@ -137,7 +138,7 @@ ${
         <label class="govuk-label" for="question">Your question</label>
         <input class="govuk-input" id="question" name="question" type="text"
                value="${attr(question || '')}"
-               placeholder="Which waste carrier registrations lapsed in the last quarter?">
+               placeholder="Summarise the synthetic service performance data and cite its limitations.">
       </div>
       <button class="govuk-button" type="submit">Ask it</button>
     </form>
@@ -155,7 +156,7 @@ ${
     }
 
     <p class="govuk-body">
-      <a class="govuk-button govuk-button--secondary" href="/agent/${attr(entry.id)}/chat" target="_blank" rel="opener" role="button">Open a chat window</a>
+      <a class="govuk-button govuk-button--secondary" href="/agent/${attr(entry.id)}/chat" data-chat-window target="_blank" rel="noopener" role="button">Open a chat window</a>
       <span class="cortex-src" style="margin-left:8px">A conversation with follow-ups, in its own window. Every member of staff can open one.</span>
     </p>
 
@@ -163,7 +164,9 @@ ${
     <p class="govuk-body">
       Computed from what this agent reads and what it may do.
     </p>
-    ${gateTable(gates)}
+    ${gateTable(gates.map((gate) => gate.id === 'redteam' ? { ...gate, evidence: `/agent/${encodeURIComponent(entry.id)}/redteam` } : gate))}
+    <p class="govuk-body"><a class="govuk-button govuk-button--secondary" href="/agent/${attr(entry.id)}/redteam">Foundry red team assessment</a></p>
+    <p class="govuk-hint">Generate, review and run a native Foundry assessment against a pinned agent version. Reports are evidence for a human reviewer; a completed scan does not automatically clear assurance gates.</p>
 
     <h2 class="govuk-heading-m">What it reads</h2>
     ${
@@ -247,10 +250,10 @@ ${
                    </div>
                  </fieldset>
                </div>
-               <button class="govuk-button govuk-!-margin-bottom-0" type="submit">Publish as MCP and API</button>
+               <button class="govuk-button govuk-!-margin-bottom-0" type="submit">Test and publish</button>
              </form>
              <p class="govuk-body-s" style="margin-top:12px;margin-bottom:0">
-               It will be registered in API Management as an MCP server and a REST API.
+               Cortex automatically generates a Foundry red-team taxonomy, runs the assessment, and publishes the tested version only when every sample passes all three evaluators. Azure usage applies. Failures, missing results and changed versions block publication.
              </p>`
       }
     </div>

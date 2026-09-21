@@ -43,15 +43,16 @@ class LiveFoundry {
     this.name = 'foundry:live';
   }
 
-  async _fetch(pathname, { method = 'GET', body, apiVersion = true, timeoutMs } = {}) {
+  async _fetch(pathname, { method = 'GET', body, apiVersion = true, timeoutMs, headers = {} } = {}) {
     const url = new URL(this.cfg.projectEndpoint + pathname);
-    if (apiVersion) url.searchParams.set('api-version', this.cfg.apiVersion);
+    if (apiVersion) url.searchParams.set('api-version', typeof apiVersion === 'string' ? apiVersion : this.cfg.apiVersion);
     const token = await getToken(this.cfg.scope);
     const res = await fetch(url, {
       method,
       headers: {
         Authorization: bearer(token),
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...headers
       },
       body: body ? JSON.stringify(body) : undefined,
       // fetch() has no default timeout. A model call is allowed longer than a
@@ -69,7 +70,7 @@ class LiveFoundry {
    * The approved model catalogue.
    *
    * This is a governance list, not a discovery call: it states which models
-   * Defra has approved for use, which is a policy decision rather than
+   * the organisation has approved for use, which is a policy decision rather than
    * something the platform can be asked. A model present in Foundry but not
    * here is deliberately not offered.
    */
@@ -154,7 +155,12 @@ class LiveFoundry {
   }
 
   async getAgent(name) {
-    return this._fetch(`/agents/${name}`).catch(() => null);
+    try {
+      return await this._fetch(`/agents/${encodeURIComponent(name)}`);
+    } catch (err) {
+      if (/ failed 404:/.test(err.message)) return null;
+      throw err;
+    }
   }
 
   async listAgents() {
@@ -172,8 +178,9 @@ class LiveFoundry {
    * the history server-side, so a follow-up carries the whole thread without
    * this app storing any of it.
    */
-  async respond({ agentName, input, conversationId, previousResponseId, maxApprovalRounds = this.cfg.maxApprovalRounds ?? 6 }) {
+  async respond({ agentName, agentVersion, input, conversationId, previousResponseId, maxApprovalRounds = this.cfg.maxApprovalRounds ?? 6 }) {
     const agentRef = { name: agentName, type: 'agent_reference' };
+    if (agentVersion) agentRef.version = String(agentVersion);
     const body = { input, agent_reference: agentRef };
     if (conversationId) body.conversation = conversationId;
     if (previousResponseId) body.previous_response_id = previousResponseId;
@@ -191,7 +198,7 @@ class LiveFoundry {
        * ensureToolConnections, attached at start-up) gives the tools their
        * connections in a new version; then the same turn is tried once more.
        */
-      if (!isToolAuthFailure(err) || typeof this.repairTools !== 'function') throw err;
+      if (agentVersion || !isToolAuthFailure(err) || typeof this.repairTools !== 'function') throw err;
       let repair;
       try {
         repair = await this.repairTools(agentName, { force: true });

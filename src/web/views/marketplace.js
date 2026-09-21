@@ -92,7 +92,7 @@ function entryCard(e, ctx) {
         <p class="cortex-src" style="margin-top:6px">${esc(e.visReason || '')}</p>
         <p class="govuk-body-s" style="margin-top:8px;margin-bottom:0">
           <a class="govuk-link" href="/entry/${attr(e.id)}">${esc(VIS[e.vis]?.next || 'Open')}</a>
-          ${e.cat === 'Agent' ? ` · <a class="govuk-link" href="/agent/${attr(e.id)}/chat" target="_blank" rel="opener">Chat</a>` : ''}
+          ${e.cat === 'Agent' ? ` · <a class="govuk-link" href="/agent/${attr(e.id)}/chat" data-chat-window target="_blank" rel="noopener">Chat (popup)</a>` : ''}
         </p>
       </div>
     </div>
@@ -134,7 +134,7 @@ export function marketplacePage(
 <div class="govuk-grid-row">
   <div class="govuk-grid-column-two-thirds">
     <h1 class="govuk-heading-xl govuk-!-margin-bottom-0">Marketplace</h1>
-    <p class="govuk-body-l">What Defra already has: data, skills, agents and apps you can find, use and build with.</p>
+    <p class="govuk-body-l">Your connected data, APIs, MCP tools and agents: discover, use and build with governed capabilities.</p>
   </div>
   <div class="govuk-grid-column-one-third">
     <p class="govuk-body" style="text-align:right;margin-top:20px">

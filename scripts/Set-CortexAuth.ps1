@@ -37,11 +37,11 @@
   Sign-in on, groups claim on, every signed-in user treated as all-staff.
 
 .EXAMPLE
-  .\scripts\Set-CortexAuth.ps1 -GroupMap 'waste-crime=Waste Crime Observatory','analysts=Data Analysts'
+  .\scripts\Set-CortexAuth.ps1 -GroupMap 'operations=Cortex Operations','analysts=Cortex Analysts'
   Also map two Entra groups onto the names the access rules use.
 
 .EXAMPLE
-  .\scripts\Set-CortexAuth.ps1 -GroupMap 'waste-crime=Cortex Waste Crime' -CreateGroups
+  .\scripts\Set-CortexAuth.ps1 -GroupMap 'operations=Cortex Operations' -CreateGroups
   Create the Entra group if it does not exist and add you to it — for the
   "same page, different eyes" demo moment.
 
@@ -345,7 +345,7 @@ try {
     # Every group the signed-in person is in, named after its display name —
     # lower-case, spaces to hyphens — so /profile stops showing raw ids. Access
     # changes only where a derived name happens to match a rule (all-staff,
-    # analysts, waste-crime, cortex-official-sensitive, cortex-commercial-licence).
+    # analysts, operations, cortex-official-sensitive, cortex-commercial-licence).
     # No query string in the URL: on Windows `az` is a .cmd whose arguments pass
     # through cmd.exe, where an unquoted `&` splits the command. Parameters go
     # through --uri-parameters, one argument each, and the CLI encodes them.

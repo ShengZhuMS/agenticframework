@@ -123,7 +123,20 @@ export async function getConnection(name) {
  * judged on the target.
  */
 export async function ensureMcpConnection({ apiId, target, key = config.apim.subscriptionKey, name }) {
-  const connName = name || connectionNameFor(apiId);
+  const originalName = name || connectionNameFor(apiId);
+  for (let generation = 0; generation < 5; generation++) {
+    const connName = generation ? connectionNameFor(`${originalName}:${generation}`, 'cx-r-') : originalName;
+    try {
+      return await ensureNamedMcpConnection({ apiId, target, key, connName });
+    } catch (err) {
+      if (!/failed 400:/.test(err.message) || !/secret.*deleted state.*purge protection/i.test(err.message)) throw err;
+      if (generation === 4) throw new Error(`Foundry connection names remain purge-protected after five attempts: ${originalName}`, { cause: err });
+      console.warn(`[foundry] ${connName} has a purge-protected deleted secret; trying a stable replacement name.`);
+    }
+  }
+}
+
+async function ensureNamedMcpConnection({ apiId, target, key, connName }) {
   const id = connectionArmId(connName);
   if (!id) throw new Error('Foundry project location is not configured (FOUNDRY_ACCOUNT_NAME / FOUNDRY_PROJECT_NAME / FOUNDRY_RESOURCE_GROUP).');
   if (!key) throw new Error('No API Management subscription key is configured, so the connection cannot carry one.');

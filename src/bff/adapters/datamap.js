@@ -12,7 +12,7 @@
  *   account endpoint   https://<account>.purview.azure.com
  *   scanning           /scan/datasources/{ds}            PUT, api-version 2023-09-01
  *                      /scan/datasources/{ds}/scans/{s}  PUT  kind AdlsGen2Msi
- *                      /scan/datasources/{ds}/scans/{s}/runs/{runId}  PUT, scanLevel=Full
+ *                      /scan/datasources/{ds}/scans/{s}:run  POST, runId and scanLevel query
  *                      /scan/datasources/{ds}/scans/{s}/runs           GET
  *   collections        /account/collections               api-version 2019-11-01-preview
  *   assets             /datamap/api/atlas/v2/entity/uniqueAttribute/type/{type}?attr:qualifiedName=…
@@ -47,7 +47,7 @@ export function adlsQualifiedName(account, container, blobPath) {
 }
 
 /** The Data Map's name for one file asset — the asset type UC calls ADLSGen2Path. */
-export const ADLS_FILE_TYPE = 'adls_gen2_path';
+export const ADLS_FILE_TYPE = 'azure_datalake_gen2_path';
 
 class LiveDataMap {
   constructor(cfg) {
@@ -165,9 +165,11 @@ class LiveDataMap {
    * account's region, `resourceGroup`/`subscriptionId` its ARM home.
    */
   async ensureAdlsSource({ name, storageAccount, resourceGroup, subscriptionId, location, collection = this.collection }) {
+    if (!storageAccount || !resourceGroup || !subscriptionId) throw new Error('Data Map source registration requires storage account, resource group and subscription ID.');
     const existing = await this.getDataSource(name);
     const endpoint = `https://${storageAccount}.dfs.core.windows.net/`;
-    if (existing && existing.properties?.endpoint === endpoint) return { name, created: false };
+    const resourceId = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Storage/storageAccounts/${storageAccount}`;
+    if (existing && existing.properties?.endpoint === endpoint && existing.properties?.resourceId?.toLowerCase() === resourceId.toLowerCase()) return { name, created: false };
     await this._fetch(`/scan/datasources/${encodeURIComponent(name)}`, {
       method: 'PUT',
       body: {
@@ -175,6 +177,7 @@ class LiveDataMap {
         name,
         properties: {
           endpoint,
+          resourceId,
           resourceGroup,
           subscriptionId,
           location,
@@ -214,8 +217,8 @@ class LiveDataMap {
   async runScan(dataSourceName, scanName, { level = 'Full' } = {}) {
     const runId = randomUUID();
     const res = await this._fetch(
-      `/scan/datasources/${encodeURIComponent(dataSourceName)}/scans/${encodeURIComponent(scanName)}/runs/${runId}`,
-      { method: 'PUT', query: { scanLevel: level } }
+      `/scan/datasources/${encodeURIComponent(dataSourceName)}/scans/${encodeURIComponent(scanName)}:run`,
+      { method: 'POST', query: { runId, scanLevel: level } }
     );
     return { runId, status: res?.status || 'Queued', raw: res };
   }
@@ -230,8 +233,8 @@ class LiveDataMap {
         status: r.status,
         started: r.startTime,
         ended: r.endTime,
-        discovered: r.assetsDiscovered ?? null,
-        classified: r.assetsClassified ?? null,
+        discovered: r.assetsDiscovered ?? r.discoveryExecutionDetails?.statistics?.assets?.discovered ?? null,
+        classified: r.assetsClassified ?? r.discoveryExecutionDetails?.statistics?.assets?.classified ?? null,
         error: r.error?.message || r.errorMessage || null
       }))
       .sort((a, b) => new Date(b.started || 0) - new Date(a.started || 0));
@@ -247,7 +250,7 @@ class LiveDataMap {
     let last = null;
     while (Date.now() - started < timeoutMs) {
       const runs = await this.scanRuns(dataSourceName, scanName);
-      last = runs.find((r) => r.id === runId) || runs[0] || null;
+      last = runs.find((r) => r.id === runId) || null;
       const status = String(last?.status || 'Queued');
       onTick?.(status, last);
       if (/^(Succeeded|Completed)$/i.test(status)) return { done: true, status, run: last };
@@ -267,7 +270,7 @@ class LiveDataMap {
     });
     const e = res?.entity;
     if (!e) return null;
-    return this._toAsset(e);
+    return this._toAsset(e, res.referredEntities);
   }
 
   /** Search assets by keyword, optionally narrowed to a qualified-name prefix. */

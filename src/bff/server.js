@@ -32,12 +32,19 @@ import { agentPage, publishResultPage } from '../web/views/agent.js';
 import { askPage } from '../web/views/ask.js';
 import { mapPage } from '../web/views/map.js';
 import { sharePage } from '../web/views/share.js';
+import { lineagePage } from '../web/views/lineage.js';
+import { connectors } from './adapters/connectors.js';
+import { channelMetadata } from './adapters/channels.js';
+import { artefactById, artefactsFor, registerArtefact, validateMetadata, queryArtefact, invokeArtefact, proxyArtefact, agentInvocationBody } from './services/artefacts.js';
 import { requestsPage, requestDetailPage } from '../web/views/requests.js';
 import { ask, threadsFor, getThread } from './services/ask.js';
 import { userFromRequest, authConfigured } from './services/identity.js';
 import * as reqs from './services/requests.js';
 import * as chatSvc from './services/chat.js';
 import * as auto from './services/automations.js';
+import * as redteam from './services/redteam.js';
+import { redTeamPage } from '../web/views/redteam.js';
+import { gatewayKeyMatches, invokeDemoSkill } from './services/demo-skills.js';
 import { chatPage, chatRefusedPage } from '../web/views/chat.js';
 import { automationsPage, automationFormPage, automationPage } from '../web/views/automate.js';
 import { explainError } from './services/explain.js';
@@ -56,7 +63,7 @@ import {
   composeInstructions
 } from './services/agents.js';
 import { gatesFor } from './services/assurance.js';
-import { publishAgent, openApiFor } from './services/publish.js';
+import { requestPublication, startPublicationScheduler, openApiFor } from './services/publish.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ASSET_DIR = path.resolve(__dirname, '../web/assets');
@@ -103,7 +110,12 @@ function redirect(res, location) {
 
 async function readBody(req) {
   const chunks = [];
-  for await (const c of req) chunks.push(c);
+  let size = 0;
+  for await (const c of req) {
+    size += c.length;
+    if (size > 1024 * 1024) throw Object.assign(new Error('Request exceeds the 1 MiB body limit.'), { code: 413 });
+    chunks.push(c);
+  }
   return Buffer.concat(chunks).toString('utf8');
 }
 
@@ -264,7 +276,7 @@ async function handle(req, res) {
     const apiUser = resolveUser(req);
     if (!apiUser) return json(res, 401, { error: 'Sign in required' });
     const ctx = baseCtx(req, url, apiUser);
-    const found = index.search(
+    const found = index.searchEntries(
       {
         q: url.searchParams.get('q') || '',
         cats: multi(url.searchParams, 'cat'),
@@ -348,10 +360,37 @@ async function handle(req, res) {
    * imports this shape as an API, then projects it as an MCP server. This
    * is the only bespoke code in the publish path.
    */
+  const artefactShim = pathname.match(/^\/shim\/artefacts\/([^/]+)\/(invoke|graphql|api)(\/.*)?$/);
+  if (artefactShim) {
+    if (!gatewayKeyMatches(req.headers['ocp-apim-subscription-key'], config.apim.subscriptionKey)) return json(res, 403, { error: 'Gateway subscription key required' });
+    const r = artefactById(artefactShim[1]);
+    if (!r) return json(res, 404, { error: 'Artefact not found' });
+    try {
+      if (artefactShim[2] === 'api') {
+        const raw = req.method === 'GET' ? '' : await readBody(req);
+        return json(res, 200, await proxyArtefact(r, req.method, artefactShim[3] || '/', url.search, raw ? JSON.parse(raw) : undefined));
+      }
+      if (req.method !== 'POST') return json(res, 405, { error: 'Use POST' });
+      const raw = await readBody(req);
+      const body = artefactShim[2] === 'invoke' ? agentInvocationBody(raw) : JSON.parse(raw);
+      const result = artefactShim[2] === 'graphql' ? await queryArtefact(r, body) : await invokeArtefact(r, body.question);
+      return json(res, 200, result);
+    } catch (err) { return json(res, err instanceof SyntaxError ? 400 : 502, { error: err.message }); }
+  }
   const shimMatch = pathname.match(/^\/shim\/agents\/([^/]+)\/invoke$/);
+  const skillMatch = pathname.match(/^\/shim\/skills\/([^/]+)\/invoke$/);
+  if (skillMatch && req.method === 'POST') {
+    if (!gatewayKeyMatches(req.headers['ocp-apim-subscription-key'], config.apim.subscriptionKey)) return json(res, 403, { error: 'Gateway subscription key required' });
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'Expected a JSON query' }); }
+    if (typeof body?.query !== 'string' || body.query.length > 2000) return json(res, 400, { error: 'query must be a string of at most 2,000 characters' });
+    const result = await invokeDemoSkill(skillMatch[1], body.query, index.storage, config.data.container);
+    return json(res, result ? 200 : 404, result || { error: 'No such demo skill' });
+  }
   if (shimMatch && req.method === 'POST') {
+    if (!gatewayKeyMatches(req.headers['ocp-apim-subscription-key'], config.apim.subscriptionKey)) return json(res, 403, { error: 'Gateway subscription key required' });
     const entry = index.get(shimMatch[1]);
-    if (!entry || entry.cat !== 'Agent') {
+    if (!entry || entry.cat !== 'Agent' || !entry._agent?.published) {
       return json(res, 404, { error: 'No such agent' });
     }
     let body = {};
@@ -365,6 +404,7 @@ async function handle(req, res) {
     try {
       const answer = await index.foundry.respond({
         agentName: entry._source?.id || entry.id,
+        agentVersion: entry._agent.publishedVersion,
         input: body.question,
         conversationId: body.conversationId
       });
@@ -409,6 +449,12 @@ async function handle(req, res) {
 
   /* ---- pages ---- */
   const ctx = baseCtx(req, url, user);
+  const lineageMatch = pathname.match(/^\/entry\/([^/]+)\/lineage$/);
+  if (lineageMatch) {
+    const entry = index.get(lineageMatch[1]);
+    if (!entry) return send(res, 404, entryNotFoundPage(ctx, { id: lineageMatch[1] }));
+    return send(res, 200, lineagePage(ctx, { entry, entries: index.all() }));
+  }
 
   /* ========================== WP11 and WP12 — test and publish an agent === */
 
@@ -499,6 +545,7 @@ async function handle(req, res) {
     }
     const tid = url.searchParams.get('thread');
     const thread = tid ? chatSvc.getThread(tid, ctx.user) : null;
+    if (tid && (!thread || thread.agentId !== entry.id)) return send(res, 404, errorPage(ctx, { code: 404, heading: 'Conversation not found', message: 'This conversation is not available for this agent and user.' }));
     return send(res, 200, chatPage(ctx, { entry, thread, history: chatSvc.threadsFor(entry.id, ctx.user), permission }));
   }
 
@@ -510,7 +557,7 @@ async function handle(req, res) {
     const base =
       config.publicBaseUrl || `http://${req.headers.host || 'localhost:' + config.port}`;
     try {
-      const result = await publishAgent(entry.id, {
+      await requestPublication(entry.id, {
         baseUrl: base,
         // Pass through undefined when the form omits it, so publishAgent can
         // fall back to the visibility already in force. Defaulting here would
@@ -518,7 +565,7 @@ async function handle(req, res) {
         visibility: form.visibility || undefined,
         user: ctx.user
       });
-      return send(res, 200, publishResultPage(ctx, result));
+      return redirect(res, `/agent/${encodeURIComponent(entry.id)}/redteam`);
     } catch (err) {
       console.error('[publish]', err);
       return send(
@@ -528,7 +575,7 @@ async function handle(req, res) {
           code: 502,
           heading: 'Could not publish',
           message:
-            'API Management did not accept the registration. Nothing was changed, and you can try again.'
+            `Publication was not completed: ${err.message}`
         })
       );
     }
@@ -646,6 +693,27 @@ async function handle(req, res) {
   }
 
   /* ================================================== WP9 — build an agent */
+  const redTeamMatch = pathname.match(/^\/agent\/([^/]+)\/redteam(?:\/(prepare|rt-[a-f0-9-]+)(?:\/(start|refresh))?)?$/);
+  if (redTeamMatch) {
+    const [, agentId, id, action] = redTeamMatch;
+    const entry = index.get(agentId);
+    if (!entry) return send(res, 404, errorPage(ctx, notFound()));
+    if (!redteam.canRedTeam(entry, ctx.user)) return send(res, 403, errorPage(ctx, {
+      code: 403, heading: 'Red team access required',
+      message: 'The recorded agent builder or a member of the cortex-redteam group can assess an agent. For older agents, use the group.'
+    }));
+    if (req.method === 'POST') {
+      const form = parseForm(await readBody(req));
+      if ((id === 'prepare' || action === 'start') && form.confirmed !== 'yes') return send(res, 400, errorPage(ctx, { code: 400, heading: 'Confirmation required', message: 'Review and confirm the sandbox assessment before submitting.' }));
+      if (id === 'prepare') await redteam.prepare(entry, ctx.user);
+      else {
+        if (!redteam.runsFor(entry.id, ctx.user).some((r) => r.id === id)) return send(res, 404, errorPage(ctx, notFound()));
+        await redteam.act(id, ctx.user, action);
+      }
+      return redirect(res, `/agent/${encodeURIComponent(agentId)}/redteam`);
+    }
+    return send(res, 200, redTeamPage(ctx, { entry, runs: redteam.runsFor(entry.id, ctx.user) }));
+  }
 
   if (pathname === '/build') {
     const mine = index
@@ -749,6 +817,7 @@ async function handle(req, res) {
         cross: index.crossClusterLinks(),
         coverage: { ...index.coverage(), byCat },
         counts,
+        errors: index.sourceErrors,
         unclustered: all.filter((e) => !clusterIds.has(e.cluster))
       })
     );
@@ -772,6 +841,7 @@ async function handle(req, res) {
       res,
       200,
       sharePage(ctx, {
+        publishing: { kind: url.searchParams.get('kind') || 'external-agent', connectors: connectors().map(({ id, name, provider }) => ({ id, name, provider })), records: artefactsFor(ctx.user), entries: index.searchEntries({}, ctx.user) },
         mine,
         proposed,
         requests,
@@ -785,6 +855,22 @@ async function handle(req, res) {
         }
       })
     );
+  }
+
+  if (pathname === '/share/publish' && req.method === 'POST') {
+    const form = parseForm(await readBody(req));
+    try {
+      const baseUrl = config.publicBaseUrl;
+      if (form.kind === 'm365') {
+        validateMetadata(form, ctx.user);
+        const record = await requestPublication(form.sourceId, { baseUrl, user: ctx.user, microsoft365: channelMetadata(form) });
+        return redirect(res, `/agent/${encodeURIComponent(record.agentId)}/redteam`);
+      }
+      const record = await registerArtefact(form, ctx.user, baseUrl);
+      return redirect(res, record.agentId ? `/agent/${encodeURIComponent(record.agentId)}/redteam` : `/share?kind=${record.kind}`);
+    } catch (err) {
+      return send(res, 400, errorPage(ctx, { code: 400, heading: 'Artefact publication did not complete', message: err.message }));
+    }
   }
 
   if (pathname === '/share/connect' && req.method === 'POST') {
@@ -922,7 +1008,7 @@ async function handle(req, res) {
   /* ============================================ Automate — propose-only ==== */
 
   if (pathname === '/automate') {
-    return send(res, 200, automationsPage(ctx, { mine: auto.mine(ctx.user), all: auto.list(), created: url.searchParams.get('created') }));
+    return send(res, 200, automationsPage(ctx, { mine: auto.mine(ctx.user), all: auto.mine(ctx.user), created: url.searchParams.get('created') }));
   }
 
   const automationAgents = () =>
@@ -952,8 +1038,9 @@ async function handle(req, res) {
     const [, id, action] = autoAction;
     const a = auto.get(id);
     if (!a) return send(res, 404, errorPage(ctx, notFound()));
+    if (!auto.owns(a, ctx.user)) return send(res, 403, errorPage(ctx, { code: 403, heading: 'Owner access required', message: 'Only the accountable owner can access this automation.' }));
     if (action === 'run') {
-      await auto.runNow(id);
+      await auto.runNow(id, { user: ctx.user });
       return redirect(res, `/automate/${id}?ran=1`);
     }
     if (action === 'pause') auto.setStatus(id, 'paused');
@@ -973,7 +1060,8 @@ async function handle(req, res) {
   if (autoDetail) {
     const a = auto.get(autoDetail[1]);
     if (!a) return send(res, 404, errorPage(ctx, notFound()));
-    const isOwner = a.owner?.email === ctx.user.email || a.owner?.id === ctx.user.id;
+    const isOwner = auto.owns(a, ctx.user);
+    if (!isOwner) return send(res, 403, errorPage(ctx, { code: 403, heading: 'Owner access required', message: 'Only the accountable owner can read these drafts.' }));
     return send(res, 200, automationPage(ctx, { automation: a, ran: url.searchParams.get('ran'), isOwner }));
   }
 
@@ -1087,6 +1175,7 @@ export async function start() {
   // first 401 and the turn retried — see foundry.js respond().
   index.foundry.repairTools = (name, opts) => ensureToolConnections(name, opts);
   auto.startScheduler();
+  const publicationTimer = startPublicationScheduler();
 
   const server = http.createServer((req, res) => {
     const started = Date.now();
@@ -1121,6 +1210,7 @@ export async function start() {
       });
   });
 
+  server.on('close', () => clearInterval(publicationTimer));
   server.listen(config.port, async () => {
     const s = index.stats();
     console.log(`Cortex listening on http://localhost:${config.port}`);

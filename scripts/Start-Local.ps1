@@ -12,7 +12,7 @@
   and why it must never be set on a deployed environment.
 
 .EXAMPLE
-  .\scripts\Start-Local.ps1 -Groups all-staff,waste-crime,analysts
+  .\scripts\Start-Local.ps1 -Groups all-staff,operations,analysts
 #>
 [CmdletBinding()]
 param(

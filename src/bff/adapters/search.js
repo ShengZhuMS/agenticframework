@@ -136,8 +136,25 @@ class LiveSearch {
   }
 
   async ensureIndex(definition) {
-    await this._fetch(`/indexes/${encodeURIComponent(definition.name)}`, { method: 'PUT', body: definition });
+    const existing = await this.getIndex(definition.name);
+    const desired = new Map(definition.fields.map((field) => [field.name, field]));
+    // Search fields cannot be removed or retyped in place. Preserve the schema
+    // already serving other clients and only append new fields.
+    for (const field of existing?.fields || []) {
+      if (desired.has(field.name) && desired.get(field.name).type !== field.type) throw new Error(`Search field ${field.name} has an incompatible type; use a reviewed index migration.`);
+    }
+    const body = existing ? {
+      ...existing, ...definition,
+      fields: [...existing.fields, ...definition.fields.filter((field) => !existing.fields.some((f) => f.name === field.name))]
+    } : definition;
+    delete body['@odata.etag'];
+    await this._fetch(`/indexes/${encodeURIComponent(definition.name)}`, { method: 'PUT', body });
     return definition.name;
+  }
+
+  async capacity() {
+    const stats = await this._fetch('/servicestats');
+    return { used: stats.counters?.indexesCount?.usage, limit: stats.counters?.indexesCount?.quota };
   }
 
   async deleteIndex(name) {

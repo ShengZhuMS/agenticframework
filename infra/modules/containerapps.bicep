@@ -84,6 +84,12 @@ param defaultGroups string = 'all-staff'
 
 @description('Who may chat with an agent: all-staff or visibility.')
 param chatPolicy string = 'all-staff'
+@description('Administrator-approved connector metadata as JSON; never include secret values.')
+param connectorConfiguration string = '[]'
+@secure()
+param fabricConnectorSecret string = ''
+@secure()
+param studioConnectorSecret string = ''
 
 // ------------------------------------------------ round 4: data and state
 // Where the Foundry project lives in ARM, so the app can create project
@@ -280,6 +286,8 @@ var roundFourEnv = [
   { name: 'DATA_CONTAINER', value: dataContainer }
   { name: 'DATA_RESOURCE_GROUP', value: dataResourceGroup }
   { name: 'CORTEX_CHAT_POLICY', value: chatPolicy }
+  { name: 'CORTEX_CONNECTORS', value: connectorConfiguration }
+  { name: 'AZURE_TENANT_ID', value: entraTenantId }
   { name: 'STATE_STORAGE_ACCOUNT', value: stateAccountName }
   { name: 'STATE_CONTAINER', value: stateContainerName }
 ]
@@ -296,12 +304,16 @@ var optionalEnv = concat(
 // A secretRef pointing at a secret that does not exist stops the container
 // starting, so each of these appears only when its value was supplied.
 var webSecrets = concat(
+  empty(studioConnectorSecret) ? [] : [ { name: 'studio-connector-secret', value: studioConnectorSecret } ],
+  empty(fabricConnectorSecret) ? [] : [ { name: 'fabric-connector-secret', value: fabricConnectorSecret } ],
   empty(apimSubscriptionKey) ? [] : [ { name: 'apim-subscription-key', value: apimSubscriptionKey } ],
   empty(appInsightsConnectionString) ? [] : [ { name: 'appinsights-connection-string', value: appInsightsConnectionString } ],
   empty(entraClientSecret) ? [] : [ { name: 'entra-client-secret', value: entraClientSecret } ]
 )
 
 var webSecretEnv = concat(
+  empty(studioConnectorSecret) ? [] : [ { name: 'CORTEX_STUDIO_SECRET', secretRef: 'studio-connector-secret' } ],
+  empty(fabricConnectorSecret) ? [] : [ { name: 'CORTEX_FABRIC_SECRET', secretRef: 'fabric-connector-secret' } ],
   empty(apimSubscriptionKey) ? [] : [ { name: 'APIM_SUBSCRIPTION_KEY', secretRef: 'apim-subscription-key' } ],
   empty(appInsightsConnectionString) ? [] : [ { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', secretRef: 'appinsights-connection-string' } ],
   empty(entraClientSecret) ? [] : [ { name: 'ENTRA_CLIENT_SECRET', secretRef: 'entra-client-secret' } ]

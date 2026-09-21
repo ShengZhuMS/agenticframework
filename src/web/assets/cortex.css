@@ -15,6 +15,44 @@
    published GOV.UK Design System values.
    ========================================================================== */
 
+.cx-exec { --exec-ink: #17324d; --exec-blue: var(--cx-brand, #0067b8); }
+.cx-exec section { padding: 44px 0; scroll-margin-top: 20px; }
+.cx-exec-hero { background: linear-gradient(120deg, #102b46, #005e9b); color: #fff; padding: 56px 44px; border-radius: 16px; }
+.cx-exec-hero h1 { color: #fff; font-size: clamp(30px, 4vw, 48px); line-height: 1.14; margin: 16px 0 24px; max-width: 950px; }
+.cx-exec-hero p { max-width: 850px; font-size: 22px; line-height: 1.5; }
+.cx-exec .cx-exec-eyebrow { text-transform: uppercase; letter-spacing: .09em; font-size: 13px; font-weight: 700; margin: 0 0 14px; }
+.cx-exec-hero .govuk-button { background: #fff; color: #17324d; margin: 12px 24px 0 0; }
+.cx-exec-hero-link { color: #fff; display: inline-block; margin-top: 16px; }
+.cx-exec-contents { display: flex; flex-wrap: wrap; gap: 14px 24px; padding: 25px 0; border-bottom: 1px solid #c5d5e5; }
+.cx-exec-contents a { color: var(--exec-ink); font-size: 15px; }
+.cx-exec-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; margin: 25px 0; }
+.cx-exec-card { padding: 24px; background: #f0f5fa; border: 1px solid #d9e5ef; border-radius: 10px; }
+.cx-exec-card .govuk-body { margin-bottom: 0; font-size: 17px; line-height: 1.5; }
+.cx-exec-card .govuk-heading-m { color: #17324d; }
+.cx-exec-metrics { display: flex; gap: 48px; padding: 22px 0; flex-wrap: wrap; }
+.cx-exec-metrics strong { display: block; color: var(--exec-blue); font-size: 42px; margin-bottom: 8px; }
+.cx-exec .cx-exec-feature { padding: 38px; background: #17324d; color: #fff; border-radius: 14px; }
+.cx-exec-feature h2 { color: #fff; font-size: 34px; line-height: 1.25; margin: 12px 0 20px; }
+.cx-exec-feature > p { line-height: 1.6; }
+.cx-exec-feature > p a { color: #c4e8ff; }
+.cx-exec-feature .cx-exec-card { color: #0b0c0c; background: #fff; }
+.cx-exec-diagram { margin: 20px 0; }
+.cx-exec-diagram figcaption { padding: 15px 0; }
+.cx-exec .cx-exec-decision { background: #f0f5fa; border-left: 6px solid var(--exec-blue); padding: 36px; margin: 20px 0; }
+@media (max-width: 760px) {
+  .cx-exec-grid { grid-template-columns: 1fr; }
+  .cx-exec-hero, .cx-exec .cx-exec-feature, .cx-exec .cx-exec-decision { padding: 28px 20px; }
+  .cx-exec-feature h2 { font-size: 27px; }
+  .cx-exec-diagram { overflow-x: auto; }
+  .cx-exec-diagram svg { min-width: 720px; }
+}
+@media print {
+  .cx-exec-contents { display: none; }
+  .cx-exec-hero, .cx-exec .cx-exec-feature { background: white; color: black; border: 1px solid #999; }
+  .cx-exec-hero h1, .cx-exec-feature h2, .cx-exec-feature > p a { color: black; }
+  .cx-exec section { break-inside: avoid; padding: 18px 0; }
+}
+
 :root {
   --govuk-black: #0b0c0c;
   --govuk-white: #ffffff;
@@ -813,3 +851,51 @@ summary:focus,
 .cortex-about-ask { border: 4px solid var(--govuk-black); padding: 20px 25px; margin: 30px 0 25px; }
 .cortex-about-ask .govuk-heading-m { margin-top: 0; }
 .cortex-about-ask .govuk-list { font-size: 16px; }
+/* Customer-demo styling. Official header marks are served locally. */
+.cortex-theme-microsoft { --cx-brand: #0067b8; --cx-dark: #242424; --cx-surface: #f2f7fc; }
+.cortex-theme-novo { --cx-brand: #001965; --cx-dark: #001965; --cx-surface: #edf6f7; }
+.cortex-theme-microsoft, .cortex-theme-novo { font-family: "Segoe UI", Arial, sans-serif; background: #fff; }
+.cortex-theme-microsoft [class*="govuk-"], .cortex-theme-novo [class*="govuk-"] { font-family: inherit; }
+.cortex-theme-microsoft .govuk-header, .cortex-theme-novo .govuk-header { background: var(--cx-dark); border-bottom: 6px solid var(--cx-brand); }
+.cortex-theme-microsoft .govuk-header__logo, .cortex-theme-novo .govuk-header__logo { min-width: 155px; }
+.cortex-theme-microsoft .govuk-header__link--homepage, .cortex-theme-novo .govuk-header__link--homepage { font-size: 24px; font-weight: 600; white-space: nowrap; }
+.cortex-theme-microsoft .cortex-nav, .cortex-theme-novo .cortex-nav { background: var(--cx-surface); }
+.cortex-theme-microsoft .cortex-nav a, .cortex-theme-novo .cortex-nav a { color: var(--cx-dark); }
+.cortex-theme-microsoft .cortex-nav a[aria-current="page"], .cortex-theme-novo .cortex-nav a[aria-current="page"] { border-color: var(--cx-brand); }
+.cortex-theme-microsoft .govuk-button, .cortex-theme-novo .govuk-button { background-color: var(--cx-brand); color: #fff; box-shadow: none; border-radius: 3px; }
+.cortex-theme-microsoft .govuk-button--secondary, .cortex-theme-novo .govuk-button--secondary { background: var(--cx-surface); color: var(--cx-dark); border: 1px solid var(--cx-brand); }
+.cortex-theme-microsoft .govuk-button--warning, .cortex-theme-novo .govuk-button--warning { background: #a12622; }
+.cortex-theme-microsoft .govuk-link, .cortex-theme-novo .govuk-link { color: var(--cx-brand); }
+.cortex-theme-microsoft .govuk-footer, .cortex-theme-novo .govuk-footer { background: var(--cx-surface); }
+.cortex-theme-microsoft .cortex-about-hero, .cortex-theme-novo .cortex-about-hero { background: var(--cx-dark); }
+.cortex-theme-microsoft a:focus, .cortex-theme-novo a:focus,
+.cortex-theme-microsoft button:focus, .cortex-theme-novo button:focus { outline: 3px solid #ffdd00; outline-offset: 3px; }
+
+@font-face { font-family: "NovoOfficialMark"; src: url("/assets/novo-official-icons.woff") format("woff"); font-display: block; }
+.cx-novo-logo { font-family: "NovoOfficialMark" !important; font-size: 48px; line-height: 1; color: white; font-weight: normal; display: inline-block; }
+.cx-microsoft-logo { display: block; width: 108px; height: 23px; }
+.cortex-theme-microsoft .govuk-header { background: white; color: #262626; border-bottom: 1px solid #d2d2d2; }
+.cortex-theme-microsoft .govuk-header a, .cortex-theme-microsoft .govuk-header__product, .cortex-theme-microsoft .govuk-header__org { color: #262626; }
+.cortex-theme-microsoft .govuk-header__product b { color: #262626; }
+.cortex-theme-microsoft .cx-exec-hero { border-radius: 0; background: linear-gradient(120deg, #eef5ff, #d7e9fa); color: #17324d; }
+.cortex-theme-microsoft .cx-exec-hero h1, .cortex-theme-microsoft .cx-exec-hero-link { color: #17324d; }
+.cortex-theme-novo { --cx-surface: #e7f4f5; }
+.cortex-theme-novo .govuk-header { padding-top: 22px; padding-bottom: 18px; }
+.cortex-theme-novo .cx-exec-hero { background: linear-gradient(120deg, #001965, #07589a); border-radius: 0 60px 0 0; }
+.cortex-theme-novo .govuk-button { border-radius: 24px; padding-left: 24px; padding-right: 24px; }
+.cx-map-scroll { overflow-x: auto; border: 1px solid #d3dfeb; border-radius: 16px; background: #fbfdff; margin: 24px 0; }
+.cx-estate-map { display: block; width: 100%; min-width: 680px; height: auto; font-family: "Segoe UI", Arial, sans-serif; }
+.cx-estate-map a:hover circle, .cx-estate-map a:focus circle { stroke: #ffbf47; stroke-width: 5px; }
+.cx-lineage-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+.cx-publish { margin: 30px 0 48px; padding: 28px; background: #f4f8fc; border: 1px solid #c5d5e5; border-radius: 12px; }
+.cx-publish-types { display: flex; gap: 12px; flex-wrap: wrap; }
+.cx-publish-types a { font-size: 15px; margin-bottom: 12px; }
+.cx-publish-form { max-width: 780px; margin-top: 24px; }
+.cx-endpoint { display: block; font-size: 12px; overflow-wrap: anywhere; margin-top: 8px; }
+.cortex-chat { max-width: 880px; margin: auto; }
+.cortex-chat__thread { padding: 18px; background: #f4f8fc; border-radius: 16px; min-height: 180px; }
+.cortex-chat__q { background: #e2efff; border-radius: 16px 16px 2px 16px; padding: 16px; margin-left: 10%; }
+.cortex-chat__a { background: white; border: 1px solid #d5e0eb; border-radius: 16px 16px 16px 2px; padding: 16px; margin-right: 6%; }
+.cortex-chat__form { position: sticky; bottom: 0; padding: 18px 0; background: white; border-top: 1px solid #c5d5e5; }
+@media (max-width: 640px) { .cx-lineage-lists { grid-template-columns: 1fr; } .cx-publish { padding: 16px; } .cx-novo-logo { font-size: 38px; } }
+@media print { .cx-map-scroll { overflow: visible; } .cx-estate-map { min-width: 0; } .cortex-chat__form { position: static; } }

@@ -238,6 +238,12 @@ param storagePublicNetworkAccess string = 'Enabled'
 @description('Who may open a chat window with an agent: all-staff (this phase) or visibility (Marketplace rules).')
 @allowed(['all-staff', 'visibility'])
 param chatPolicy string = 'all-staff'
+@description('Approved external connector metadata. Credentials belong in secret references, never this JSON.')
+param connectorConfiguration string = '[]'
+@secure()
+param fabricConnectorSecret string = ''
+@secure()
+param studioConnectorSecret string = ''
 
 // ------------------------------------------------------------------ derived
 
@@ -543,6 +549,9 @@ module containerApps 'modules/containerapps.bicep' = {
     groupNames: groupNames
     defaultGroups: defaultGroups
     chatPolicy: chatPolicy
+    connectorConfiguration: connectorConfiguration
+    fabricConnectorSecret: fabricConnectorSecret
+    studioConnectorSecret: studioConnectorSecret
 
     // Round 4: where the Foundry project lives in ARM (for project
     // connections), the search service, the sample-data account and the

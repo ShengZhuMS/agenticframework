@@ -136,19 +136,26 @@ class LiveStorage {
 
   /** Names and sizes under a prefix. The listing is XML; a small regex pass is enough. */
   async list(container, prefix = '') {
-    const res = await this._fetch(
-      `${this.blobUrl(container)}?restype=container&comp=list&prefix=${encodeURIComponent(prefix)}`,
-      { ok: [404] }
-    );
-    if (res.status === 404) return [];
-    const xml = await res.text();
     const out = [];
-    for (const m of xml.matchAll(/<Blob>([\s\S]*?)<\/Blob>/g)) {
-      const name = m[1].match(/<Name>([^<]*)<\/Name>/)?.[1];
-      const size = Number(m[1].match(/<Content-Length>(\d+)<\/Content-Length>/)?.[1] || 0);
-      const modified = m[1].match(/<Last-Modified>([^<]*)<\/Last-Modified>/)?.[1] || null;
-      if (name) out.push({ name: decodeXml(name), size, modified });
-    }
+    let marker = '';
+    const seen = new Set();
+    do {
+      const res = await this._fetch(
+        `${this.blobUrl(container)}?restype=container&comp=list&prefix=${encodeURIComponent(prefix)}&marker=${encodeURIComponent(marker)}`,
+        { ok: [404] }
+      );
+      if (res.status === 404) return [];
+      const xml = await res.text();
+      for (const m of xml.matchAll(/<Blob>([\s\S]*?)<\/Blob>/g)) {
+        const name = m[1].match(/<Name>([^<]*)<\/Name>/)?.[1];
+        const size = Number(m[1].match(/<Content-Length>(\d+)<\/Content-Length>/)?.[1] || 0);
+        const modified = m[1].match(/<Last-Modified>([^<]*)<\/Last-Modified>/)?.[1] || null;
+        if (name) out.push({ name: decodeXml(name), size, modified });
+      }
+      marker = decodeXml(xml.match(/<NextMarker>([^<]*)<\/NextMarker>/)?.[1] || '');
+      if (marker && seen.has(marker)) throw new Error('Storage returned a repeated listing cursor.');
+      seen.add(marker);
+    } while (marker);
     return out;
   }
 

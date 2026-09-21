@@ -137,6 +137,7 @@ export async function validateBuild(form, user) {
       tools,
       actions: actions.length ? actions : ['read', 'summarise'],
       builtBy: user.name,
+      builtById: user.id || null,
       builtByTeam: user.team,
       cluster: form.cluster || 'corp'
     }

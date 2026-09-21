@@ -31,7 +31,7 @@
   like every signed-in user, and sees the "Open to all staff" entries.
 
 .EXAMPLE
-  .\scripts\Add-CortexUser.ps1 -Email colleague@defra.gov.uk -Groups 'Waste Crime Observatory'
+  .\scripts\Add-CortexUser.ps1 -Email colleague@example.com -Groups 'Cortex Operations'
   Invite, and put them in an Entra group that an access rule reads — the
   "same page through different eyes" demo.
 

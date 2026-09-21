@@ -12,7 +12,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { explainStorageError, LiveStorage } from '../src/bff/adapters/storage.js';
 import { bootstrapData, bootstrapSearch, verifyIndexers } from '../scripts/bootstrap-data.js';
-import { stubConfig } from './fixtures.js';
+import { stubConfig, stubAzure } from './fixtures.js';
 import { clearTokenCache } from '../src/bff/adapters/token.js';
 
 const FIREWALL = '<?xml version="1.0" encoding="utf-8"?><Error><Code>AuthorizationFailure</Code><Message>This request is not authorized to perform this operation.\nRequestId:8f85b3e0</Message></Error>';
@@ -146,7 +146,7 @@ describe('bootstrapData when the account refuses the machine', () => {
     const log = fakeLog();
     const counters = { created: 0, updated: 0, failed: 0 };
     let uploads = 0;
-    const products = ['water-quality-archive', 'hydrology-flow-level', 'bathing-water-results'].map((id) => ({ id, name: id }));
+    const products = ['cx-demo-service-performance', 'cx-demo-feedback', 'cx-demo-delivery'].map((id) => ({ id, name: id }));
     const r = await bootstrapData({
       products,
       log,
@@ -167,7 +167,7 @@ describe('bootstrapData when the account refuses the machine', () => {
     const log = fakeLog();
     const counters = { created: 0, updated: 0, failed: 0 };
     let uploads = 0;
-    const products = ['water-quality-archive', 'hydrology-flow-level'].map((id) => ({ id, name: id }));
+    const products = ['cx-demo-service-performance', 'cx-demo-feedback'].map((id) => ({ id, name: id }));
     const roleErr = () => Object.assign(new Error('Storage PUT failed 403 (AuthorizationPermissionMismatch)'), { status: 403, blocked: false });
     const r = await bootstrapData({
       products,
@@ -188,6 +188,32 @@ describe('bootstrapData when the account refuses the machine', () => {
 });
 
 describe('verifyIndexers', () => {
+  test('waits for eventually consistent document counts rather than falsely failing an indexer', async () => {
+    let reads = 0;
+    const r = await verifyIndexers({
+      names: ['cortex-new'], log: fakeLog(), sleep: async () => {},
+      search: {
+        indexerStatus: async () => ({ lastRun: { status: 'success', failed: 0, processed: 100 } }),
+        indexStats: async () => ({ documents: ++reads === 1 ? 0 : 100 })
+      }, verifySeconds: 1
+    });
+    assert.equal(r.indexed, 1);
+    assert.equal(r.failed, 0);
+    assert.equal(reads, 2);
+  });
+
+  test('zero documents at the deadline never count as a populated index', async () => {
+    const r = await verifyIndexers({
+      names: ['cortex-empty'], log: fakeLog(), sleep: async () => {},
+      search: {
+        indexerStatus: async () => ({ lastRun: { status: 'success', failed: 0, processed: 0 } }),
+        indexStats: async () => ({ documents: 0 })
+      }, verifySeconds: 0.01
+    });
+    assert.equal(r.indexed, 0);
+    assert.equal(r.failed, 1);
+  });
+
   test('reports rows for a successful run and the first error for a failed one, and flags a storage refusal', async () => {
     const log = fakeLog();
     const statuses = {
@@ -228,7 +254,9 @@ describe('verifyIndexers', () => {
 });
 
 describe('bootstrapSearch verification', () => {
-  before(() => stubConfig());
+  let restore;
+  before(() => { restore = stubAzure(); });
+  after(() => restore());
 
   test('waits for the indexers it started and counts the rows, instead of promising them', async () => {
     const log = fakeLog();
@@ -242,7 +270,7 @@ describe('bootstrapSearch verification', () => {
       indexerStatus: async () => ({ lastRun: { status: 'success', processed: 200, failed: 0, errors: [] } })
     };
     const r = await bootstrapSearch({
-      products: [{ id: 'water-quality-archive', name: 'Water quality archive' }],
+      products: [{ id: 'cx-demo-service-performance', name: 'Demo - Service performance' }],
       log,
       counters,
       search,
