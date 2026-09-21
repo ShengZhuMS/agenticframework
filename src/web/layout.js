@@ -87,7 +87,10 @@ function nav(active) {
             id === active ? ' aria-current="page"' : ''
           }>${esc(label)}</a></li>`
       ).join('')}
-      <li class="cortex-nav__item cortex-nav__item--right"><a href="/help"${
+      <li class="cortex-nav__item cortex-nav__item--right"><a href="/about"${
+        active === 'about' ? ' aria-current="page"' : ''
+      }>About</a></li>
+      <li class="cortex-nav__item"><a href="/help"${
         active === 'help' ? ' aria-current="page"' : ''
       }>Help</a></li>
     </ul>
@@ -183,6 +186,7 @@ ${identityBar(ctx)}
     <div class="govuk-footer__meta">
       <div>
         <ul class="govuk-footer__inline-list">
+          <li><a class="govuk-link" href="/about">About Cortex</a></li>
           <li><a class="govuk-link" href="/help">Help</a></li>
           <li><a class="govuk-link" href="/help/accessibility">Accessibility statement</a></li>
           <li><a class="govuk-link" href="/help/privacy">Privacy</a></li>

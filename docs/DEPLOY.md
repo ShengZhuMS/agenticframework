@@ -307,6 +307,8 @@ Every signed-in user is treated as a member of **`all-staff`** — the default g
 
 Marketplace → a data product → **The data behind it** (the scanned file, its columns, the index) → Build an agent with it → test it → **Open a chat window** → publish → it reappears in the Marketplace with a **Chat** link. Then **Ask a question** — the answer is written by the `cortex-ask` agent in Foundry from the catalogue entries you can reach, with the provenance panel underneath. Ask is live: if the model cannot be reached the page says so and falls back to the register's own summary.
 
+Finish on **About** (top right, or `/about`). It is the page for the people who decide, not the people who use: the problem in the requester's words, seven handoffs to four, the as-is/to-be by layer, the highlighted message — "AI alone won't change your business. The system running it will." — with Microsoft's three principles set against what Cortex already does, how it is built, why it is safe, and what we are asking for. Its figures are read live from the register.
+
 When you test an agent, the panel under the answer lists **Tools this answer used** — every MCP call, approved by Cortex on your behalf and recorded — and a failure reads as a sentence about what to do, with the raw text folded underneath.
 
 ### d. Look at what bootstrap put behind the products
@@ -346,7 +348,7 @@ In Cortex, a data product's entry page has the same chain under **The data behin
 Two rules that keep iteration safe:
 
 - **The leading dot on `Set-CortexEnv.ps1` is load-bearing.** It loads the deployment's configuration into *your* session so a local `node` process can talk to your Azure resources. Without it bootstrap stops with "Missing required configuration".
-- **`npm test` before you push.** 330 tests, no Azure needed, about 20 seconds. `node scripts/bootstrap.js --dry-run` validates content changes the same way, and `node scripts/sample-data.js --list` shows what the generator would produce.
+- **`npm test` before you push.** 332 tests, no Azure needed, about 20 seconds. `node scripts/bootstrap.js --dry-run` validates content changes the same way, and `node scripts/sample-data.js --list` shows what the generator would produce.
 
 Running the app on your machine against the real back ends:
 
@@ -431,6 +433,7 @@ The special group names the rules understand:
 - [ ] `.\scripts\Test-Cortex.ps1` — all green, the morning of
 - [ ] Sign in, open `/profile`, confirm your groups; do the same with the demo account in a private window
 - [ ] Walk the golden path once end to end
+- [ ] Open `/about` — this is the page to leave on screen when the questions start; it prints cleanly as the leave-behind
 - [ ] Delete the rehearsal agent so the demo creates it fresh
 - [ ] Do not deploy on the day. If you must, `-AppOnly` — it does not touch infrastructure
 

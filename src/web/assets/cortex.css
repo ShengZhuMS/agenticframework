@@ -655,3 +655,161 @@ summary:focus,
 /* -------------------------------------------------------- data grounding */
 .cortex-assets td, .cortex-assets th { font-size: 16px; }
 .cortex-chip { display: inline-block; background: #f3f2f1; border: 1px solid #b1b4b6; border-radius: 3px; padding: 1px 6px; font-size: 14px; margin: 0 4px 4px 0; }
+
+/* ------------------------------------------------------------- about page
+   Restored 17 Sep 2026. The About view (src/web/views/about.js) is written
+   for senior leaders and prints; every block below is GOV.UK idiom — black
+   rules, light-grey panels, green for "to be", blue for the one quotation.
+   Nothing here relies on JavaScript. */
+
+/* GOV.UK primitives the page uses that the base sheet did not yet carry. */
+.govuk-grid-column-one-half { width: 50%; padding: 0 15px; }
+@media (max-width: 800px) { .govuk-grid-column-one-half { width: 100%; } }
+.govuk-list--number { list-style-type: decimal; padding-left: 20px; }
+.govuk-list--number li { margin-bottom: 5px; }
+.govuk-details { margin-bottom: 20px; font-size: 19px; }
+.govuk-details__summary {
+  display: inline-block; position: relative; padding-left: 25px;
+  color: var(--govuk-blue); cursor: pointer; text-decoration: underline;
+}
+.govuk-details__summary::before {
+  content: ""; position: absolute; top: 7px; left: 0;
+  border-style: solid; border-width: 7px 0 7px 12.124px;
+  border-color: transparent transparent transparent currentColor;
+}
+.govuk-details[open] > .govuk-details__summary::before {
+  border-width: 12.124px 7px 0 7px;
+  border-color: currentColor transparent transparent transparent;
+}
+.govuk-details__summary-text { text-decoration: underline; }
+.govuk-details__text { padding: 15px 0 15px 20px; border-left: 5px solid var(--govuk-border); margin-top: 5px; }
+
+/* Hero — a black band, as GOV.UK uses for a service start page. Flush to the
+   viewport edge on small screens, inside the container on wide ones; never
+   wider than the container, so it can never cause horizontal scrolling. */
+.cortex-about-hero {
+  background: var(--govuk-black); color: var(--govuk-white);
+  margin: -30px -15px 40px; padding: 40px 15px 35px;
+}
+@media (min-width: 1160px) { .cortex-about-hero { margin-left: 0; margin-right: 0; padding-left: 30px; padding-right: 30px; } }
+.cortex-about-hero__inner { max-width: 100%; }
+.cortex-about-hero__caption { color: var(--govuk-mid-grey); }
+.cortex-about-hero__title { color: var(--govuk-white); max-width: 16em; margin-bottom: 20px; }
+.cortex-about-hero__lede { color: var(--govuk-white); max-width: 32em; }
+.cortex-about-hero__actions { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; margin: 30px 0 20px; }
+.cortex-about-hero__button { margin-bottom: 0; }
+.cortex-about-hero__link, .cortex-about-hero__link:visited { color: var(--govuk-white); }
+.cortex-about-hero__link:hover { color: var(--govuk-mid-grey); }
+.cortex-about-hero__note { font-size: 16px; color: var(--govuk-mid-grey); margin: 0; max-width: 40em; }
+@media print { .cortex-about-hero { background: none; color: var(--govuk-black); border-bottom: 4px solid var(--govuk-black); margin: 0 0 30px; padding: 0 0 20px; } .cortex-about-hero__title, .cortex-about-hero__lede { color: var(--govuk-black); } .cortex-about-hero__actions { display: none; } }
+
+/* Contents column — sticks while the body scrolls, on wide screens only. */
+.cortex-about-contents { font-size: 16px; }
+@media (min-width: 801px) { .cortex-about-contents { position: sticky; top: 20px; } }
+.cortex-about-contents__list { margin: 10px 0 0; border-top: 1px solid var(--govuk-border); }
+.cortex-about-contents__list li { padding: 8px 0; border-bottom: 1px solid var(--govuk-border); margin: 0; }
+.cortex-about-contents__list a { text-decoration: none; }
+.cortex-about-contents__list a:hover { text-decoration: underline; }
+@media print { .cortex-about-contents { display: none; } }
+
+/* Sections and their standfirst. */
+.cortex-about-body .cortex-about-section { padding-top: 10px; margin-bottom: 50px; border-top: 4px solid var(--govuk-black); }
+.cortex-about-body .cortex-about-section:first-child { border-top: 0; padding-top: 0; }
+.cortex-about-section .govuk-heading-l { margin-top: 20px; }
+.cortex-about-strap { color: var(--govuk-dark-grey); max-width: 36em; }
+
+/* Three numbered points side by side (In brief, Why it is safe). */
+.cortex-about-three { list-style: none; margin: 30px 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 24px; }
+.cortex-about-three > li { position: relative; padding-top: 12px; border-top: 2px solid var(--govuk-border); }
+.cortex-about-three__n { display: block; font-size: 42px; font-weight: 700; line-height: 1; color: var(--govuk-blue); margin-bottom: 10px; }
+.cortex-about-three--safe .cortex-about-three__n { color: var(--govuk-green); }
+.cortex-about-three .govuk-body { font-size: 16px; }
+
+/* Live register figures. */
+.cortex-about-register { margin-top: 10px; }
+.cortex-about-register .cortex-stats { margin-bottom: 10px; }
+
+/* Callout box and the two-column comparison. */
+.cortex-about-callout { background: var(--govuk-light-grey); padding: 15px 20px; border-left: 5px solid var(--govuk-black); font-size: 16px; }
+.cortex-about-callout .govuk-list { font-size: 16px; margin-top: 8px; }
+.cortex-about-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 30px; margin: 30px 0 10px; }
+.cortex-about-compare__col { padding-top: 15px; border-top: 2px solid var(--govuk-border); }
+.cortex-about-compare__col--to-be { border-top-color: var(--govuk-green); background: #f1f8f4; padding: 15px 20px 20px; }
+
+/* Handoff steps. */
+.cortex-about-handoffs { list-style: none; margin: 0 0 15px; padding: 0; }
+.cortex-about-handoffs__step { display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--govuk-border); font-size: 16px; line-height: 1.4; }
+.cortex-about-handoffs__step:last-child { border-bottom: 0; }
+.cortex-about-handoffs__n { flex: 0 0 34px; font-weight: 700; font-size: 16px; color: var(--govuk-dark-grey); padding-top: 1px; }
+.cortex-about-handoffs--cortex .cortex-about-handoffs__n { color: var(--govuk-green); }
+.cortex-about-handoffs__body { flex: 1 1 auto; }
+
+/* "AI alone won't change your business" — the one highlighted block on the
+   page: a solid blue panel (GOV.UK notification-banner blue) carrying the
+   message in the post's own words, then three compact principle cards. */
+.cortex-about-system__panel { background: var(--govuk-blue); color: var(--govuk-white); padding: 30px 35px 25px; margin: 20px 0 25px; border-left: 10px solid var(--govuk-dark-blue); }
+.cortex-about-system__label { display: inline-block; background: var(--govuk-white); color: var(--govuk-blue); font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 4px 10px; margin-bottom: 20px; }
+.cortex-about-system__title { color: var(--govuk-white); font-size: 40px; line-height: 1.1; margin: 0 0 20px; max-width: 18em; }
+.cortex-about-system__lede { color: var(--govuk-white); max-width: 36em; margin-bottom: 15px; }
+.cortex-about-system__source { font-size: 16px; color: var(--govuk-white); opacity: .9; margin: 0; }
+.cortex-about-system__link, .cortex-about-system__link:visited { color: var(--govuk-white); }
+.cortex-about-system__link:hover { color: var(--govuk-light-grey); }
+.cortex-about-principles { list-style: none; margin: 0 0 20px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; }
+.cortex-about-principle { position: relative; background: var(--govuk-light-grey); border-top: 5px solid var(--govuk-blue); padding: 15px 20px 15px 60px; }
+.cortex-about-principle__n { position: absolute; left: 18px; top: 16px; width: 30px; height: 30px; border-radius: 50%; background: var(--govuk-blue); color: var(--govuk-white); font-weight: 700; text-align: center; line-height: 30px; font-size: 16px; }
+.cortex-about-principle__title { margin-bottom: 6px; }
+.cortex-about-principle__theirs { color: var(--govuk-dark-grey); margin-bottom: 10px; }
+.cortex-about-principle__cortex { margin-bottom: 0; border-top: 1px solid var(--govuk-border); padding-top: 10px; }
+.cortex-about-principle__cortex strong { color: var(--govuk-green); }
+.cortex-about-system__close { border-left: 5px solid var(--govuk-blue); padding: 10px 15px; margin: 0; background: var(--govuk-white); }
+@media (max-width: 640px) { .cortex-about-system__panel { padding: 25px 20px 20px; } .cortex-about-system__title { font-size: 30px; } }
+@media print {
+  .cortex-about-system__panel { background: none; color: var(--govuk-black); border: 3px solid var(--govuk-black); }
+  .cortex-about-system__title, .cortex-about-system__lede, .cortex-about-system__source, .cortex-about-system__link { color: var(--govuk-black); }
+  .cortex-about-system__label { background: var(--govuk-black); color: var(--govuk-white); }
+}
+
+/* As-is / to-be table. */
+.cortex-about-table th, .cortex-about-table td { font-size: 16px; vertical-align: top; }
+.cortex-about-table__theme { width: 18%; white-space: nowrap; }
+.cortex-about-table__n { display: block; font-size: 14px; color: var(--govuk-dark-grey); font-weight: 400; }
+.cortex-about-table thead .cortex-about-table__to-be { color: var(--govuk-green); }
+.cortex-about-table tbody .cortex-about-table__to-be { background: #f1f8f4; }
+@media (max-width: 640px) { .cortex-about-table__theme { white-space: normal; } }
+
+/* Value tiles, cycle and reuse chips. */
+.cortex-about-tiles { list-style: none; margin: 20px 0 30px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; }
+.cortex-about-tile { background: var(--govuk-light-grey); padding: 15px 20px; border-top: 4px solid var(--govuk-black); }
+.cortex-about-tile .govuk-heading-s { margin-bottom: 8px; }
+.cortex-about-cycle { list-style: none; margin: 15px 0 25px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; counter-reset: cycle; font-size: 16px; }
+.cortex-about-cycle li { counter-increment: cycle; position: relative; padding: 12px 15px 12px 45px; border: 1px solid var(--govuk-border); }
+.cortex-about-cycle li::before { content: counter(cycle); position: absolute; left: 12px; top: 10px; width: 24px; height: 24px; border-radius: 50%; background: var(--govuk-black); color: var(--govuk-white); font-size: 14px; font-weight: 700; text-align: center; line-height: 24px; }
+.cortex-about-chip { margin: 0 2px 6px 0; }
+
+/* Journey steps and the six-state list. */
+.cortex-about-journey { list-style: none; margin: 20px 0 30px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+.cortex-about-journey__step { position: relative; padding: 12px 0 0 45px; border-top: 2px solid var(--govuk-border); }
+.cortex-about-journey__n { position: absolute; left: 0; top: 12px; width: 32px; height: 32px; border-radius: 50%; background: var(--govuk-blue); color: var(--govuk-white); font-weight: 700; text-align: center; line-height: 32px; font-size: 16px; }
+.cortex-about-journey__title { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.cortex-about-journey__title .cortex-src { margin-top: 0; }
+.cortex-about-states { margin: 15px 0 20px; font-size: 16px; }
+.cortex-about-states__row { display: flex; gap: 20px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--govuk-border); }
+.cortex-about-states__row dt { flex: 0 0 200px; margin: 0; }
+.cortex-about-states__row dd { flex: 1 1 auto; margin: 0; }
+@media (max-width: 640px) { .cortex-about-states__row { flex-direction: column; gap: 6px; } .cortex-about-states__row dt { flex: none; } }
+
+/* Architecture figure. */
+.cortex-about-figure { margin: 20px 0 10px; }
+.cortex-about-diagram { width: 100%; height: auto; display: block; border: 1px solid var(--govuk-border); background: var(--govuk-white); }
+.cortex-about-details { margin-top: 10px; font-size: 16px; }
+.cortex-about-details .govuk-list { font-size: 16px; }
+
+/* Summary lists on the About page are dense. */
+.cortex-about-summary { font-size: 16px; margin-bottom: 20px; }
+.cortex-about-summary .govuk-summary-list__key { width: 35%; }
+.cortex-about-summary--status .govuk-summary-list__key { width: 75%; font-weight: 400; }
+
+/* The ask, framed. */
+.cortex-about-ask { border: 4px solid var(--govuk-black); padding: 20px 25px; margin: 30px 0 25px; }
+.cortex-about-ask .govuk-heading-m { margin-top: 0; }
+.cortex-about-ask .govuk-list { font-size: 16px; }

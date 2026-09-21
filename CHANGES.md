@@ -1,5 +1,64 @@
 # What changed — 3 September 2026
 
+## Addendum 11 (17 Sep): round 8 — the About page is back, and written for the board
+
+### What was lost, and when
+`src/web/views/about.js` — the leadership narrative (the problem in the
+requester's words, seven handoffs to four, as-is/to-be, why it is safe, the
+asks) — survived every round untouched since 4 September. What did not
+survive round 4 (11 Sep, the rewrite of `server.js`, `layout.js` and
+`cortex.css`) was everything that made it reachable: the `/about` route, the
+nav and footer links, and all 49 `cortex-about-*` styles. The view was an
+orphan: importable, tested by nothing, served by nobody. That is why no test
+caught it.
+
+### What round 8 does
+- **`/about` is served again** (`server.js`), with the same live figures as
+  the start page — `index.stats()` and `index.coverage()`. The register is
+  the only source of numbers on the page, and the page says so.
+- **Reachable from every page**: `About` sits at the right of the section
+  nav next to Help, and `About Cortex` is the first footer link.
+- **Rewritten for senior business leaders.** The original principles are all
+  kept — plumbing is in / two gaps / one PoC; seven handoffs to four; four
+  layers as-is → to-be; governed by default, nothing copied, reuse over
+  rebuild, method with the answer; three "why safe" rules; three proving
+  grounds; the honest "deliberately not built" list; the asks. The copy is
+  tightened and addressed to the person deciding, not the person using.
+- **New section, deliberately placed third, headlined with the message of
+  Jay Parikh's Microsoft blog post in its own words: "AI alone won't change
+  your business. The system running it will."** (The Official Microsoft
+  Blog, 2 June 2026, linked on the page.) It is short and highlighted on
+  purpose — a solid blue panel carrying the message, two sentences of our
+  own, the source, then the post's three principles as three compact cards —
+  one integrated system; secured and governed by design; improves
+  continuously under human oversight — each with one line of what Cortex does
+  about it today (front door over three platforms Defra owns; Entra decides
+  what you see, an agent never reaches further than its builder, every answer
+  names its sources; every published agent becomes a part, every answered
+  request reveals demand, a person releases every answer). It closes with the
+  decision in one line: the AI is bought and running; the investment is in
+  the system that runs it, and that is what compounds. The fourth ask says
+  the same. *(Corrected the same morning: the first cut headlined a
+  paraphrase about demos rather than the post's actual message, and ran three
+  times as long.)*
+- **Styles restored** (`cortex.css`, +~190 lines, all GOV.UK idiom): the
+  black hero band, sticky contents column, numbered three-ups, the
+  as-is/to-be table, handoff steps, journey tiles, the six-state list, the
+  framed ask, and the new principle cards and decision block. Also the
+  GOV.UK primitives the base sheet lacked (`one-half` column, `govuk-details`,
+  `govuk-list--number`). Print styles included — it is a page people will
+  print.
+- **Tested**: `/about` is in the "every demo page renders" list, and a
+  dedicated smoke test checks all nine sections, the article link, the three
+  "What Cortex does about it today" cards, the live-figure caption, the
+  diagram's text alternative, zero `<script>` tags, the nav/footer links —
+  and that the headline is the article's own message, not a paraphrase.
+  332 tests.
+
+### Nothing else moved
+No infrastructure, no scripts, no settings. `-AppOnly` (or a plain
+`azd deploy`) is enough to ship it.
+
 ## Addendum 10 (11 Sep, late): round 7 — what the first perimeter run showed
 
 The perimeter held. Both accounts went `SecuredByPerimeter` and stayed there

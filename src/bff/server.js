@@ -22,6 +22,7 @@ import { decorate, visibilityFor, VIS, VIS_ORDER } from './services/visibility.j
 import { marketplacePage } from '../web/views/marketplace.js';
 import { entryPage, entryNotFoundPage } from '../web/views/entry.js';
 import { startPage, helpPage, errorPage, profilePage } from '../web/views/pages.js';
+import { aboutPage } from '../web/views/about.js';
 import {
   buildLandingPage,
   buildFormPage,
@@ -974,6 +975,12 @@ async function handle(req, res) {
     if (!a) return send(res, 404, errorPage(ctx, notFound()));
     const isOwner = a.owner?.email === ctx.user.email || a.owner?.id === ctx.user.id;
     return send(res, 200, automationPage(ctx, { automation: a, ran: url.searchParams.get('ran'), isOwner }));
+  }
+
+  /* The case for Cortex, for senior leaders. Same live figures as the start
+   * page — the register is the only source of numbers on that page. */
+  if (pathname === '/about') {
+    return send(res, 200, aboutPage(ctx, { stats: index.stats(), coverage: index.coverage() }));
   }
 
   if (pathname === '/help' || pathname.startsWith('/help/')) {

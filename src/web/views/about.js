@@ -1,14 +1,25 @@
 /**
- * About — the story of Cortex for two audiences on one page.
+ * About — the case for Cortex, written for senior business leaders.
  *
- * Leadership first (the problem, what changes, why it is safe, what we need),
- * then what it means for the person using it, then how it is built. Every
- * figure on the page is either read live from the register or is a worked
- * example that says so — the same "no number without a source" rule as the
- * rest of the service.
+ * WHO THIS IS FOR
+ * A director or a board member with ten minutes, deciding whether to back the
+ * next phase. So: the problem in their words first, then what changes, then
+ * the argument that matters most in 2026 — that AI alone changes nothing, the
+ * SYSTEM running it does — then how it is built, why it is safe, and what we
+ * are asking for. Product names appear only where the point is that Cortex
+ * sits on platforms Defra already pays for.
  *
- * No client JavaScript. The diagrams are inline SVG and CSS, each with a text
- * alternative, so the page reads the same with images off or a screen reader on.
+ * THE RULES OF THIS PAGE
+ *   - No number without a source. Live figures are read from the register and
+ *     say so; the worked example says it is a worked example; the coverage
+ *     and cost figures that could not be defended were removed, not labelled.
+ *   - No client JavaScript. The diagrams are inline SVG with a text
+ *     alternative, so the page reads the same with images off or a screen
+ *     reader on — and prints cleanly for the people who still read on paper.
+ *   - The "AI alone won't change your business" section carries the message
+ *     of the Microsoft post it draws on in the post's own title, attributed
+ *     and linked, and nothing else from it verbatim. Everything else on the
+ *     page is our own words.
  */
 
 import { esc, attr, visMark, layout } from '../layout.js';
@@ -19,12 +30,46 @@ import { VIS, VIS_ORDER } from '../../bff/services/visibility.js';
 const CONTENTS = [
   ['in-brief', 'In brief'],
   ['the-problem', 'The problem we are solving'],
+  ['the-system', 'AI alone won’t change your business'],
   ['as-is-to-be', 'From four platforms to one front door'],
   ['what-changes', 'What changes'],
-  ['for-you', 'What it means for you'],
-  ['how-it-works', 'How it works'],
+  ['for-you', 'What it means for your people'],
+  ['how-it-works', 'How it is built'],
   ['why-safe', 'Why it is safe'],
   ['where-next', 'Where we are and what we need']
+];
+
+/**
+ * The message that frames the whole page, from Microsoft's Jay Parikh:
+ * "AI alone won't change your business. The system running it will."
+ * (The Official Microsoft Blog, 2 June 2026). We use the post's title as the
+ * message, attribute and link it, and set its three principles against what
+ * Cortex already does. Nothing else from the post is reproduced.
+ */
+const ARTICLE = {
+  title: 'AI alone won’t change your business. The system running it will.',
+  author: 'Jay Parikh, Executive Vice President, CoreAI, Microsoft',
+  date: '2 June 2026',
+  url: 'https://blogs.microsoft.com/blog/2026/06/02/ai-alone-wont-change-your-business-the-system-running-it-will/'
+};
+
+/** The post's three principles, each with the one line of what Cortex does about it. */
+const PRINCIPLES = [
+  {
+    title: 'One integrated system',
+    theirs: 'Not tools stitched together after the fact.',
+    ours: 'One front door over the catalogue, the gateway and the agent platform Defra already runs. Nothing new to buy.'
+  },
+  {
+    title: 'Secured and governed by design',
+    theirs: 'Governance native to the system, not bolted on later.',
+    ours: 'Entra decides what you see. An agent never reaches further than its builder. Every answer names its sources.'
+  },
+  {
+    title: 'Improves continuously, under human oversight',
+    theirs: 'The longer it runs, the more its value compounds.',
+    ours: 'Every published agent becomes a part the next team reuses. Every answered request shows owners the demand. A person releases every answer.'
+  }
 ];
 
 /** The as-is / to-be comparison, from the architecture review. */
@@ -132,8 +177,8 @@ const JOURNEY = [
     step: 'Automate',
     href: '/automate',
     label: 'Automate a task',
-    body: 'Automations that draft, with a person at the checkpoint. Everything starts propose-only.',
-    state: 'Next'
+    body: 'Recurring runs that draft, with a person at the checkpoint. Everything is propose-only: nothing writes anywhere in this phase.',
+    state: 'Working'
   }
 ];
 
@@ -164,10 +209,12 @@ const STATUS = [
   ['Marketplace, entry standard and map', 'Working'],
   ['Build an agent → assurance gates → test → publish → reappears in the marketplace', 'Working'],
   ['Ask, with sources and provenance, answered by a live agent', 'Working'],
+  ['Chat with any published agent, in its own window', 'Working'],
   ['Requests: draft inside the holder’s permissions, a person releases', 'Working'],
   ['Share your data and the access-request queue', 'Working'],
-  ['Automate a task', 'Next'],
-  ['Requests and conversations kept across restarts', 'Next'],
+  ['Automate a task — propose-only, a person at the checkpoint', 'Working'],
+  ['The data behind each product: scanned, indexed, readable by an agent', 'Working'],
+  ['Requests and conversations kept across restarts', 'Working'],
   ['Granting access in the catalogue when a request is approved', 'Next'],
   ['Repeat requests issued on a schedule', 'Next']
 ];
@@ -188,7 +235,7 @@ const ASK = [
   'Adopt one architecture principle: every platform exposes an API and an agent interface by default. Thin slice first, not the whole estate.',
   'Turn Copilot and Teams agents on for people outside the Cloud Centre of Excellence, so the front door has somewhere to lead.',
   'Name a sponsor for each of the three proving grounds and let the proof of concept carry their real requests.',
-  'Agree the next phase so requests and answers can be kept and the pattern can be reused beyond management information.'
+  'Fund the next phase as one system — the front door, the connections and the governance loop together — because AI alone will not change the business; the system running it will.'
 ];
 
 /* ---------------------------------------------------------- partials */
@@ -209,12 +256,12 @@ function hero() {
       Share what you build — without changing who is allowed to see what.
     </p>
     <div class="cortex-about-hero__actions">
-      <a class="govuk-button cortex-about-hero__button" href="/marketplace" role="button">Start now</a>
-      <a class="govuk-link cortex-about-hero__link" href="#how-it-works">How it works</a>
+      <a class="govuk-button cortex-about-hero__button" href="/marketplace" role="button">Open the marketplace</a>
+      <a class="govuk-link cortex-about-hero__link" href="#the-system">Why the system matters</a>
     </div>
     <p class="cortex-about-hero__note">
       A proof of concept by the Cloud Centre of Excellence with the Strategic Innovation Team.
-      Everything on it is live.
+      Everything on it is live: real catalogue, real gateway, real agents.
     </p>
   </div>
 </section>`;
@@ -238,7 +285,7 @@ function inBrief(ctx, { stats, coverage }) {
   return `
 <section id="in-brief" class="cortex-about-section">
   <h2 class="govuk-heading-l">In brief</h2>
-  <p class="govuk-body-l cortex-about-strap">The plumbing is in. Two gaps. One proof of concept.</p>
+  <p class="govuk-body-l cortex-about-strap">The plumbing is in. Two gaps. One proof of concept — and one principle for what comes next.</p>
   <ol class="cortex-about-three">
     <li>
       <span class="cortex-about-three__n" aria-hidden="true">1</span>
@@ -256,7 +303,7 @@ function inBrief(ctx, { stats, coverage }) {
       <span class="cortex-about-three__n" aria-hidden="true">3</span>
       <h3 class="govuk-heading-s">Every agent becomes a part</h3>
       <p class="govuk-body">Every agent anyone builds becomes a part everyone else can build with.
-      That is the difference between thousands of agents and a platform.</p>
+      That is the difference between thousands of agents and a platform — between AI alone and the system running it.</p>
     </li>
   </ol>
 
@@ -350,6 +397,47 @@ function problem() {
 </section>`;
 }
 
+/**
+ * The message that frames the ask, in a highlighted panel: the post's own
+ * title as the headline, two sentences of our own, the source, then the three
+ * principles in one line each with what Cortex does about them. Short on
+ * purpose — it is the part of the page a leader will remember.
+ */
+function theSystem() {
+  return `
+<section id="the-system" class="cortex-about-section cortex-about-system">
+  <div class="cortex-about-system__panel">
+    <span class="cortex-about-system__label">The message behind Cortex</span>
+    <h2 class="govuk-heading-l cortex-about-system__title">${esc(ARTICLE.title)}</h2>
+    <p class="govuk-body-l cortex-about-system__lede">
+      A capable model changes nothing by itself. What changes a business is the system around it —
+      how agents are built, grounded in the organisation’s own data, governed while they run, and
+      improved over time under human oversight. Defra already owns the parts of that system.
+      Cortex is what makes them behave as one.
+    </p>
+    <p class="cortex-about-system__source">
+      Microsoft’s argument, in the words of <a class="govuk-link cortex-about-system__link" href="${attr(ARTICLE.url)}" rel="noopener">${esc(ARTICLE.author)}</a>, The Official Microsoft Blog, ${esc(ARTICLE.date)}.
+    </p>
+  </div>
+
+  <ol class="cortex-about-principles">
+    ${PRINCIPLES.map(
+      (p, i) => `<li class="cortex-about-principle">
+        <span class="cortex-about-principle__n" aria-hidden="true">${i + 1}</span>
+        <h3 class="govuk-heading-s cortex-about-principle__title">${esc(p.title)}</h3>
+        <p class="govuk-body-s cortex-about-principle__theirs">${esc(p.theirs)}</p>
+        <p class="govuk-body-s cortex-about-principle__cortex"><strong>Cortex today:</strong> ${esc(p.ours)}</p>
+      </li>`
+    ).join('')}
+  </ol>
+
+  <p class="govuk-body cortex-about-system__close">
+    <strong>The decision in one line:</strong> the AI is bought and running. The investment is in the
+    system that runs it — and that is what compounds.
+  </p>
+</section>`;
+}
+
 function asIsToBe() {
   return `
 <section id="as-is-to-be" class="cortex-about-section">
@@ -410,8 +498,8 @@ function whatChanges() {
 function forYou() {
   return `
 <section id="for-you" class="cortex-about-section">
-  <h2 class="govuk-heading-l">What it means for you</h2>
-  <p class="govuk-body-l cortex-about-strap">Sign in with your normal account. What you can see is what you were already allowed to see.</p>
+  <h2 class="govuk-heading-l">What it means for your people</h2>
+  <p class="govuk-body-l cortex-about-strap">They sign in with their normal account. What they can see is what they were already allowed to see.</p>
   <ol class="cortex-about-journey">
     ${JOURNEY.map(
       (j, i) => `<li class="cortex-about-journey__step">
@@ -426,10 +514,10 @@ function forYou() {
     ).join('')}
   </ol>
 
-  <h3 class="govuk-heading-m">Every entry tells you where you stand</h3>
+  <h3 class="govuk-heading-m">Every entry tells them where they stand</h3>
   <p class="govuk-body">
-    The marketplace never shows a dead end. Each entry carries one of six states, worked out from your
-    group membership, and each state says what to do next.
+    The marketplace never shows a dead end. Each entry carries one of six states, worked out from group
+    membership, and each state says what to do next.
   </p>
   <dl class="cortex-about-states">
     ${VIS_ORDER.map(
@@ -547,7 +635,7 @@ function diagram() {
 function howItWorks() {
   return `
 <section id="how-it-works" class="cortex-about-section">
-  <h2 class="govuk-heading-l">How it works</h2>
+  <h2 class="govuk-heading-l">How it is built</h2>
   <p class="govuk-body-l cortex-about-strap">Cortex is not a new platform. It is the front door to three Defra already runs, and the connections between them.</p>
   ${diagram()}
 
@@ -572,15 +660,15 @@ function howItWorks() {
       <dl class="govuk-summary-list cortex-about-summary">
         <div class="govuk-summary-list__row">
           <dt class="govuk-summary-list__key">Reused</dt>
-          <dd class="govuk-summary-list__value">The data catalogue, the API gateway, the agent platform, the key vault, the container registry and monitoring — as they are, where they are.</dd>
+          <dd class="govuk-summary-list__value">The data catalogue, the API gateway, the agent platform, the container registry and monitoring — as they are, where they are.</dd>
         </div>
         <div class="govuk-summary-list__row">
           <dt class="govuk-summary-list__key">Created</dt>
-          <dd class="govuk-summary-list__value">Two small container apps and one identity of Cortex’s own, so its permissions can be reasoned about and revoked without touching anything else.</dd>
+          <dd class="govuk-summary-list__value">Two small container apps, a search index over the sample data, two storage accounts inside a network security perimeter, and one identity of Cortex’s own — so its permissions can be reasoned about and revoked without touching anything else.</dd>
         </div>
         <div class="govuk-summary-list__row">
           <dt class="govuk-summary-list__key">Everything is live</dt>
-          <dd class="govuk-summary-list__value">No demo mode, no sample data. Publish an agent and it is genuinely registered; retire a data product in the catalogue and it leaves the marketplace on the next refresh.</dd>
+          <dd class="govuk-summary-list__value">No demo mode. Publish an agent and it is genuinely registered; retire a data product in the catalogue and it leaves the marketplace on the next refresh. The only generated content is the synthetic sample data behind the data products, and it says so.</dd>
         </div>
         <div class="govuk-summary-list__row">
           <dt class="govuk-summary-list__key">Accessible by design</dt>
@@ -588,7 +676,7 @@ function howItWorks() {
         </div>
         <div class="govuk-summary-list__row">
           <dt class="govuk-summary-list__key">Re-runnable</dt>
-          <dd class="govuk-summary-list__value">One command deploys it and can be run again safely. Nothing only works the first time.</dd>
+          <dd class="govuk-summary-list__value">One command deploys it and can be run again safely. Nothing only works the first time — and the deployment says honestly when something is not working.</dd>
         </div>
       </dl>
     </div>
@@ -614,7 +702,9 @@ function whySafe() {
     <p class="govuk-body govuk-!-margin-bottom-0">
       Three rules are enforced in the service and tested, not just described: an agent can never reach
       further than the person who built it; a request is drafted inside the holder’s permissions, never
-      the requester’s; and nothing reaches a requester until a person releases it.
+      the requester’s; and nothing reaches a requester until a person releases it. Every tool an agent
+      calls is approved by Cortex on the person’s behalf and listed under the answer — visible and
+      attributable, which is what governance means in practice.
     </p>
   </div>
 </section>`;
@@ -638,9 +728,9 @@ function whereNext() {
         ).join('')}
       </dl>
       <p class="govuk-body-s">
-        Backed by an automated test suite, and exercised against the real platforms in live runs. A small
-        number of paths are written to the documented shapes but not yet run live, and the service
-        status on the <a class="govuk-link" href="/help">Help page</a> shows what is reachable right now.
+        Backed by an automated test suite, and exercised against the real platforms in live runs. The
+        service status on the <a class="govuk-link" href="/help">Help page</a> shows what is reachable
+        right now.
       </p>
     </div>
     <div class="govuk-grid-column-one-half">
@@ -689,6 +779,7 @@ ${hero()}
   <div class="govuk-grid-column-three-quarters cortex-about-body">
     ${inBrief(ctx, { stats, coverage })}
     ${problem()}
+    ${theSystem()}
     ${asIsToBe()}
     ${whatChanges()}
     ${forYou()}
