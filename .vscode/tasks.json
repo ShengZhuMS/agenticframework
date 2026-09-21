@@ -23,7 +23,7 @@
     },
     {
       "label": "Cortex: Deploy to Azure",
-      "detail": "Full deployment — provision, deploy, onboard secrets, sign-in, Purview access, bootstrap, verify. Safe to run repeatedly.",
+      "detail": "Full deployment \u2014 provision, deploy, onboard secrets, sign-in, Purview access, bootstrap, verify. Safe to run repeatedly.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -85,7 +85,7 @@
     },
     {
       "label": "Cortex: Grant Purview access",
-      "detail": "Give the Cortex identity its Unified Catalog roles. Fixes 'Purview UNAVAILABLE — 403'. Idempotent.",
+      "detail": "Give the Cortex identity its Unified Catalog roles. Fixes 'Purview UNAVAILABLE \u2014 403'. Idempotent.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -104,7 +104,7 @@
     },
     {
       "label": "Cortex: Deploy without Key Vault",
-      "detail": "Force direct configuration — for a vault with public network access disabled.",
+      "detail": "Force direct configuration \u2014 for a vault with public network access disabled.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -270,6 +270,101 @@
         "-NoExit",
         "-Command",
         ". ./scripts/Set-CortexEnv.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Bootstrap \u2014 Foundry connections for MCP servers",
+      "detail": "One Foundry project connection per API Management MCP server, carrying the gateway key. Fixes an agent that cannot sign in to its tools.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        ". ./scripts/Set-CortexEnv.ps1 -Quiet; node scripts/bootstrap.js --only=connections"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Bootstrap \u2014 sample data, Data Map scan, attach assets",
+      "detail": "Uploads the synthetic sample files, registers and scans them in the Purview Data Map (3\u201310 min), attaches the assets to the data products.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        ". ./scripts/Set-CortexEnv.ps1 -Quiet; node scripts/bootstrap.js --only=data"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Bootstrap \u2014 attach scanned assets only",
+      "detail": "Run after a scan that was still running when bootstrap finished.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        ". ./scripts/Set-CortexEnv.ps1 -Quiet; node scripts/bootstrap.js --only=link"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Bootstrap \u2014 AI Search indexes",
+      "detail": "One Azure AI Search index per data product, built from the sample files, plus the Foundry connection that lets agents read them.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        ". ./scripts/Set-CortexEnv.ps1 -Quiet; node scripts/bootstrap.js --only=search"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Sample data \u2014 preview",
+      "detail": "Show what the synthetic data generator produces, without touching Azure.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "node scripts/sample-data.js --list"
       ],
       "problemMatcher": [],
       "presentation": {

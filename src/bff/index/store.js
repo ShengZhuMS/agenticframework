@@ -20,13 +20,30 @@ import config from '../config.js';
 import { createPurviewAdapter, resolveDomainId } from '../adapters/purview.js';
 import { createApimAdapter } from '../adapters/apim.js';
 import { createFoundryAdapter } from '../adapters/foundry.js';
+import { createSearchAdapter } from '../adapters/search.js';
+import { createStorageAdapter } from '../adapters/storage.js';
+import { createDataMapAdapter } from '../adapters/datamap.js';
+import { collection } from '../state/store.js';
+
+/**
+ * What Cortex knows about an agent that Foundry does not: what it was built
+ * from, its gates, whether it is published and where. Foundry holds the
+ * agent; this holds the record. Persisted (state/store.js) so a restart does
+ * not turn every agent back into "An agent built in Cortex" with no gates.
+ */
+const AGENT_OVERLAY_FIELDS = [
+  'name', 'cluster', 'desc', 'owner', 'ownerState', 'sens', 'access', 'allowedGroups',
+  'licence', 'deps', 'flags', 'limits', '_endpoints', '_agent', '_source', '_illustrative'
+];
+
+const agentRecords = () => collection('agents', {});
+const accessRequestsCol = () => collection('access-requests', []);
+const gatewayRequestsCol = () => collection('gateway-requests', []);
 
 class CortexIndex {
   constructor() {
     this.entries = new Map();
     this.domains = [];
-    this.accessRequests = [];
-    this.gatewayRequests = [];
     this.lastRefresh = null;
     this.lastError = null;
     this.sourceErrors = {};
@@ -35,6 +52,29 @@ class CortexIndex {
     this.purview = createPurviewAdapter();
     this.apim = createApimAdapter();
     this.foundry = createFoundryAdapter();
+    this.search = createSearchAdapter();
+    this.storage = createStorageAdapter();
+    this.datamap = createDataMapAdapter();
+  }
+
+  /** Access requests raised against entries. Persisted; mutate then call saveRequests(). */
+  get accessRequests() {
+    return accessRequestsCol().data;
+  }
+
+  /** Requests to connect a new source through the gateway. Persisted. */
+  get gatewayRequests() {
+    return gatewayRequestsCol().data;
+  }
+
+  saveRequests() {
+    accessRequestsCol().save();
+    gatewayRequestsCol().save();
+  }
+
+  /** The persisted Cortex record for an agent id, or null. */
+  agentRecord(id) {
+    return agentRecords().data[id] || null;
   }
 
   async init() {
@@ -144,7 +184,9 @@ class CortexIndex {
         // Cortex's own Ask agent is plumbing, not a part anyone builds with.
         if (a.name === config.ask.agentName || a.name.startsWith('cortex-ask')) continue;
         const id = slug(a.name);
-        const existing = this.entries.get(id);
+        // What is in memory wins; what was persisted before a restart is
+        // next; only a never-seen agent gets the generic defaults.
+        const existing = this.entries.get(id) || this.agentRecord(id);
         this.upsert({
           ...(existing || {}),
           id,
@@ -222,7 +264,27 @@ class CortexIndex {
     const merged = existing ? { ...existing, ...prune(entry) } : this.normalise(entry);
     merged.cluster = resolveDomainId(merged.cluster, this.domains);
     this.entries.set(entry.id, merged);
+    if (merged.cat === 'Agent' && merged._agent) this._persistAgent(merged);
     return merged;
+  }
+
+  _persistAgent(entry) {
+    const rec = {};
+    for (const k of AGENT_OVERLAY_FIELDS) if (entry[k] !== undefined) rec[k] = entry[k];
+    rec.id = entry.id;
+    rec.cat = 'Agent';
+    const col = agentRecords();
+    col.data[entry.id] = rec;
+    col.save();
+  }
+
+  /** Remove an agent's persisted record (when it is deleted in Foundry). */
+  forgetAgent(id) {
+    const col = agentRecords();
+    if (col.data[id]) {
+      delete col.data[id];
+      col.save();
+    }
   }
 
   all() {
@@ -327,6 +389,7 @@ class CortexIndex {
       ...req
     };
     this.gatewayRequests.push(record);
+    this.saveRequests();
     return record;
   }
 
@@ -338,6 +401,7 @@ class CortexIndex {
       ...req
     };
     this.accessRequests.push(record);
+    this.saveRequests();
     return record;
   }
 

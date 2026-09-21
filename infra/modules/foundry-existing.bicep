@@ -46,6 +46,11 @@ var effectiveDeploymentName = empty(modelDeploymentName) ? modelName : modelDepl
 var foundryUser = '53ca6127-db72-4b80-b1b0-d745d6d5456d'
 // Foundry Agent Consumer — least privilege for invoking agents.
 var foundryAgentConsumer = 'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'
+// Foundry Project Manager — Microsoft.CognitiveServices/accounts/projects/*,
+// which is what lets Cortex create PROJECT CONNECTIONS itself: one per API
+// Management MCP server carrying the gateway key (the fix for the agent →
+// tool 401) and one to Azure AI Search. Nothing wider than the project.
+var foundryProjectManager = 'eadc314b-1a2d-4efa-be10-5d325db5065e'
 
 resource account 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = {
   name: accountName
@@ -96,7 +101,21 @@ resource consumerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
+resource projectManagerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(account.id, principalId, foundryProjectManager)
+  scope: account
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', foundryProjectManager)
+    principalId: principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 output accountName string = account.name
+// The account's own identity — it is what the azure_ai_search tool signs in
+// to AI Search with, so search.bicep grants it the reader roles. Empty when
+// the account has no system-assigned identity; the deploy script says so.
+output accountPrincipalId string = account.?identity.?principalId ?? ''
 output projectName string = projectName
 output projectEndpoint string = 'https://${account.name}.services.ai.azure.com/api/projects/${projectName}'
 output modelDeploymentName string = effectiveDeploymentName

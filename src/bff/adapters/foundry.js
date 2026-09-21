@@ -144,7 +144,7 @@ class LiveFoundry {
           kind: 'prompt',
           model: model || this.cfg.model,
           instructions,
-          tools: tools.filter((t) => t.type === 'mcp' || t.type === 'openapi' || t.type === 'function')
+          tools: tools.filter((t) => ['mcp', 'openapi', 'function', 'azure_ai_search', 'file_search'].includes(t.type))
         }
       }
     });
@@ -169,20 +169,46 @@ class LiveFoundry {
    * the history server-side, so a follow-up carries the whole thread without
    * this app storing any of it.
    */
-  async respond({ agentName, input, conversationId, previousResponseId }) {
-    const body = {
-      input,
-      agent_reference: { name: agentName, type: 'agent_reference' }
-    };
+  async respond({ agentName, input, conversationId, previousResponseId, maxApprovalRounds = this.cfg.maxApprovalRounds ?? 6 }) {
+    const agentRef = { name: agentName, type: 'agent_reference' };
+    const body = { input, agent_reference: agentRef };
     if (conversationId) body.conversation = conversationId;
     if (previousResponseId) body.previous_response_id = previousResponseId;
-    const res = await this._fetch('/openai/v1/responses', {
+
+    let res = await this._post(body);
+    const toolCalls = [];
+    let rounds = 0;
+
+    /**
+     * THE APPROVAL LOOP. Every MCP tool on a Cortex agent is registered with
+     * require_approval 'always', so a tool call comes back as an
+     * mcp_approval_request instead of running. Cortex approves it here, on
+     * the server, records what was called with what arguments, and continues
+     * the same response. The record is shown on the answer ("Tools this
+     * answer used") — the point of the gate is that the call is visible and
+     * attributable, not that a person clicks a button mid-conversation.
+     */
+    for (;;) {
+      collectToolCalls(res, toolCalls);
+      const approvals = (res?.output || []).filter((i) => i?.type === 'mcp_approval_request');
+      if (!approvals.length || rounds >= maxApprovalRounds) break;
+      rounds += 1;
+      res = await this._post({
+        agent_reference: agentRef,
+        previous_response_id: res.id,
+        input: approvals.map((a) => ({ type: 'mcp_approval_response', approval_request_id: a.id, approve: true }))
+      });
+    }
+    return this._toAnswer(res, { toolCalls, approvalRounds: rounds });
+  }
+
+  _post(body) {
+    return this._fetch('/openai/v1/responses', {
       method: 'POST',
       body,
       apiVersion: false,
       timeoutMs: this.cfg.responseTimeoutMs || 90_000
     });
-    return this._toAnswer(res);
   }
 
   /**
@@ -229,7 +255,7 @@ class LiveFoundry {
     }
   }
 
-  _toAnswer(res) {
+  _toAnswer(res, { toolCalls = [], approvalRounds = 0 } = {}) {
     const items = res?.output || [];
     // Only message items carry the answer; tool-call items sit alongside them.
     const messages = items.filter((i) => !i?.type || i.type === 'message');
@@ -239,15 +265,23 @@ class LiveFoundry {
         .flatMap((i) => (i?.content || []).map((c) => c?.text).filter(Boolean))
         .join('\n');
     const annotations = messages.flatMap((i) => (i?.content || []).flatMap((c) => c?.annotations || []));
+    const pendingApprovals = items.filter((i) => i?.type === 'mcp_approval_request').length;
+    const failedTools = toolCalls.filter((t) => t.error).map((t) => `${t.server}: ${t.tool} — ${t.error}`);
     return {
       text,
       responseId: res?.id || null,
       model: res?.model || null,
-      sources: annotations
-        .filter((a) => a.type === 'url_citation')
-        .map((a) => ({ name: a.title || a.url, url: a.url })),
+      sources: dedupe(
+        annotations
+          .filter((a) => a.type === 'url_citation' || a.type === 'file_citation')
+          .map((a) => ({ name: a.title || a.filename || a.url || 'Cited document', url: a.url || null }))
+      ),
+      toolCalls,
+      approvalRounds,
+      pendingApprovals,
       confidence: null,
-      couldNotReach: []
+      couldNotReach: failedTools,
+      status: res?.status || null
     };
   }
 
@@ -257,6 +291,37 @@ class LiveFoundry {
     await this.listAgents();
     return { ok: true, mode: 'live', model: this.cfg.model, latencyMs: Date.now() - started };
   }
+}
+
+/** Pull every tool interaction out of a response's output items. */
+function collectToolCalls(res, into) {
+  for (const i of res?.output || []) {
+    if (!i || typeof i !== 'object') continue;
+    if (i.type === 'mcp_call' || i.type === 'mcp_approval_request') {
+      into.push({
+        kind: i.type === 'mcp_call' ? 'call' : 'approval',
+        server: i.server_label || null,
+        tool: i.name || null,
+        arguments: typeof i.arguments === 'string' ? i.arguments.slice(0, 400) : JSON.stringify(i.arguments || {}).slice(0, 400),
+        output: i.type === 'mcp_call' ? String(i.output ?? '').slice(0, 600) : null,
+        error: i.error ? String(i.error?.message || i.error).slice(0, 300) : null
+      });
+    } else if (i.type === 'azure_ai_search_call' || /search_call$/.test(i.type || '')) {
+      into.push({ kind: 'call', server: 'azure_ai_search', tool: 'search', arguments: JSON.stringify(i.queries || i.arguments || {}).slice(0, 400), output: null, error: null });
+    } else if (i.type === 'mcp_list_tools') {
+      into.push({ kind: 'list', server: i.server_label || null, tool: null, arguments: `${(i.tools || []).length} tools listed`, output: null, error: i.error ? String(i.error?.message || i.error).slice(0, 300) : null });
+    }
+  }
+}
+
+function dedupe(sources) {
+  const seen = new Set();
+  return sources.filter((s) => {
+    const k = `${s.name}|${s.url}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 export function createFoundryAdapter() {

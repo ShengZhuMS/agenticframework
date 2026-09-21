@@ -181,8 +181,35 @@ param mcpImageName string = ''
 @description('Minimum replicas for the MCP server. 1 avoids a cold start on the first agent call mid-demo.')
 param mcpMinReplicas int = 1
 
-@description('Maximum replicas for cortex-web. Keep at 1 while application state is held in memory.')
+@description('Maximum replicas for cortex-web. Keep at 1: application state is a JSON store on one Azure Files share, written by one replica.')
 param webMaxReplicas int = 1
+
+// ------------------------------------------------- data, search and state
+//
+// New in round 4. All three are created in the Cortex resource group and are
+// independent of the shared services above, so an existing deployment can
+// take them on with a re-provision and lose nothing.
+
+@description('Create the sample-data storage account (ADLS Gen2) and the state share. False keeps a deployment without data behind its products.')
+param createData bool = true
+
+@description('Create an Azure AI Search service for the per-product indexes. False disables data grounding; agents describe products but cannot read rows.')
+param createSearch bool = true
+
+@description('AI Search tier. basic holds 15 indexes — enough for the 14 sample products. standard for more.')
+@allowed(['free', 'basic', 'standard'])
+param searchSku string = 'basic'
+
+@description('Semantic ranker plan on the search service. disabled removes a regional failure mode; the agent tool uses keyword search by default anyway.')
+@allowed(['disabled', 'free', 'standard'])
+param searchSemantic string = 'disabled'
+
+@description('Object id of the person (or pipeline identity) deploying, so bootstrap can upload the sample files. Deploy-Cortex.ps1 fills it in.')
+param deployerPrincipalId string = ''
+
+@description('Who may open a chat window with an agent: all-staff (this phase) or visibility (Marketplace rules).')
+@allowed(['all-staff', 'visibility'])
+param chatPolicy string = 'all-staff'
 
 // ------------------------------------------------------------------ derived
 
@@ -204,6 +231,12 @@ var effectiveKeyVaultName = createKeyVault ? take('kv${replace(prefix, '-', '')}
 var effectiveRegistryName = createRegistry ? 'cr${replace(prefix, '-', '')}${uniq}' : registryName
 
 var effectiveModelDeployment = empty(modelDeploymentName) ? modelName : modelDeploymentName
+
+// Storage account names: 3–24 lower-case letters and digits, globally unique.
+var dataAccountName = take('st${replace(prefix, '-', '')}data${uniq}', 24)
+var stateAccountName = take('st${replace(prefix, '-', '')}state${uniq}', 24)
+var searchServiceName = 'srch-${prefix}-${uniq}'
+var searchEndpoint = createSearch ? 'https://${searchServiceName}.search.windows.net' : ''
 
 // ------------------------------------------------------- resource group
 
@@ -387,6 +420,40 @@ module keyVaultExisting 'modules/keyvault-existing.bicep' = if (!createKeyVault)
   }
 }
 
+// -------------------------------------------------- data, search and state
+//
+// Ordering: search first (its identity needs blob access), then data (grants
+// the Purview, search and Cortex identities on the new account).
+
+module search 'modules/search.bicep' = if (createSearch) {
+  name: 'search'
+  scope: cortexRg
+  params: {
+    name: searchServiceName
+    location: location
+    tags: tags
+    sku: searchSku
+    semanticSearch: searchSemantic
+    cortexPrincipalId: identity.outputs.principalId
+    foundryPrincipalId: createFoundry ? foundryNew.outputs.accountPrincipalId : foundryExisting.outputs.accountPrincipalId
+  }
+}
+
+module data 'modules/data.bicep' = if (createData) {
+  name: 'data'
+  scope: cortexRg
+  params: {
+    location: location
+    tags: tags
+    dataAccountName: dataAccountName
+    stateAccountName: stateAccountName
+    cortexPrincipalId: identity.outputs.principalId
+    purviewPrincipalId: createPurview ? purviewNew.outputs.principalId : purviewExisting.outputs.principalId
+    searchPrincipalId: createSearch ? search.outputs.principalId : ''
+    deployerPrincipalId: deployerPrincipalId
+  }
+}
+
 // --------------------------------------------------------- container apps
 // Always created. This is the front door and it does not exist yet.
 
@@ -424,6 +491,22 @@ module containerApps 'modules/containerapps.bicep' = {
     entraClientId: entraClientId
     groupNames: groupNames
     defaultGroups: defaultGroups
+    chatPolicy: chatPolicy
+
+    // Round 4: where the Foundry project lives in ARM (for project
+    // connections), the search service, the sample-data account and the
+    // state share. Empty values switch the feature off in the app.
+    foundryAccountName: effectiveFoundryAccount
+    foundryProjectName: effectiveFoundryProject
+    foundryResourceGroup: effectiveFoundryRg
+    purviewAccountName: effectivePurviewName
+    searchEndpoint: searchEndpoint
+    searchServiceName: createSearch ? searchServiceName : ''
+    dataStorageAccount: createData ? data.outputs.dataAccountName : ''
+    dataContainer: createData ? data.outputs.dataContainerName : 'products'
+    dataResourceGroup: cortexResourceGroup
+    stateAccountName: createData ? data.outputs.stateAccountName : ''
+    stateShareName: createData ? data.outputs.stateShareName : ''
 
     // The APIM subscription key and the App Insights connection string are
     // deliberately NOT passed. Deploy-Cortex.ps1 writes them onto the app after
@@ -493,6 +576,23 @@ output FOUNDRY_MODEL_NAME string = modelName
 output FOUNDRY_MODEL_VERSION string = modelVersion
 output FOUNDRY_MODEL_DEPLOYMENT string = effectiveModelDeployment
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = createRegistry ? registryNew.outputs.loginServer : registryExisting.outputs.loginServer
+
+// Round 4 — read by Set-CortexEnv.ps1 so bootstrap can reach the same places the app does.
+output FOUNDRY_ACCOUNT_RESOURCE_GROUP string = effectiveFoundryRg
+output FOUNDRY_PROJECT_NAME string = effectiveFoundryProject
+output FOUNDRY_ACCOUNT_PRINCIPAL_ID string = createFoundry ? foundryNew.outputs.accountPrincipalId : foundryExisting.outputs.accountPrincipalId
+output PURVIEW_ACCOUNT_PRINCIPAL_ID string = createPurview ? purviewNew.outputs.principalId : purviewExisting.outputs.principalId
+output SEARCH_SERVICE_NAME string = createSearch ? searchServiceName : ''
+output SEARCH_ENDPOINT string = searchEndpoint
+output DATA_STORAGE_ACCOUNT string = createData ? data.outputs.dataAccountName : ''
+output DATA_CONTAINER string = createData ? data.outputs.dataContainerName : 'products'
+output STATE_STORAGE_ACCOUNT string = createData ? data.outputs.stateAccountName : ''
+output CORTEX_CHAT_POLICY string = chatPolicy
+
+output CREATED_THIS_ROUND array = concat(
+  createSearch ? ['AI Search: ${searchServiceName} (${searchSku})'] : [],
+  createData ? ['Storage: ${dataAccountName} (sample data, ADLS Gen2), ${stateAccountName} (state share)'] : []
+)
 
 output REUSED array = concat(
   createApim ? [] : ['API Management: ${apimName}'],

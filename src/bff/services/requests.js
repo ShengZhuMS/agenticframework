@@ -24,14 +24,34 @@
 
 import index from '../index/store.js';
 import { visibilityFor, canReachUnderlying } from './visibility.js';
+import { collection } from '../state/store.js';
 
 /**
- * In-memory store. Requests, methods and threads do not survive a restart —
- * this is the first item on the next-work list in docs/HANDOVER.md.
+ * Persisted through state/store.js — one JSON file on the mounted share in
+ * Azure, memory locally. Exposed as Map-shaped views so the lifecycle code
+ * reads naturally and every mutation is saved.
  */
-const requests = new Map();
-const methods = new Map();
-let seq = 0;
+const store = () => collection('requests', { seq: 0, requests: {}, methods: {} });
+const mapView = (key) => ({
+  get: (k) => store().data[key][k],
+  has: (k) => Boolean(store().data[key][k]),
+  set: (k, v) => {
+    store().data[key][k] = v;
+    store().save();
+  },
+  values: () => Object.values(store().data[key]),
+  get size() {
+    return Object.keys(store().data[key]).length;
+  },
+  clear: () => {
+    const d = store().data[key];
+    for (const k of Object.keys(d)) delete d[k];
+  }
+});
+const requests = mapView('requests');
+const methods = mapView('methods');
+/** Save after an in-place change to a record already in the store. */
+const touch = () => store().save();
 
 export const STATUS = {
   raised: { label: 'Raised', tone: 'blue' },
@@ -76,8 +96,8 @@ export function proposeHolders(question) {
 
 /** Raise a request. */
 export function raise({ question, purpose, cadence, requester, holderEntryId }) {
-  seq += 1;
-  const ref = `REQ-${String(seq).padStart(4, '0')}`;
+  store().data.seq += 1;
+  const ref = `REQ-${String(store().data.seq).padStart(4, '0')}`;
   const entry = holderEntryId ? index.get(holderEntryId) : null;
 
   const record = {
@@ -166,6 +186,7 @@ export async function draft(ref, holder, { foundry = index.foundry } = {}) {
   };
   r.status = 'drafted';
   r.history.push({ at: new Date().toISOString(), what: 'Agent drafted an answer', by: 'Cortex' });
+  touch();
   return r;
 }
 
@@ -207,6 +228,7 @@ export function release(ref, holder, { answer, caveat, approveMethod }) {
       by: holder.name
     });
   }
+  touch();
   return r;
 }
 
@@ -216,6 +238,7 @@ export function decline(ref, holder, { reason, offered }) {
   r.declined = { reason, offered: offered || null, declinedBy: holder.name, at: new Date().toISOString() };
   r.status = 'declined';
   r.history.push({ at: new Date().toISOString(), what: `Declined: ${reason}`, by: holder.name });
+  touch();
   return r;
 }
 
@@ -225,7 +248,7 @@ export function get(ref) {
 
 /** Requests this person raised. */
 export function raisedBy(user) {
-  return [...requests.values()]
+  return requests.values()
     .filter((r) => r.requesterEmail === user.email || r.requester === user.name)
     .sort((a, b) => new Date(b.raisedAt) - new Date(a.raisedAt));
 }
@@ -237,7 +260,7 @@ export function raisedBy(user) {
  * Membership decides it, not a role stored in this app.
  */
 export function waitingOn(user) {
-  return [...requests.values()]
+  return requests.values()
     .filter((r) => r.status === 'raised' || r.status === 'drafted')
     .filter((r) => {
       const entry = r.holderEntryId ? index.get(r.holderEntryId) : null;
@@ -248,15 +271,15 @@ export function waitingOn(user) {
 }
 
 export function approvedMethods() {
-  return [...methods.values()];
+  return methods.values();
 }
 
 export function allRequests() {
-  return [...requests.values()];
+  return requests.values();
 }
 
 export function clearAll() {
   requests.clear();
   methods.clear();
-  seq = 0;
+  store().data.seq = 0;
 }

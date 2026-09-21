@@ -9,32 +9,16 @@ param accountName string
 param projectName string
 param location string
 param tags object
+param modelName string
+param modelCapacity int
 param principalId string
-
-param modelName string = 'gpt-5.4-mini'
-
-// See foundry-existing.bicep for why this is never left to ARM's default.
-@description('Model version, pinned. An unpinned version resolves to ARM\'s current default, which moves and eventually lands on a deprecated build.')
-param modelVersion string = '2026-03-17'
-
-@description('Deployment name, i.e. what the application asks for at inference time. Defaults to the model name.')
-param modelDeploymentName string = ''
-
-@allowed(['GlobalStandard', 'Standard', 'DataZoneStandard'])
-param modelSkuName string = 'GlobalStandard'
-
-param modelCapacity int = 30
-param deployModel bool = true
-
-@allowed(['OnceCurrentVersionExpired', 'OnceNewDefaultVersionAvailable', 'NoAutoUpgrade'])
-param modelVersionUpgradeOption string = 'OnceCurrentVersionExpired'
-
-var effectiveDeploymentName = empty(modelDeploymentName) ? modelName : modelDeploymentName
 
 // Role definition IDs. Foundry User was previously named Azure AI User —
 // the names changed, the IDs did not.
 var foundryUser = '53ca6127-db72-4b80-b1b0-d745d6d5456d'
 var foundryAgentConsumer = 'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'
+// Lets Cortex create project connections (MCP servers, AI Search). See foundry-existing.bicep.
+var foundryProjectManager = 'eadc314b-1a2d-4efa-be10-5d325db5065e'
 
 resource account 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' = {
   name: accountName
@@ -63,20 +47,18 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-previ
   }
 }
 
-resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = if (deployModel) {
+resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = {
   parent: account
-  name: effectiveDeploymentName
+  name: modelName
   sku: {
-    name: modelSkuName
+    name: 'GlobalStandard'
     capacity: modelCapacity
   }
   properties: {
     model: {
       format: 'OpenAI'
       name: modelName
-      version: modelVersion
     }
-    versionUpgradeOption: modelVersionUpgradeOption
   }
 }
 
@@ -102,10 +84,19 @@ resource consumerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
+resource projectManagerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(account.id, principalId, foundryProjectManager)
+  scope: account
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', foundryProjectManager)
+    principalId: principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 output accountName string = account.name
 output projectName string = project.name
 // The canonical shape: https://<resource>.services.ai.azure.com/api/projects/<project>
 output projectEndpoint string = 'https://${account.name}.services.ai.azure.com/api/projects/${project.name}'
 output projectPrincipalId string = project.identity.principalId
 output accountPrincipalId string = account.identity.principalId
-output modelDeploymentName string = effectiveDeploymentName

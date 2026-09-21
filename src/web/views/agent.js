@@ -9,10 +9,38 @@
 import { esc, attr, layout } from '../layout.js';
 import { gateTable } from './build.js';
 
+function toolCallList(calls) {
+  const rows = (calls || []).filter((c) => c.kind !== 'list');
+  if (!rows.length) return '';
+  return `<h3 class="govuk-heading-s">Tools this answer used</h3>
+  <ul class="govuk-list govuk-list--bullet">
+    ${rows
+      .map(
+        (c) => `<li><strong>${esc(c.server || 'tool')}</strong>${c.tool ? ` › ${esc(c.tool)}` : ''}
+          ${c.arguments && c.arguments !== '{}' ? `<span class="cortex-src">with ${esc(c.arguments)}</span>` : ''}
+          ${c.error ? `<span class="cortex-src" style="color:#d4351c">failed: ${esc(c.error)}</span>` : ''}</li>`
+      )
+      .join('')}
+  </ul>
+  <p class="govuk-hint">Every tool call was approved by Cortex on your behalf and recorded here. That is the approval gate: visible and attributable, not a click mid-answer.</p>`;
+}
+
+/** A failure, said plainly, with the raw text folded away for whoever debugs it. */
+function failurePanel(error) {
+  return `<div class="govuk-warning-text">
+    <span class="govuk-warning-text__icon" aria-hidden="true">!</span>
+    <strong class="govuk-warning-text__text"><span class="govuk-visually-hidden">Warning</span>${esc(error.heading)}</strong>
+  </div>
+  <p class="govuk-body">${esc(error.message)}</p>
+  <details class="govuk-details"><summary class="govuk-details__summary"><span class="govuk-details__summary-text">Technical detail</span></summary>
+    <div class="govuk-details__text"><code style="font-size:13px;word-break:break-all">${esc(error.detail)}</code></div></details>`;
+}
+
 function provenancePanel(answer) {
   if (!answer) return '';
   return `
 <div class="govuk-inset-text">
+  ${toolCallList(answer.toolCalls)}
   <h3 class="govuk-heading-s">Where this answer came from</h3>
   ${
     answer.sources?.length
@@ -51,11 +79,19 @@ function provenancePanel(answer) {
 </div>`;
 }
 
-export function agentPage(ctx, { entry, gates, knowledge, tools, answer, question, published }) {
+export function agentPage(ctx, { entry, gates, knowledge, tools, answer, question, published, rebuilt }) {
   const a = entry._agent || {};
   const def = a.definition || {};
 
   const content = `
+${
+  rebuilt
+    ? `<div class="govuk-notification-banner govuk-notification-banner--success" role="alert" aria-labelledby="rb-t">
+         <div class="govuk-notification-banner__header"><p class="govuk-notification-banner__title" id="rb-t">Tools rebuilt</p></div>
+         <div class="govuk-notification-banner__content"><p class="govuk-body govuk-!-margin-bottom-0">Version ${esc(a.version || '')} in Foundry, with ${esc((a.connections || []).length)} tool connection${(a.connections || []).length === 1 ? '' : 's'}${a.grounding?.grounded?.length ? ` and ${esc(a.grounding.grounded.length)} data index${a.grounding.grounded.length === 1 ? '' : 'es'}` : ''}. Ask it something.</p></div>
+       </div>`
+    : ''
+}
 ${
   published
     ? `<div class="govuk-notification-banner govuk-notification-banner--success" role="alert" aria-labelledby="pub-t">
@@ -107,14 +143,21 @@ ${
     </form>
 
     ${
-      answer
-        ? `<h3 class="govuk-heading-s">Answer</h3>
+      answer?.error
+        ? failurePanel(answer.error)
+        : answer
+          ? `<h3 class="govuk-heading-s">Answer</h3>
            <div style="border-left:5px solid #b1b4b6;padding-left:15px;margin-bottom:20px">
              <p class="govuk-body" style="white-space:pre-wrap">${esc(answer.text)}</p>
            </div>
            ${provenancePanel(answer)}`
-        : ''
+          : ''
     }
+
+    <p class="govuk-body">
+      <a class="govuk-button govuk-button--secondary" href="/agent/${attr(entry.id)}/chat" target="_blank" rel="opener" role="button">Open a chat window</a>
+      <span class="cortex-src" style="margin-left:8px">A conversation with follow-ups, in its own window. Every member of staff can open one.</span>
+    </p>
 
     <h2 class="govuk-heading-m">Assurance gates</h2>
     <p class="govuk-body">
@@ -210,6 +253,31 @@ ${
                It will be registered in API Management as an MCP server and a REST API.
              </p>`
       }
+    </div>
+
+    <div class="cortex-filters">
+      <h2 class="govuk-heading-m">How it reaches its tools</h2>
+      ${
+        (a.connections || []).length
+          ? `<p class="govuk-body-s">Each API Management tool has a Foundry project connection carrying the gateway key:</p>
+             <ul class="govuk-list govuk-body-s">${a.connections.map((c) => `<li>${esc(c.entry)} <span class="cortex-src">${esc(c.connection)}</span></li>`).join('')}</ul>`
+          : '<p class="govuk-body-s">No API Management tools attached, or this agent was built before tool connections existed.</p>'
+      }
+      ${
+        a.grounding
+          ? `<p class="govuk-body-s govuk-!-margin-bottom-1"><strong>Data it can query:</strong> ${
+              a.grounding.grounded?.length
+                ? a.grounding.grounded.map((g) => `${esc(g.entry)} <span class="cortex-src">${esc(g.documents)} rows indexed</span>`).join(', ')
+                : 'none — no index yet'
+            }</p>
+            ${a.grounding.describedOnly?.length ? `<p class="govuk-body-s"><strong>Described only:</strong> ${a.grounding.describedOnly.map(esc).join(', ')} <span class="cortex-src">build the index from the data product page, then rebuild here</span></p>` : ''}`
+          : ''
+      }
+      ${(a.warnings || []).length ? `<p class="govuk-body-s" style="color:#d4351c">${a.warnings.map(esc).join('<br>')}</p>` : ''}
+      <form method="post" action="/agent/${attr(entry.id)}/rebuild">
+        <button class="govuk-button govuk-button--secondary govuk-!-margin-bottom-1" type="submit">Rebuild tools</button>
+      </form>
+      <p class="govuk-body-s govuk-!-margin-bottom-0">Makes a new version in Foundry with fresh connections and any indexes built since. Fixes "could not sign in to one of its tools".</p>
     </div>
 
     <p class="govuk-body-s"><a class="govuk-link" href="/build">Build another</a></p>

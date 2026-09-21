@@ -173,27 +173,94 @@ class LivePurview {
    * separately. Two round-trips per entry page, so cache the result.
    */
   async getAssets(dataProductId) {
+    const ids = await this.listAssetIds(dataProductId);
+    if (!ids.length) return [];
+    return this.queryDataAssets({ ids });
+  }
+
+  /** The Unified Catalog asset ids attached to a data product. */
+  async listAssetIds(dataProductId) {
     const rel = await this._fetch(
       `/datagovernance/catalog/dataProducts/${dataProductId}/relationships`,
       { query: { entityType: 'DATAASSET' } }
     );
-    const ids = (rel.value || []).map((r) => r.entityId);
-    if (!ids.length) return [];
+    return (rel?.value || []).map((r) => r.entityId).filter(Boolean);
+  }
+
+  async queryDataAssets(body) {
     const assets = await this._fetch('/datagovernance/catalog/dataAssets/query', {
       method: 'POST',
-      body: { ids }
+      body
     });
-    return (assets.value || []).map((a) => ({
+    return (assets?.value || []).map((a) => this._toAsset(a));
+  }
+
+  _toAsset(a) {
+    return {
       id: a.id,
       name: a.name,
       description: a.description,
       openInUrl: a.openInUrl,
+      type: a.type || null,
+      typeProperties: a.typeProperties || null,
       classifications: a.classifications || [],
-      schema: a.schema || [],
+      schema: (a.schema || []).map((c) => ({ name: c.name, type: c.type || null, description: c.description || null, classifications: c.classifications || [] })),
       // source.assetId is the join key back into the Data Map
-      dataMapAssetId: a.source?.assetId,
-      fqn: a.source?.fqn
-    }));
+      dataMapAssetId: a.source?.assetId || null,
+      assetType: a.source?.assetType || null,
+      fqn: a.source?.fqn || null,
+      accountName: a.source?.accountName || null
+    };
+  }
+
+  /**
+   * Register a Data Map asset in the Unified Catalog so it can be attached
+   * to a data product. Returns the catalogue asset. Idempotent: when the
+   * catalogue already knows the Data Map asset, the existing record is found
+   * and returned rather than duplicated.
+   */
+  async registerDataAsset({ dataMapAssetId, name, ownerId, ownerName, openInUrl }) {
+    const existing = await this.findDataAssetBySource(dataMapAssetId, name);
+    if (existing) return { asset: existing, created: false };
+    const body = { source: { assetId: dataMapAssetId } };
+    if (openInUrl) body.openInUrl = openInUrl;
+    if (ownerId) body.contacts = { owner: [{ id: ownerId, description: ownerName || 'Owner' }] };
+    try {
+      const created = await this._fetch('/datagovernance/catalog/dataAssets', { method: 'POST', body });
+      return { asset: this._toAsset(created), created: true };
+    } catch (err) {
+      // A 409 (or a 400 saying it exists) means somebody registered it between the two calls.
+      if (/ 409:| 400:.*exist/i.test(err.message)) {
+        const again = await this.findDataAssetBySource(dataMapAssetId, name);
+        if (again) return { asset: again, created: false };
+      }
+      throw err;
+    }
+  }
+
+  /** Find the catalogue asset that wraps one Data Map asset, by name then by source id. */
+  async findDataAssetBySource(dataMapAssetId, name) {
+    const body = { top: PAGE_SIZE };
+    if (name) body.nameKeyword = name;
+    let found = [];
+    try {
+      found = await this.queryDataAssets(body);
+    } catch {
+      found = [];
+    }
+    return found.find((a) => a.dataMapAssetId && a.dataMapAssetId.toLowerCase() === String(dataMapAssetId).toLowerCase()) || null;
+  }
+
+  /** Attach a catalogue asset to a data product. Idempotent. */
+  async linkAsset(dataProductId, assetId, description = 'Attached by Cortex bootstrap') {
+    const current = await this.listAssetIds(dataProductId);
+    if (current.some((id) => String(id).toLowerCase() === String(assetId).toLowerCase())) return { linked: false };
+    await this._fetch(`/datagovernance/catalog/dataProducts/${dataProductId}/relationships`, {
+      method: 'POST',
+      query: { entityType: 'DATAASSET' },
+      body: { entityId: assetId, relationshipType: 'Related', description }
+    });
+    return { linked: true };
   }
 
   /**
@@ -238,6 +305,10 @@ class LivePurview {
       askable: list('cortexAskable', '|'),
       deps: list('cortexDependsOn'),
       location: attr('cortexLocation'),
+      // The sample-data folder and the AI Search index that ground an agent
+      // on this product — written by bootstrap, read by services/grounding.js.
+      dataFolder: attr('cortexDataFolder'),
+      searchIndex: attr('cortexSearchIndex'),
       endorsed: p.endorsed,
       consumers: p.activeSubscriberCount ?? 0,
       audience: p.audience || [],

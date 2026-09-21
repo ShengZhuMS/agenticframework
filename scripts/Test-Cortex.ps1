@@ -87,7 +87,11 @@ try {
     @{ Path = '/api/health/keyvault'; Name = 'Key Vault' },
     @{ Path = '/api/health/purview';  Name = 'Purview' },
     @{ Path = '/api/health/apim';     Name = 'API Management' },
-    @{ Path = '/api/health/foundry';  Name = 'Foundry' }
+    @{ Path = '/api/health/foundry';  Name = 'Foundry' },
+    @{ Path = '/api/health/search';   Name = 'Azure AI Search (data indexes)' },
+    @{ Path = '/api/health/storage';  Name = 'Sample-data storage' },
+    @{ Path = '/api/health/datamap';  Name = 'Purview Data Map' },
+    @{ Path = '/api/health/state';    Name = 'Application state (file share)' }
   )
 
   $failed = 0

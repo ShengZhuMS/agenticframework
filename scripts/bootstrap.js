@@ -12,9 +12,19 @@
  * And in Azure API Management:
  *   - a REST API and an MCP server per skill
  *
+ * Then the data behind the products, and the wiring that lets an agent reach it
+ * (scripts/bootstrap-data.js):
+ *   - a Foundry project connection per MCP server, carrying the APIM key
+ *   - synthetic sample files in the sample-data storage account, a Data Map
+ *     source and scan over them, and the scanned assets attached to each
+ *     data product in the Unified Catalog
+ *   - one Azure AI Search index per data product over those files, and the
+ *     Foundry connection that lets an agent query it
+ *
  * Run once after `azd up`:  npm run bootstrap
  *
- *   --only=roles|purview|apim   run one section
+ *   --only=roles|purview|apim|connections|data|link|search   run one section
+ *   --no-wait                   do not wait for the Data Map scan (run --only=link later)
  *   --principal=<object id>     the identity to grant (defaults to
  *                               CORTEX_IDENTITY_PRINCIPAL_ID, which
  *                               Deploy-Cortex.ps1 and Set-CortexEnv.ps1 set)
@@ -49,12 +59,15 @@ import {
   isGuid,
   objectIdFromToken
 } from './purview-access.js';
+import { bootstrapConnections, bootstrapData, linkAssets, bootstrapSearch } from './bootstrap-data.js';
 
 const ARM_SCOPE = 'https://management.azure.com/.default';
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has('--dry-run');
 const NO_ADOPT = args.has('--no-adopt');
 const SKIP_ROLES = args.has('--skip-roles');
+const NO_WAIT = args.has('--no-wait');
+const SECTIONS = ['roles', 'purview', 'apim', 'connections', 'data', 'link', 'search'];
 const ONLY = [...args].find((a) => a.startsWith('--only='))?.split('=')[1];
 const PRINCIPAL =
   [...args].find((a) => a.startsWith('--principal='))?.split('=')[1] ||
@@ -535,6 +548,11 @@ function attributesFor(p) {
   set('cortexDependsOn', (p.dependsOn || []).join(','));
   set('cortexLocation', p.location);
   set('cortexFreshness', p.updateFrequency);
+  // Where the sample data behind this product lives (folder in the sample-data
+  // container) and the AI Search index built from it. Both are derived from
+  // the content id, so the app can find the data without asking Purview twice.
+  set('cortexDataFolder', p.id);
+  set('cortexSearchIndex', `${process.env.SEARCH_INDEX_PREFIX || 'cortex-'}${p.id}`);
   return attrs;
 }
 
@@ -843,8 +861,8 @@ async function main() {
 
   // An unrecognised --only used to run nothing at all and exit 0, which reads
   // exactly like a successful no-op run.
-  if (ONLY && !['roles', 'purview', 'apim'].includes(ONLY)) {
-    console.error(`\nUnknown --only=${ONLY}. Valid values: roles, purview, apim.`);
+  if (ONLY && !SECTIONS.includes(ONLY)) {
+    console.error(`\nUnknown --only=${ONLY}. Valid values: ${SECTIONS.join(', ')}.`);
     process.exitCode = 1;
     return;
   }
@@ -862,8 +880,11 @@ async function main() {
     return;
   }
 
-  console.log(`  purview : ${config.purview.endpoint}`);
+  console.log(`  purview : ${config.purview.endpoint}${config.purview.accountName ? ` (Data Map: ${config.purview.accountName})` : ''}`);
   console.log(`  apim    : ${config.apim.serviceName || '(not set)'}`);
+  console.log(`  foundry : ${config.foundry.accountName ? `${config.foundry.accountName}/${config.foundry.projectName}` : '(project location not set — no connections)'}`);
+  console.log(`  storage : ${config.data.storageAccount || '(not set — no sample data)'}`);
+  console.log(`  search  : ${config.search.endpoint || config.search.serviceName || '(not set — no indexes)'}`);
   console.log(`  identity: ${PRINCIPAL || '(none — Purview roles will not be granted)'}`);
 
   const dir = path.isAbsolute(config.bootstrapDir)
@@ -925,6 +946,23 @@ async function main() {
       await bootstrapSkills(skills);
     }
   }
+
+  // The counters live in this module; the data sections update them through
+  // this view so the summary line below stays right.
+  const counters = {
+    get created() { return created; },
+    set created(v) { created = v; },
+    get updated() { return updated; },
+    set updated(v) { updated = v; },
+    get failed() { return failed; },
+    set failed(v) { failed = v; }
+  };
+  const shared = { log, counters, dryRun: DRY_RUN, signedInObjectId, guidFor, listAllDataProducts };
+
+  if (!ONLY || ONLY === 'connections') await bootstrapConnections(shared);
+  if (!ONLY || ONLY === 'data') await bootstrapData({ ...shared, products, wait: !NO_WAIT, principal: PRINCIPAL });
+  if (ONLY === 'link') await linkAssets({ ...shared, products });
+  if (!ONLY || ONLY === 'search') await bootstrapSearch({ ...shared, products });
 
   console.log(`\n${created} created, ${updated} updated, ${failed} failed.`);
   if (failed) {

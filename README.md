@@ -2,7 +2,7 @@
 
 A front door to Microsoft Purview, Azure API Management and Microsoft Foundry, built for Defra.
 
-**Everything is live.** There is no demo mode, no sample data and no offline path. Every screen reads Purview, API Management and Foundry through their real APIs. Publish an agent and it is genuinely registered in API Management; delete a data product in the Purview portal and it disappears from the Marketplace on the next refresh.
+**Everything is live.** There is no demo mode and no offline path. Every screen reads Purview, API Management and Foundry through their real APIs. Publish an agent and it is genuinely registered in API Management; delete a data product in the Purview portal and it disappears from the Marketplace on the next refresh. The only generated content is the **synthetic sample data** behind the fourteen data products — real files in a real storage account, scanned by the Purview Data Map and indexed by Azure AI Search, so an agent can read rows rather than descriptions. Nothing in them is real.
 
 ---
 
@@ -14,7 +14,7 @@ A front door to Microsoft Purview, Azure API Management and Microsoft Foundry, b
 
 Or in VS Code: **Ctrl+Shift+P → Tasks: Run Task → Cortex: Deploy to Azure**.
 
-**Cortex reuses your existing Azure estate.** It creates only the container apps and its own managed identity. Check what will be reused first:
+**Cortex reuses your existing Azure estate.** It creates only the container apps, its own managed identity, a small Azure AI Search service and two storage accounts (sample data; application state). Check what will be reused first:
 
 ```powershell
 .\scripts\Deploy-Cortex.ps1 -WhatIfResources
@@ -31,8 +31,9 @@ The script also switches on Entra sign-in **with the groups claim** and grants t
 Local means *your machine, real Azure*. There is no offline mode. Anything you publish is published for real.
 
 ```powershell
-npm test                              # 214 tests, no Azure needed
+npm test                              # 289 tests, no Azure needed
 node scripts/bootstrap.js --dry-run   # validate content, no Azure needed
+node scripts/sample-data.js --list    # what the synthetic data generator produces
 ```
 
 ---
@@ -44,11 +45,14 @@ node scripts/bootstrap.js --dry-run   # validate content, no Azure needed
 | **Marketplace** | Data products from Purview, APIs and MCP servers from API Management, agents from Foundry — merged into one register with search, filters and the six visibility states |
 | **Entry standard** | Every mandatory field, each showing its source and who maintains it. Limitations, lineage, licence and who it covers, minimum aggregation |
 | **Map** | The estate by governance domain, with cross-domain dependencies and a full text alternative |
-| **Build an agent** | Approved model catalogue, knowledge checklist with unavailable items greyed out and explained, permitted actions, seven computed assurance gates |
-| **Publish** | Generates OpenAPI, imports it into APIM, creates an MCP server over it, writes the endpoint back to the register |
+| **The data behind it** | On every data product: the Data Map assets attached to it, their columns and classifications, and the Azure AI Search index built from the same files — with a button to build it |
+| **Build an agent** | Approved model catalogue, knowledge checklist with unavailable items greyed out and explained, permitted actions, seven computed assurance gates. A data product with an index gives the agent an `azure_ai_search` tool; an API Management tool gets a Foundry project connection carrying the gateway key |
+| **Test and chat** | Test it on its page — every tool call approved by Cortex and listed under the answer, failures in plain English — or **open a chat window**: a multi-turn conversation in its own window, open to all staff in this phase |
+| **Publish** | Generates OpenAPI, imports it into APIM, creates an MCP server over it, gives Foundry a connection to it, writes the endpoint back to the register |
 | **Ask** | A Foundry agent (`cortex-ask`) answers from the catalogue entries the asker can reach, citing them. Provenance panel: sources, freshness, confidence, what it could not reach — and how the answer was produced |
 | **Requests** | A working lifecycle — the holder's agent drafts inside *their* permissions, a person reviews the method and releases |
 | **Share your data** | Gateway registration, ownership confirmation, the access-request queue |
+| **Automate a task** | Recurring runs of an agent, or of an approved request method, that file a draft with its sources into a run history. Propose-only: nothing writes anywhere |
 
 ## The governance model
 

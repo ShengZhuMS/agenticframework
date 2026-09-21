@@ -30,6 +30,7 @@
 import index from '../index/store.js';
 import config from '../config.js';
 import { resolveDefinition } from './agents.js';
+import { connectionsConfigured, ensureMcpConnection } from '../adapters/foundry-connections.js';
 
 /**
  * The OpenAPI document APIM imports. One operation per agent, because APIM
@@ -186,6 +187,21 @@ export async function publishAgent(entryId, { baseUrl, visibility, user }) {
   const mcpUrl = mcp?.url || `${config.apim.gatewayUrl}/${mcpId}/mcp`;
   const openApiUrl = `${config.apim.gatewayUrl}/${apiId}/openapi.json`;
 
+  // ---- 4b. a Foundry project connection carrying the APIM key, so another
+  // agent can call this one without the 401 the first agents hit.
+  let connectionName = null;
+  if (connectionsConfigured() && config.apim.subscriptionKey) {
+    try {
+      const c = await ensureMcpConnection({ apiId: mcpId, target: mcpUrl });
+      connectionName = c.name;
+      record('Gave Foundry a connection to it', `${c.name} — carries the API Management key, so agents can call it`);
+    } catch (err) {
+      record('Foundry connection not created', `${err.message} — agents calling this server will be refused until it exists`, false);
+    }
+  } else {
+    record('Foundry connection skipped', 'Foundry project location or the APIM key is not configured; agents calling this server will be refused', false);
+  }
+
   /**
    * Widening only. The groups the builder already had keep access — otherwise
    * a builder can be locked out of the agent they made, because a team's
@@ -219,7 +235,8 @@ export async function publishAgent(entryId, { baseUrl, visibility, user }) {
       publishedBy: user?.name,
       visibility: effectiveVisibility,
       apimApiId: apiId,
-      apimMcpId: mcpId
+      apimMcpId: mcpId,
+      connection: connectionName
     }
   });
 

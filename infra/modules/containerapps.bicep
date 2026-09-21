@@ -78,6 +78,27 @@ param groupNames string = ''
 @description('Groups granted to every signed-in user on top of Entra, comma-separated. Default all-staff. Empty for strict mode.')
 param defaultGroups string = 'all-staff'
 
+@description('Who may chat with an agent: all-staff or visibility.')
+param chatPolicy string = 'all-staff'
+
+// ------------------------------------------------ round 4: data and state
+// Where the Foundry project lives in ARM, so the app can create project
+// connections; the search service; the sample-data account; the state share.
+// Any of these may be empty, which switches the matching feature off.
+param foundryAccountName string = ''
+param foundryProjectName string = ''
+param foundryResourceGroup string = ''
+param purviewAccountName string = ''
+param searchEndpoint string = ''
+param searchServiceName string = ''
+param dataStorageAccount string = ''
+param dataContainer string = 'products'
+param dataResourceGroup string = ''
+
+@description('Storage account holding the Azure Files share for application state. Empty = state in memory only.')
+param stateAccountName string = ''
+param stateShareName string = 'cortex-state'
+
 // ---------------------------------------------------------------- secrets
 // Supplied only if you choose to pass them through the deployment. Left empty,
 // the `secrets` property is omitted from the template entirely rather than
@@ -227,13 +248,58 @@ var mcpDirectEnv = useKeyVault ? [] : [
   { name: 'ENTRA_TENANT_ID', value: entraTenantId }
 ]
 
+// Round 4 values are passed in BOTH modes: they are not secrets, they are
+// not in the vault's catalogue yet, and an empty value is a clean "off".
+var roundFourEnv = [
+  { name: 'FOUNDRY_ACCOUNT_NAME', value: foundryAccountName }
+  { name: 'FOUNDRY_PROJECT_NAME', value: foundryProjectName }
+  { name: 'FOUNDRY_RESOURCE_GROUP', value: foundryResourceGroup }
+  { name: 'PURVIEW_ACCOUNT_NAME', value: purviewAccountName }
+  { name: 'SEARCH_ENDPOINT', value: searchEndpoint }
+  { name: 'SEARCH_SERVICE_NAME', value: searchServiceName }
+  { name: 'DATA_STORAGE_ACCOUNT', value: dataStorageAccount }
+  { name: 'DATA_CONTAINER', value: dataContainer }
+  { name: 'DATA_RESOURCE_GROUP', value: dataResourceGroup }
+  { name: 'CORTEX_CHAT_POLICY', value: chatPolicy }
+  { name: 'CORTEX_STATE_DIR', value: empty(stateAccountName) ? '' : stateMountPath }
+]
+
 var optionalEnv = concat(
   empty(entraClientId) ? [] : [ { name: 'ENTRA_CLIENT_ID', value: entraClientId } ],
   empty(groupNames) ? [] : [ { name: 'CORTEX_GROUP_NAMES', value: groupNames } ],
   // Always set, even when empty: an absent variable means "default to
   // all-staff" in config.js, so strict mode needs the empty string written.
-  [ { name: 'CORTEX_DEFAULT_GROUPS', value: defaultGroups } ]
+  [ { name: 'CORTEX_DEFAULT_GROUPS', value: defaultGroups } ],
+  roundFourEnv
 )
+
+// ------------------------------------------------------------- state share
+//
+// Azure Files, mounted into cortex-web at /data. The environment-level
+// storage resource is how Container Apps reaches a share; it wants the
+// account key, read here from the account rather than passed as an output.
+var stateMountPath = '/data'
+var stateStorageName = 'cortex-state'
+
+// Unconditional reference (Bicep does not allow `if` on existing resources);
+// it is only READ inside the conditional resource below, so an empty name is
+// never resolved.
+resource stateAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: empty(stateAccountName) ? 'none' : stateAccountName
+}
+
+resource stateStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = if (!empty(stateAccountName)) {
+  parent: env
+  name: stateStorageName
+  properties: {
+    azureFile: {
+      accountName: stateAccountName
+      accountKey: stateAccount.listKeys().keys[0].value
+      shareName: stateShareName
+      accessMode: 'ReadWrite'
+    }
+  }
+}
 
 // A secretRef pointing at a secret that does not exist stops the container
 // starting, so each of these appears only when its value was supplied.
@@ -292,6 +358,9 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
             memory: '1.0Gi'
           }
           env: webEnv
+          volumeMounts: empty(stateAccountName) ? [] : [
+            { volumeName: 'state', mountPath: stateMountPath }
+          ]
           probes: webIsPlaceholder ? [] : [
             {
               type: 'Readiness'
@@ -302,14 +371,18 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
           ]
         }
       ]
+      volumes: empty(stateAccountName) ? [] : [
+        { name: 'state', storageType: 'AzureFile', storageName: stateStorageName }
+      ]
       scale: {
         // Never zero. Cold start is the top demo risk. Never more than one
-        // either, while state is in memory — see webMaxReplicas.
+        // either: the state share is written by one replica — see webMaxReplicas.
         minReplicas: 1
         maxReplicas: webMaxReplicas
       }
     }
   }
+  dependsOn: [ stateStorage ]
 }
 
 // Glue 1 — the Purview MCP server. There is no official Purview MCP server,
