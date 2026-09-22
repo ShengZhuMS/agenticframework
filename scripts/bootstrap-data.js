@@ -127,6 +127,8 @@ export async function bootstrapData({
   counters,
   dryRun = false,
   wait = true,
+  manageRoles = true,
+  linkAfterScan = true,
   principal = '',
   signedInObjectId,
   guidFor,
@@ -147,7 +149,7 @@ export async function bootstrapData({
   if (unknown.length) log.warn(`no sample generator for: ${unknown.join(', ')} — they will have no data behind them`);
 
   // 1. collection roles for whoever is running this, and for the Cortex identity
-  if (!dryRun) {
+  if (!dryRun && manageRoles) {
     try {
       const me = await signedInObjectId();
       const principals = [me, principal].filter(Boolean);
@@ -253,7 +255,7 @@ export async function bootstrapData({
   }
   log.ok(`scan ${result.status}${result.run?.discovered != null ? ` — ${result.run.discovered} assets discovered` : ''}`);
 
-  const linked = await linkAssets({ products: known, log, counters, signedInObjectId, guidFor, listAllDataProducts, datamap, purview });
+  const linked = linkAfterScan ? await linkAssets({ products: known, log, counters, signedInObjectId, guidFor, listAllDataProducts, datamap, purview }) : 0;
   return { uploaded, linked };
 }
 
@@ -401,7 +403,7 @@ export async function bootstrapSearch({
   const storageAccountId =
     `/subscriptions/${config.apim.subscriptionId}/resourceGroups/${config.data.resourceGroup}` +
     `/providers/Microsoft.Storage/storageAccounts/${config.data.storageAccount}`;
-  const semantic = /semantic/.test(config.search.queryType);
+  const semantic = true;
   let built = 0;
   const started = [];
   for (const p of known) {
@@ -431,7 +433,8 @@ export async function bootstrapSearch({
   // first live run every indexer failed silently because the storage account
   // refused the search service. So wait for each indexer's first run and
   // report what it did — rows in, or the error — instead of hoping.
-  const outcome = await verifyIndexers({ names: started, search, log, sleep, verifySeconds });
+  const expectedCounts = Object.fromEntries(known.map((product) => [indexNameFor(product.id), SAMPLE_PRODUCTS[product.id].rows]));
+  const outcome = await verifyIndexers({ names: started, search, log, sleep, verifySeconds, expectedCounts });
   if (outcome.indexed) log.ok(`${outcome.indexed} of ${built} indexes hold rows. Agents pick indexes up on "Rebuild tools".`);
   if (outcome.failed) {
     counters.failed += outcome.failed;
@@ -441,15 +444,18 @@ export async function bootstrapSearch({
       log.fail(`${outcome.failed} indexer(s) failed — see the errors above, fix the cause and run --only=search again`);
     }
   }
-  if (outcome.pending) log.warn(`${outcome.pending} indexer(s) had not finished after ${verifySeconds}s — check later with --only=search`);
-  return { built, indexed: outcome.indexed, failed: outcome.failed, pending: outcome.pending, verified: true };
+  if (outcome.pending) {
+    counters.failed += outcome.pending;
+    log.warn(`${outcome.pending} indexer(s) had not finished after ${verifySeconds}s — this is not a completed bootstrap; check later with --only=search`);
+  }
+  return { built, indexed: outcome.indexed, failed: outcome.failed, pending: outcome.pending, verified: !outcome.failed && !outcome.pending };
 }
 
 /**
  * Poll each indexer until its most recent run has a terminal status, or the
  * budget runs out. Exported for tests; the search adapter is injected.
  */
-export async function verifyIndexers({ names, search, log, sleep, verifySeconds = 90, intervalMs = 10_000 }) {
+export async function verifyIndexers({ names, search, log, sleep, verifySeconds = 90, intervalMs = 10_000, expectedCounts = {} }) {
   const remaining = new Set(names);
   const result = { indexed: 0, failed: 0, pending: 0, networkBlocked: false };
   const deadline = Date.now() + verifySeconds * 1000;
@@ -471,9 +477,12 @@ export async function verifyIndexers({ names, search, log, sleep, verifySeconds 
       const errors = last.errors || [];
       if (/^success$/i.test(last.status) && !last.failed) {
         const stats = search.indexStats ? await search.indexStats(name) : { documents: last.processed };
-        if (stats?.documents > 0) {
+        if (stats?.documents > 0 && (!expectedCounts[name] || stats.documents === expectedCounts[name])) {
           result.indexed++;
           log.ok(`${name} — ${stats.documents} rows indexed`);
+        } else if (expectedCounts[name] && stats?.documents > expectedCounts[name]) {
+          result.failed++;
+          log.fail(`${name} has ${stats.documents} rows, more than the expected ${expectedCounts[name]}; stale demo rows must be removed.`);
         } else {
           // Search statistics lag a successful indexer. Wait before declaring an empty index.
           remaining.add(name);

@@ -43,7 +43,7 @@ export function gatesFor(agent, knowledgeEntries = [], models = []) {
   const readsRetrieved = actions.includes('read') && k.length > 0;
   const writesOut = actions.includes('write') || actions.includes('send');
   const model = models.find((m) => m.id === agent.model);
-  const modelApproved = model?.approved !== false;
+  const modelApproved = model?.approved === true;
 
   const gates = [];
 
@@ -78,7 +78,7 @@ export function gatesFor(agent, knowledgeEntries = [], models = []) {
         }
       : {
           status: 'complete',
-          reason: 'Per registration, by the AI Unit. Every attached source has cleared.'
+          reason: 'No attached source is flagged as uncleared in the catalogue. This metadata check is not an independent security review.'
         })
   });
 
@@ -109,7 +109,7 @@ export function gatesFor(agent, knowledgeEntries = [], models = []) {
         }
       : {
           status: 'outstanding',
-          reason: 'A third-party model needs review before it may be used.',
+          reason: model ? 'A third-party model needs review before it may be used.' : 'Model approval is not recorded in the configured catalogue.',
           evidence: '/help/assurance/model'
         })
   });

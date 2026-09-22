@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import config from '../config.js';
 import { getToken } from './token.js';
 
-export function channelMetadata(form) {
+export function channelMetadata(form, { requireConsent = true } = {}) {
   const value = (key, max) => {
     if (typeof form[key] !== 'string' || !form[key].trim() || form[key].length > max) throw new Error(`Microsoft 365 ${key} is required (maximum ${max} characters).`);
     return form[key].trim();
@@ -19,7 +19,7 @@ export function channelMetadata(form) {
     const url = new URL(result[key]);
     if (url.protocol !== 'https:' || url.username || url.password) throw new Error(`${key} must be an HTTPS URL without credentials.`);
   }
-  if (form.channelConsent !== 'yes') throw new Error('Confirm submission to the tenant catalogue. Tenant administrators retain approval control.');
+  if (requireConsent && form.channelConsent !== 'yes') throw new Error('Confirm submission to the tenant catalogue. Tenant administrators retain approval control.');
   return result;
 }
 

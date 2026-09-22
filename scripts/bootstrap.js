@@ -68,9 +68,10 @@ import {
   objectIdFromToken
 } from './purview-access.js';
 import { bootstrapConnections, bootstrapData, linkAssets, bootstrapSearch } from './bootstrap-data.js';
+import { bootstrapKnowledge } from './bootstrap-knowledge.js';
 
 const ARM_SCOPE = 'https://management.azure.com/.default';
-const SECTIONS = ['roles', 'purview', 'apim', 'connections', 'data', 'link', 'search'];
+const SECTIONS = ['roles', 'purview', 'apim', 'connections', 'data', 'link', 'search', 'knowledge'];
 
 /**
  * The command line, plus BOOTSTRAP_ARGS from the environment. Exported for
@@ -1003,11 +1004,11 @@ async function main() {
     get failed() { return failed; },
     set failed(v) { failed = v; }
   };
-  const shared = { log, counters, dryRun: DRY_RUN, signedInObjectId, guidFor, listAllDataProducts };
+  const shared = { log, counters, dryRun: DRY_RUN, signedInObjectId, guidFor, listAllDataProducts, purviewFetch };
 
   if (wants('connections')) await bootstrapConnections(shared);
   let dataResult = null;
-  if (wants('data')) dataResult = await bootstrapData({ ...shared, products, wait: !NO_WAIT, principal: PRINCIPAL });
+  if (wants('data')) dataResult = await bootstrapData({ ...shared, products, wait: !NO_WAIT, principal: PRINCIPAL, manageRoles: !SKIP_ROLES && !SKIP.has('roles') });
   if (ONLY === 'link') await linkAssets({ ...shared, products });
   if (wants('search')) {
     // In a full run the indexes are built from the files the data step just
@@ -1022,6 +1023,11 @@ async function main() {
     } else {
       await bootstrapSearch({ ...shared, products, verify: !NO_WAIT });
     }
+  }
+
+  if (wants('knowledge')) {
+    if (NO_WAIT) log.skip('Knowledge linking requires completed indexers. Run --only=knowledge after ingestion.');
+    else await bootstrapKnowledge({ ...shared, products });
   }
 
   console.log(`\n${created} created, ${updated} updated, ${failed} failed.`);

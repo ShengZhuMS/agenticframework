@@ -27,6 +27,7 @@ function bool(v, dflt = false) {
 export const config = {
   port: Number(env.PORT || 3000),
   nodeEnv: env.NODE_ENV || 'development',
+  maintenance: bool(env.CORTEX_MAINTENANCE),
 
   purview: {
     // NOT the account-scoped host — that form is legacy.
@@ -130,6 +131,8 @@ export const config = {
     scope: 'https://search.azure.com/.default',
     /** simple | semantic | vector | vector_simple_hybrid | vector_semantic_hybrid. Keyword by default: no embedding model needed. */
     queryType: env.SEARCH_QUERY_TYPE || 'simple',
+    knowledgeModelName: env.SEARCH_KNOWLEDGE_MODEL_NAME || '',
+    knowledgeModelEndpoint: env.SEARCH_KNOWLEDGE_MODEL_ENDPOINT || '',
     topK: Number(env.SEARCH_TOP_K || 5),
     indexPrefix: env.SEARCH_INDEX_PREFIX || 'cortex-',
     timeoutMs: Number(env.SEARCH_TIMEOUT_MS || 30_000)

@@ -6,6 +6,7 @@
  */
 
 import { esc, attr, layout, visMark } from '../layout.js';
+import { demoTip, DEMO_PROMPTS } from '../demo.js';
 
 function sourceList(sources, ctx) {
   if (!sources.length) return '';
@@ -177,6 +178,7 @@ export function askPage(ctx, { thread, history, threadId }) {
         </label>
         <input class="govuk-input" id="q" name="q" type="text"
                placeholder="What service performance data is available?">
+        ${demoTip({ text: DEMO_PROMPTS.ask, fields: { q: DEMO_PROMPTS.ask }, note: 'Ask identifies catalogue sources. Use the data-backed agents for actual indexed values.' })}
       </div>
       <button class="govuk-button" type="submit">${thread ? 'Ask a follow-up' : 'Ask'}</button>
     </form>

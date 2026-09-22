@@ -20,6 +20,7 @@ import { gatesFor, ACTIONS } from './assurance.js';
 import config from '../config.js';
 import { connectionsConfigured, ensureMcpConnection, connectionNameFor, connectionRef } from '../adapters/foundry-connections.js';
 import { assetsFor, searchToolsFor, describeGrounding } from './grounding.js';
+import { ensureResponsibleAI } from './evidence.js';
 
 /**
  * The knowledge checklist. Everything relevant is listed; anything the
@@ -151,6 +152,10 @@ export function resolveDefinition(def) {
   return { knowledge, tools };
 }
 
+export function runtimeToolOptions(entry) {
+  return entry?._agent?.definition?.artefactId ? { requireToolUse: true } : {};
+}
+
 export async function gatesForDefinition(def) {
   const { knowledge } = resolveDefinition(def);
   const models = await modelCatalogue();
@@ -180,6 +185,7 @@ export async function createAgent(def, user, { existing = null } = {}) {
    * an agent never depends on a step somebody may have skipped.
    */
   const connectionFor = async (entry, url) => {
+    if (entry._knowledge?.connectionId) return entry._knowledge.connectionId;
     if (!isApimUrl(url)) return undefined; // Cortex's own MCP server needs no key
     if (!connectionsConfigured() || !config.apim.subscriptionKey) {
       warnings.push(`No project connection could be made for ${entry.name}; Foundry project location or the APIM key is not configured.`);
@@ -238,6 +244,11 @@ export async function createAgent(def, user, { existing = null } = {}) {
   // that has an index, and a description of the assets for the instructions.
   const groundingInfo = await searchToolsFor(purviewKnowledge);
   const groundingNotes = [];
+  for (const entry of knowledge.filter((item) => item._knowledge?.connectionId)) {
+    groundingInfo.grounded.push({ entry: entry.name, index: entry.searchIndex,
+      documents: entry._knowledge.documents || 0, knowledgeBase: entry._knowledge.name, method: 'Foundry IQ' });
+    groundingNotes.push(`Data product: ${entry.name}. Its Foundry IQ knowledge base ${entry._knowledge.name} reads the associated index ${entry.searchIndex}. Use that knowledge tool for actual records, not the catalogue description. Prefer short record identifiers or keywords as retrieval queries, rather than copying the entire user's instruction. Cite the returned source and do not infer whole-dataset totals from a retrieved sample.`);
+  }
   for (const e of purviewKnowledge) {
     const assets = await assetsFor(e);
     const g = groundingInfo.grounded.find((x) => x.entry === e.name);
@@ -250,7 +261,8 @@ export async function createAgent(def, user, { existing = null } = {}) {
     name: def.agentId,
     model: def.model,
     instructions,
-    tools: [...mcpTools, ...knowledgeTools, ...groundingInfo.tools]
+    tools: [...mcpTools, ...knowledgeTools, ...groundingInfo.tools],
+    createVersion: Boolean(existing)
   });
 
   const gates = await gatesForDefinition(def);
@@ -306,7 +318,8 @@ export async function createAgent(def, user, { existing = null } = {}) {
     _illustrative: ['calls', 'consumers', 'cpu', 'err', 'lat', 'carbon']
   });
 
-  return { entry, created, gates, connections, warnings, grounding: groundingInfo };
+  ensureResponsibleAI(entry);
+  return { entry: index.get(entry.id), created, gates, connections, warnings, grounding: groundingInfo };
 }
 
 /**
@@ -317,6 +330,20 @@ export async function createAgent(def, user, { existing = null } = {}) {
  */
 export async function rebuildAgent(entry, user) {
   const def = entry._agent?.definition;
+  if (def?.artefactId) {
+    const name = entry._source?.id || entry.id;
+    const live = await index.foundry.getAgent(name);
+    if (!live?.definition || !Array.isArray(live.definition.tools)) throw new Error('The external wrapper definition could not be read. Its source tool was not changed.');
+    const created = await index.foundry.createAgent({
+      name, model: live.definition.model, instructions: live.definition.instructions,
+      tools: live.definition.tools, keepAllTools: true, createVersion: true
+    });
+    if (!created?.version) throw new Error('Foundry did not return the rebuilt wrapper version. Inspect the agent before retrying.');
+    const updated = index.upsert({ ...entry, _agent: { ...entry._agent, foundry: created,
+      version: created.version, rebuiltAt: new Date().toISOString() } });
+    ensureResponsibleAI(updated);
+    return { entry: index.get(entry.id), created, connections: entry._agent.connections || [], warnings: [] };
+  }
   if (!def) {
     // Nothing recorded here (the agent predates persistence, or was built
     // in another session) — repair what Foundry itself holds instead.
@@ -379,7 +406,7 @@ export async function ensureToolConnections(agentName, { force = false, foundry 
   }
   if (!changed) return { repaired: false, reason: 'tools already carry their connections', connections };
 
-  await foundry.createAgent({ name: agentName, model: def.model, instructions: def.instructions, tools, keepAllTools: true });
+  await foundry.createAgent({ name: agentName, model: def.model, instructions: def.instructions, tools, keepAllTools: true, createVersion: true });
   return { repaired: true, connections, tools: tools.length };
 }
 

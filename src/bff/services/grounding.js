@@ -151,7 +151,7 @@ export function splitCsvLine(line) {
  *
  * @returns {{ index, dataSource, indexer, columns, run }}
  */
-export async function buildIndex(entry, { search = index.search, storage = index.storage, purview = index.purview, columns } = {}) {
+export async function buildIndex(entry, { search = index.search, storage = index.storage, purview = index.purview, columns, semantic = /semantic/.test(config.search.queryType) } = {}) {
   if (!groundingConfigured()) throw new Error('Azure AI Search is not configured, so no index can be built.');
   if (!config.data.storageAccount) throw new Error('The sample-data storage account is not configured (DATA_STORAGE_ACCOUNT).');
   const folder = dataFolderFor(entry);
@@ -161,7 +161,6 @@ export async function buildIndex(entry, { search = index.search, storage = index
   if (!cols.length) {
     throw new Error(`No columns could be found for ${entry.name}: no schema on its Data Map assets and no CSV under ${folder}/ in storage.`);
   }
-  const semantic = /semantic/.test(config.search.queryType);
   await search.ensureIndex(indexDefinitionFor(name, cols, { semantic }));
   const dataSource = `${name}-source`;
   const storageAccountId =

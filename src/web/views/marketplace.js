@@ -1,9 +1,9 @@
 /**
- * Marketplace — the homepage.
+ * Cortex — the homepage.
  *
  * CAP-010  Land on what exists rather than an empty search box
  * CAP-015  See the visibility state and what to do next about it
- * CAP-023  Search the marketplace by name, owner or cluster
+ * CAP-023  Search Cortex by name, owner or cluster
  * CAP-024  Search from any page
  * CAP-025  Filter what exists by category
  * CAP-026  Filter by cluster
@@ -133,13 +133,13 @@ export function marketplacePage(
   const content = `
 <div class="govuk-grid-row">
   <div class="govuk-grid-column-two-thirds">
-    <h1 class="govuk-heading-xl govuk-!-margin-bottom-0">Marketplace</h1>
+    <h1 class="govuk-heading-xl govuk-!-margin-bottom-0">Cortex</h1>
     <p class="govuk-body-l">Your connected data, APIs, MCP tools and agents: discover, use and build with governed capabilities.</p>
   </div>
   <div class="govuk-grid-column-one-third">
     <p class="govuk-body" style="text-align:right;margin-top:20px">
       <strong>List</strong> ·
-      <a class="govuk-link" href="/marketplace/map">Map</a>
+      <a class="govuk-link" href="/cortex/map">Map</a>
     </p>
   </div>
 </div>
@@ -175,7 +175,7 @@ ${
 
 ${showMostUsed ? mostUsed(byCatMostUsed, ctx) : ''}
 
-<form method="get" action="/marketplace">
+<form method="get" action="/cortex">
 ${ctx.query?.persona ? `<input type="hidden" name="persona" value="${attr(ctx.query.persona)}">` : ''}
 <div class="govuk-grid-row">
   <div class="govuk-grid-column-one-third">
@@ -232,7 +232,7 @@ ${ctx.query?.persona ? `<input type="hidden" name="persona" value="${attr(ctx.qu
       ${
         isFiltered
           ? `<p class="govuk-body-s" style="margin-top:12px;margin-bottom:0">
-               <a class="govuk-link" href="/marketplace">Clear the search and filters</a>
+               <a class="govuk-link" href="/cortex">Clear the search and filters</a>
              </p>`
           : ''
       }
@@ -266,7 +266,7 @@ ${ctx.query?.persona ? `<input type="hidden" name="persona" value="${attr(ctx.qu
                has registered it — which is the more common of the two.
              </p>
              <p class="govuk-body govuk-!-margin-bottom-0">
-               <a class="govuk-link" href="/marketplace">Clear the filters</a>
+               <a class="govuk-link" href="/cortex">Clear the filters</a>
                or <a class="govuk-link" href="/share">tell us about something that is missing</a>
              </p>
            </div>`
@@ -275,7 +275,7 @@ ${ctx.query?.persona ? `<input type="hidden" name="persona" value="${attr(ctx.qu
 </div>
 </form>`;
 
-  return layout({ ...ctx, title: 'Marketplace', section: 'marketplace' }, content);
+  return layout({ ...ctx, title: 'Cortex', section: 'marketplace' }, content);
 }
 
 export default marketplacePage;

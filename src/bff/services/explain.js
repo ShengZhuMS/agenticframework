@@ -14,6 +14,14 @@ const urlIn = (m) => (String(m.input || m[0]).match(MCP_URL) || [])[1] || 'the M
 
 const PATTERNS = [
   {
+    test: /Access denied[\s\S]*(?:managed identity|search service)|(?:search service|azure_ai_search)[\s\S]*(?:403|Access denied)/i,
+    explain: () => ({
+      heading: 'Foundry cannot access the Search index',
+      message: 'The agent reached Foundry, but its Search tool was denied access. A new chat window will not fix this. Ask the platform owner to check the CognitiveSearch connection target and AAD authentication, identify the managed identity actually used by this Foundry project, and verify its Search data-reader permissions and network access. Cortex Search health uses a different identity and cannot prove this access. See Help: Diagnose Search access denied. Permission changes require administrator approval.',
+      fixable: true
+    })
+  },
+  {
     test: /Authentication failed when connecting to the MCP server .*?(401|missing subscription key)/i,
     explain: (m) => ({
       heading: 'The agent could not sign in to one of its tools',

@@ -9,6 +9,7 @@
 
 import { esc, attr, layout } from '../layout.js';
 import { CADENCES, DAYS, MAX_STEPS } from '../../bff/services/automations.js';
+import { demoTip, DEMO_PROMPTS } from '../demo.js';
 
 const fmt = (iso) => (iso ? new Date(iso).toLocaleString('en-GB', { timeZone: 'UTC', hour12: false }) + ' UTC' : '—');
 
@@ -67,7 +68,7 @@ ${
   created
     ? `<div class="govuk-notification-banner govuk-notification-banner--success" role="alert" aria-labelledby="au-t">
         <div class="govuk-notification-banner__header"><p class="govuk-notification-banner__title" id="au-t">Automation set up</p></div>
-        <div class="govuk-notification-banner__content"><p class="govuk-body govuk-!-margin-bottom-0"><a class="govuk-link" href="/automate/${attr(created)}">${esc(created)}</a> is active and will run at its next scheduled time. You can run it now from its page.</p></div>
+        <div class="govuk-notification-banner__content"><p class="govuk-body govuk-!-margin-bottom-0"><a class="govuk-link" href="/automate/${attr(created)}">${esc(created)}</a> ${mine.find((item) => item.id === created)?.cadence === 'manual' ? 'is ready for manual runs. Nothing will run automatically.' : 'is active and will run at its next scheduled time.'} You can run it from its page.</p></div>
       </div>`
     : ''
 }
@@ -76,7 +77,7 @@ ${
     <h1 class="govuk-heading-xl govuk-!-margin-bottom-2">Automate a task</h1>
     <p class="govuk-body-l">Automations that draft, with a person at the checkpoint.</p>
     <div class="govuk-inset-text">
-      <p class="govuk-body govuk-!-margin-bottom-0">Compose an ordered workflow of two to five agents. Each receives the previous agent's result; the final result stays a <strong>draft for human review</strong>. Use read-only agents and tools. Existing single-agent and approved-method schedules remain available in their histories.</p>
+      <p class="govuk-body govuk-!-margin-bottom-0">Start with one step; add up to five in total, with at most three in parallel. The next stage waits for all branches to succeed. Results stay a <strong>draft for human review</strong>.</p>
     </div>
     <a class="govuk-button" href="/automate/new" role="button">Set up an automation</a>
 
@@ -102,6 +103,7 @@ ${
 export function automationFormPage(ctx, { agents, methods, form = {}, errors = [] }) {
   const f = form;
   const kind = 'workflow';
+  const stepCount = Math.max(1, Math.min(MAX_STEPS, Number(f.stepCount) || Object.keys(f).filter((key) => /^stepAgent\d+$/.test(key)).length || 1));
   const err = (field) => errors.find((e) => e.field === field);
   const group = (field) => `govuk-form-group${err(field) ? ' govuk-form-group--error' : ''}`;
   const msg = (field) => (err(field) ? `<p class="govuk-error-message"><span class="govuk-visually-hidden">Error:</span> ${esc(err(field).message)}</p>` : '');
@@ -111,7 +113,16 @@ export function automationFormPage(ctx, { agents, methods, form = {}, errors = [
   <a class="govuk-back-link" href="/automate">Back</a>
   <h1 class="govuk-heading-l">Set up an automation</h1>
   ${errorSummary(errors)}
+  <form method="post" action="/automate/suggest">
+    <label class="govuk-label govuk-label--s" for="goal">What would you like to achieve?</label>
+    <p class="govuk-hint">AI can propose available agents and steps. Nothing runs until you review and approve the schedule. Uses your configured Foundry model.</p>
+    <textarea class="govuk-textarea" id="goal" name="goal" rows="2" maxlength="4000" required>${esc(f.question || '')}</textarea>
+    ${demoTip({ text: DEMO_PROMPTS.goal, fields: { goal: DEMO_PROMPTS.goal }, note: 'Use the seeded agents. Inspect the proposal, choose manual runs for the demo, and approve explicitly.' })}
+    <button class="govuk-button govuk-button--secondary">Suggest a plan</button>
+  </form>
+  ${f.proposed ? '<p class="govuk-inset-text" role="status">AI proposal: review every agent, instruction and parallel grouping below. You can edit before approving.</p>' : ''}
   <form method="post" action="/automate/new">
+    <input type="hidden" name="stepCount" value="${stepCount}">
     <div class="${group('name')}">
       <label class="govuk-label govuk-label--s" for="name">What is it called?</label>
       <div class="govuk-hint">For example: "Weekly operational insights and review".</div>
@@ -120,11 +131,13 @@ export function automationFormPage(ctx, { agents, methods, form = {}, errors = [
     </div>
 
     <input type="hidden" name="kind" value="${kind}">
-    <p class="govuk-body">Steps run in order and stop on the first failure. Choose at least two different agents. Leave unused trailing steps blank.</p>
-    ${Array.from({ length: MAX_STEPS }, (_, n) => {
+    <p class="govuk-body">One to five steps total; up to three in parallel. Steps in the same stage receive the same preceding stage output. A failed branch stops the next stage.</p>
+    ${Array.from({ length: stepCount }, (_, n) => {
       const i = n + 1;
+      const stage = Number(f[`stepStage${i}`] || i);
       return `<fieldset class="govuk-fieldset">
-        <legend class="govuk-fieldset__legend govuk-fieldset__legend--s">Step ${i}${i > 2 ? ' (optional)' : ''}</legend>
+        <legend class="govuk-fieldset__legend govuk-fieldset__legend--s">Step ${i} / stage ${stage}</legend>
+        <input type="hidden" name="stepStage${i}" value="${stage}">
         <div class="${group(`stepAgent${i}`)}">
           <label class="govuk-label" for="stepAgent${i}">Agent</label>${msg(`stepAgent${i}`)}
           <select class="govuk-select" id="stepAgent${i}" name="stepAgent${i}">
@@ -135,6 +148,11 @@ export function automationFormPage(ctx, { agents, methods, form = {}, errors = [
         <div class="${group(`stepInstruction${i}`)}">
           <label class="govuk-label" for="stepInstruction${i}">Instructions for this step</label>${msg(`stepInstruction${i}`)}
           <textarea class="govuk-textarea" id="stepInstruction${i}" name="stepInstruction${i}" rows="2" maxlength="4000">${esc(f[`stepInstruction${i}`] || '')}</textarea>
+        </div>
+        <div class="govuk-button-group">
+          ${stepCount < MAX_STEPS ? `<button class="govuk-button govuk-button--secondary" name="editStep" value="next:${i}" formnovalidate>Add a new next step</button>
+          <button class="govuk-button govuk-button--secondary" name="editStep" value="parallel:${i}" formnovalidate>Add a new parallel step</button>` : ''}
+          ${stepCount > 1 ? `<button class="govuk-button govuk-button--secondary" name="editStep" value="remove:${i}" formnovalidate>Remove step ${i}</button>` : ''}
         </div>
       </fieldset>`;
     }).join('')}
@@ -168,7 +186,7 @@ export function automationFormPage(ctx, { agents, methods, form = {}, errors = [
           ${Object.entries(CADENCES)
             .map(
               ([k, c]) => `<div class="govuk-radios__item">
-                <input class="govuk-radios__input" id="cad-${attr(k)}" name="cadence" type="radio" value="${attr(k)}" ${(f.cadence || 'daily') === k ? 'checked' : ''}>
+                <input class="govuk-radios__input" id="cad-${attr(k)}" name="cadence" type="radio" value="${attr(k)}" ${(f.cadence || 'manual') === k ? 'checked' : ''}>
                 <label class="govuk-label govuk-radios__label" for="cad-${attr(k)}">${esc(c.label)} <span class="cortex-src">${esc(c.hint)}</span></label>
               </div>`
             )
@@ -208,7 +226,8 @@ export function automationFormPage(ctx, { agents, methods, form = {}, errors = [
       <p class="govuk-body">Scheduled runs use your captured permissions, not a fresh Entra token. Pause schedules when access changes. Keep agents read-only; Cortex does not sandbox external tool implementations.</p>
     </div>
 
-    <button class="govuk-button" type="submit">Set it up</button>
+    <label class="govuk-label"><input type="checkbox" name="approved" value="yes" required> I reviewed these steps, parallel groups and schedule and approve their execution and Azure usage.</label>
+    <button class="govuk-button" type="submit">Approve and save automation</button>
   </form>
 </div></div>`;
   return layout({ ...ctx, title: 'Set up an automation', section: 'automate' }, content);

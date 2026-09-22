@@ -40,6 +40,9 @@ function copyDir(from, to, filter = () => true) {
 }
 
 mkdirSync(dest, { recursive: true });
+const axe = path.join(root, 'node_modules', 'axe-core', 'axe.min.js');
+if (!existsSync(axe)) throw new Error('axe-core is required. Run npm install before building accessibility assets.');
+copyFileSync(axe, path.join(dest, 'axe.min.js'));
 
 // Compiled stylesheet and script.
 for (const file of ['govuk-frontend.min.css', 'govuk-frontend.min.js']) {
