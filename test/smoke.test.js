@@ -49,13 +49,37 @@ async function page(path, init) {
 }
 
 describe('every demo page renders', () => {
-  for (const path of ['/', '/marketplace', '/marketplace/map', '/build', '/build/new', '/share', '/requests', '/profile', '/help', '/automate', '/automate/new']) {
+  for (const path of ['/', '/about', '/marketplace', '/marketplace/map', '/build', '/build/new', '/share', '/requests', '/profile', '/help', '/automate', '/automate/new']) {
     test(`${path} is 200 and not the error page`, async () => {
       const r = await page(path);
       assert.equal(r.status, 200, path);
       assert.ok(!/problem with the service/.test(r.body), `${path} rendered the 500 page`);
     });
   }
+
+  test('the About page explains the neutral accelerator, live figures and limitations', async () => {
+    const r = await page('/about');
+    assert.equal(r.status, 200);
+    // Every section a leader is promised in the contents list is on the page.
+    for (const id of ['purpose', 'problem', 'system', 'architecture', 'value', 'journey', 'governance', 'readiness']) {
+      assert.match(r.body, new RegExp(`<section id="${id}"`), `section ${id} missing`);
+    }
+    assert.match(r.body, /Microsoft technology accelerator/);
+    assert.match(r.body, /read live from the register/);
+    assert.match(r.body, /text alternative/);
+    assert.match(r.body, /not a safety certification/);
+    assert.match(r.body, /same code and synthetic demonstration pack/);
+    assert.match(r.body, /<svg[^>]+role="img"[^>]+aria-labelledby="architecture-title architecture-desc"/);
+    assert.match(r.body, /blogs\.microsoft\.com\/blog\/2026\/06\/02\/ai-alone-wont-change-your-business-the-system-running-it-will/);
+    assert.match(r.body, /One integrated system/);
+    assert.match(r.body, /Secured and governed by design/);
+    assert.match(r.body, /Improve continuously/);
+    // Zero client JavaScript, like the rest of the service.
+    assert.ok(!/<script/i.test(r.body), 'About page must not ship client script');
+    // The nav highlights it and the footer links to it.
+    assert.match(r.body, /href="\/about" aria-current="page">About<\/a>/);
+    assert.match(r.body, /href="\/about">About Cortex<\/a>/);
+  });
 
   test('an entry page shows the entry standard, with the catalogue status from Purview', async () => {
     const r = await page('/entry/p-water-quality');

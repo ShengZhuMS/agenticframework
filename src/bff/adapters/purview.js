@@ -219,10 +219,19 @@ class LivePurview {
    * catalogue already knows the Data Map asset, the existing record is found
    * and returned rather than duplicated.
    */
-  async registerDataAsset({ dataMapAssetId, name, ownerId, ownerName, openInUrl }) {
+  async registerDataAsset({ dataMapAssetId, name, qualifiedName, assetType, columns = [], ownerId, ownerName, openInUrl }) {
     const existing = await this.findDataAssetBySource(dataMapAssetId, name);
     if (existing) return { asset: existing, created: false };
-    const body = { source: { assetId: dataMapAssetId } };
+    const url = new URL(qualifiedName);
+    if (url.protocol !== 'https:' || !url.hostname.endsWith('.dfs.core.windows.net')) throw new Error('ADLS asset registration requires the scanned HTTPS qualified name.');
+    const segments = url.pathname.slice(1).split('/').map(decodeURIComponent);
+    if (segments.length < 2 || !segments.at(-1)) throw new Error('ADLS asset qualified name must contain a container and file.');
+    const body = {
+      name, type: 'ADLSGen2Path',
+      typeProperties: { serverEndpoint: url.origin, container: segments[0], folderPath: segments.slice(1, -1).join('/'), fileName: segments.at(-1) },
+      source: { type: 'DataMap', assetId: dataMapAssetId, assetType, fqn: qualifiedName, accountName: this.cfg.accountName },
+      schema: columns.map((c) => ({ name: c.name, type: c.type || 'string' }))
+    };
     if (openInUrl) body.openInUrl = openInUrl;
     if (ownerId) body.contacts = { owner: [{ id: ownerId, description: ownerName || 'Owner' }] };
     try {
@@ -242,12 +251,7 @@ class LivePurview {
   async findDataAssetBySource(dataMapAssetId, name) {
     const body = { top: PAGE_SIZE };
     if (name) body.nameKeyword = name;
-    let found = [];
-    try {
-      found = await this.queryDataAssets(body);
-    } catch {
-      found = [];
-    }
+    const found = await this.queryDataAssets(body);
     return found.find((a) => a.dataMapAssetId && a.dataMapAssetId.toLowerCase() === String(dataMapAssetId).toLowerCase()) || null;
   }
 

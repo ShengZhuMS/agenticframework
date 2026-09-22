@@ -209,7 +209,7 @@ ${errorSummary(errors)}
         and shows you what it added.
       </div>
       <textarea class="govuk-textarea" id="instructions" name="instructions" rows="6"
-        placeholder="Answer questions about waste carrier registrations and permit history. Cross-reference registrations against permit conditions. Flag where a registration has lapsed.">${esc(form.instructions || '')}</textarea>
+        placeholder="Summarise synthetic service performance. Cite the sources and limitations. Produce draft recommendations for human review.">${esc(form.instructions || '')}</textarea>
     </div>
 
     <h2 class="govuk-heading-m">4. Attach knowledge</h2>

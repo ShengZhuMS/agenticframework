@@ -82,7 +82,7 @@ class CortexIndex {
 
     if (config.index.warnIfEmpty && this.entries.size === 0) {
       console.warn('  register is EMPTY — nothing is registered in Purview, APIM or Foundry yet.');
-      console.warn('  Run `npm run bootstrap` to create the Defra governance domains and data products.');
+      console.warn('  Run `npm run bootstrap` to create the neutral synthetic demonstration catalogue.');
     }
 
     if (config.index.refreshMinutes > 0) {
@@ -134,11 +134,15 @@ class CortexIndex {
     }
 
     if (products) {
+      const ids = new Set(products.map((p) => p.id));
+      for (const [id, entry] of this.entries) if (entry._source?.system === 'purview' && !ids.has(id)) this.entries.delete(id);
       for (const p of products) this.upsert(this.normalise(p));
     }
 
     // Skills and apps registered as APIs in API Management.
     if (apis) {
+      const ids = new Set(apis.map((a) => a.id));
+      for (const [id, entry] of this.entries) if (entry._source?.system === 'apim' && !ids.has(id)) this.entries.delete(id);
       for (const a of apis) {
         if (!a?.id) continue;
         this.upsert(
@@ -190,7 +194,7 @@ class CortexIndex {
         this.upsert({
           ...(existing || {}),
           id,
-          name: a.name,
+          name: existing?.name || a.name,
           cat: 'Agent',
           cluster: existing?.cluster || (this.domains[0]?.id ?? 'unassigned'),
           desc: existing?.desc || a.instructions?.slice(0, 200) || 'An agent built in Cortex.',
@@ -229,6 +233,12 @@ class CortexIndex {
       }
     }
 
+    for (const record of Object.values(collection('artefacts', {}).data)) {
+      if (record.state === 'published' && record.entry) this.upsert(record.entry);
+      if (record.kind === 'external-agent' && record.agentId && this.entries.has(record.agentId)) {
+        this.upsert({ ...this.entries.get(record.agentId), name: record.name });
+      }
+    }
     this.lastRefresh = new Date().toISOString();
     this.lastError = errors.length ? errors.join(' | ') : null;
     this.refreshing = false;
@@ -305,7 +315,7 @@ class CortexIndex {
     return this.domains.find((c) => c.id === resolved) || null;
   }
 
-  search({ q, cats, clusters, visStates, sort = 'name' } = {}, user = null) {
+  searchEntries({ q, cats, clusters, visStates, sort = 'name' } = {}, user = null) {
     let out = this.all();
     if (q) {
       const needle = q.toLowerCase();

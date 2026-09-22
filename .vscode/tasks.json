@@ -23,7 +23,7 @@
     },
     {
       "label": "Cortex: Deploy to Azure",
-      "detail": "Full deployment \u2014 provision, deploy, onboard secrets, sign-in, Purview access, bootstrap, verify. Safe to run repeatedly.",
+      "detail": "Full deployment — provision, deploy, onboard secrets, sign-in, Purview access, bootstrap, verify. Safe to run repeatedly.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -85,7 +85,7 @@
     },
     {
       "label": "Cortex: Grant Purview access",
-      "detail": "Give the Cortex identity its Unified Catalog roles. Fixes 'Purview UNAVAILABLE \u2014 403'. Idempotent.",
+      "detail": "Give the Cortex identity its Unified Catalog roles. Fixes 'Purview UNAVAILABLE — 403'. Idempotent.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -104,7 +104,7 @@
     },
     {
       "label": "Cortex: Deploy without Key Vault",
-      "detail": "Force direct configuration \u2014 for a vault with public network access disabled.",
+      "detail": "Force direct configuration — for a vault with public network access disabled.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -205,6 +205,88 @@
       }
     },
     {
+      "label": "Cortex: Diagnose (paste-able report)",
+      "detail": "Health check plus a paste-able block: revisions, replica states, platform and console logs, storage settings, the policies that touched them.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Test-Cortex.ps1",
+        "-Diagnose"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Repair storage access (tenant policy lockdown)",
+      "detail": "A tenant policy has closed the storage accounts’ public endpoint (bootstrap 403 AuthorizationFailure, cortex-web 404). Exempt, repair, verify.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Set-CortexStorageAccess.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Storage access — report only",
+      "detail": "Say which storage setting drifted and which policy did it. Changes nothing.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Set-CortexStorageAccess.ps1",
+        "-ReportOnly"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Cortex: Set up demo identities",
+      "detail": "Create and map the demo Entra groups, add you to all of them. Add -DemoUserEmail <address> in a terminal for the second account.",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Deploy-Cortex.ps1",
+        "-SkipProvision",
+        "-SkipBootstrap",
+        "-SkipHealthCheck",
+        "-DemoIdentities"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
       "label": "Cortex: Run tests",
       "detail": "The unit suite. No Azure needed.",
       "type": "shell",
@@ -279,7 +361,7 @@
       }
     },
     {
-      "label": "Cortex: Bootstrap \u2014 Foundry connections for MCP servers",
+      "label": "Cortex: Bootstrap — Foundry connections for MCP servers",
       "detail": "One Foundry project connection per API Management MCP server, carrying the gateway key. Fixes an agent that cannot sign in to its tools.",
       "type": "shell",
       "command": "pwsh",
@@ -298,8 +380,8 @@
       }
     },
     {
-      "label": "Cortex: Bootstrap \u2014 sample data, Data Map scan, attach assets",
-      "detail": "Uploads the synthetic sample files, registers and scans them in the Purview Data Map (3\u201310 min), attaches the assets to the data products.",
+      "label": "Cortex: Bootstrap — sample data, Data Map scan, attach assets",
+      "detail": "Uploads the synthetic sample files, registers and scans them in the Purview Data Map (3–10 min), attaches the assets to the data products.",
       "type": "shell",
       "command": "pwsh",
       "args": [
@@ -317,7 +399,7 @@
       }
     },
     {
-      "label": "Cortex: Bootstrap \u2014 attach scanned assets only",
+      "label": "Cortex: Bootstrap — attach scanned assets only",
       "detail": "Run after a scan that was still running when bootstrap finished.",
       "type": "shell",
       "command": "pwsh",
@@ -336,7 +418,7 @@
       }
     },
     {
-      "label": "Cortex: Bootstrap \u2014 AI Search indexes",
+      "label": "Cortex: Bootstrap — AI Search indexes",
       "detail": "One Azure AI Search index per data product, built from the sample files, plus the Foundry connection that lets agents read them.",
       "type": "shell",
       "command": "pwsh",
@@ -355,7 +437,7 @@
       }
     },
     {
-      "label": "Cortex: Sample data \u2014 preview",
+      "label": "Cortex: Sample data — preview",
       "detail": "Show what the synthetic data generator produces, without touching Azure.",
       "type": "shell",
       "command": "pwsh",

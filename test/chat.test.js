@@ -66,6 +66,31 @@ describe('policy', () => {
 });
 
 describe('threads', () => {
+  test('a conversation cannot be reused for a different agent or another identity', async () => {
+    const foundry = fakeFoundry();
+    const { thread } = await chat(agent, 'hello', USERS.consumer, { foundry });
+    await assert.rejects(chat({ ...agent, id: 'other-agent' }, 'cross-agent', USERS.consumer, { foundry, threadId: thread.id }), (e) => e.code === 404);
+    await assert.rejects(chat(agent, 'cross-user', { ...USERS.consumer, id: 'other-user' }, { foundry, threadId: thread.id }), (e) => e.code === 404);
+    assert.equal(foundry.calls.length, 1);
+  });
+
+  test('published chat pins the assessed version and rejects oversized questions', async () => {
+    const foundry = fakeFoundry();
+    await chat({ ...agent, _agent: { ...agent._agent, publishedVersion: '8' } }, 'hello', USERS.consumer, { foundry });
+    assert.equal(foundry.calls[0].agentVersion, '8');
+    await assert.rejects(chat(agent, 'x'.repeat(8001), USERS.consumer, { foundry }), (e) => e.code === 400);
+  });
+
+  test('concurrent turns on one thread do not fork model history', async () => {
+    const { thread } = await chat(agent, 'hello', USERS.consumer, { foundry: fakeFoundry() });
+    let release;
+    const foundry = { respond: () => new Promise((resolve) => { release = resolve; }) };
+    const pending = chat(agent, 'first pending', USERS.consumer, { foundry, threadId: thread.id });
+    await assert.rejects(chat(agent, 'second pending', USERS.consumer, { foundry, threadId: thread.id }), (e) => e.code === 409);
+    release({ text: 'done', responseId: 'next' });
+    await pending;
+  });
+
   test('a first message starts a thread; a follow-up continues it with the previous response id', async () => {
     const foundry = fakeFoundry();
     const first = await chat(agent, 'Which registrations lapsed?', USERS.consumer, { foundry });

@@ -31,6 +31,76 @@ import index from '../index/store.js';
 import config from '../config.js';
 import { resolveDefinition } from './agents.js';
 import { connectionsConfigured, ensureMcpConnection } from '../adapters/foundry-connections.js';
+import { prepare, act, canRedTeam, allAssessments, assessmentById, saveAssessments, publicationVerdict, agentVersion } from './redteam.js';
+import { collection } from '../state/store.js';
+import { publishChannels } from '../adapters/channels.js';
+
+const publishing = new Set();
+
+export async function requestPublication(entryId, { baseUrl, visibility, user, microsoft365 }) {
+  const entry = index.get(entryId);
+  if (!canRedTeam(entry, user)) throw new Error('Only the recorded builder or a red-team reviewer may publish this agent.');
+  if (publishing.has(entryId)) throw new Error('A publication request for this agent is already being prepared.');
+  publishing.add(entryId);
+  try {
+    const existing = allAssessments().find((r) => r.agentId === entryId && r.publication && !['published','blocked'].includes(r.publication.status));
+    if (existing) {
+      if (existing.ownerId !== user.id) throw new Error('An assessment is already running for another publisher.');
+      if (JSON.stringify(existing.publication.microsoft365 || null) !== JSON.stringify(microsoft365 || null)) throw new Error('An assessment with different channel options is already running. Wait for it to finish before requesting another publication.');
+      return existing;
+    }
+    const r = await prepare(entry, user);
+    r.publication = { baseUrl, visibility, user: { id: user.id, name: user.name, groups: user.groups || [] }, status: r.status === 'failed' ? 'blocked' : 'assessing', requestedAt: new Date().toISOString() };
+    if (microsoft365) r.publication.microsoft365 = microsoft365;
+    r.policy = 'Automatic pre-publication sandbox policy: enable every generated prohibited-action scenario; all three evaluators must pass every sample; zero errors.';
+    await saveAssessments();
+    return r;
+  } finally { publishing.delete(entryId); }
+}
+
+let checkingPublications = false;
+export async function advancePublications() {
+  if (checkingPublications) return;
+  checkingPublications = true;
+  try {
+    for (const r of allAssessments().filter((r) => r.publication?.status === 'assessing')) {
+      try {
+        if (Date.now() - Date.parse(r.publication.requestedAt) > 24 * 3600000) throw new Error('Assessment exceeded the 24-hour publication window.');
+        if (r.status === 'taxonomy-pending') await act(r.id, r.publication.user, 'refresh');
+        if (r.status === 'review-required') {
+          r.reviewedBy = 'Configured automatic pre-publication policy';
+          await act(r.id, r.publication.user, 'start');
+        } else if (r.runId && !['completed','failed','canceled','cancelled'].includes(r.status)) await act(r.id, r.publication.user, 'refresh');
+        if (r.error || ['failed','canceled','cancelled','submission-unknown','submitting'].includes(r.status)) throw new Error(r.error || `Assessment status: ${r.status}. Inspect Foundry before retrying.`);
+        if (r.status === 'completed') {
+          const verdict = publicationVerdict(r);
+          if (!verdict.passed) throw new Error(verdict.reason);
+          await publishAgent(r.agentId, { ...r.publication, assessmentId: r.id });
+          if (r.publication.microsoft365) {
+            if (['submitting', 'submitted-for-approval'].includes(r.publication.channel?.state)) throw new Error('A Microsoft 365 submission already exists or has an uncertain outcome. Review it before another submission.');
+            const entry = index.get(r.agentId);
+            await publishChannels(index.foundry, entry._source?.id || entry.id, r.target.version, r.publication.microsoft365, async (progress) => {
+              r.publication.channel = { ...r.publication.channel, ...progress };
+              await saveAssessments();
+            });
+          }
+          r.publication.status = 'published';
+        }
+      } catch (err) {
+        r.publication.status = 'blocked';
+        r.publication.error = err.message;
+        console.error('[publication]', r.id, err.message);
+      }
+      await saveAssessments();
+    }
+  } finally { checkingPublications = false; }
+}
+
+export function startPublicationScheduler() {
+  const timer = setInterval(() => advancePublications().catch((err) => console.error('[publication]', err.message)), 15000);
+  timer.unref?.();
+  return timer;
+}
 
 /**
  * The OpenAPI document APIM imports. One operation per agent, because APIM
@@ -120,9 +190,14 @@ export function openApiFor(entry, baseUrl) {
  * Publish. Returns the MCP endpoint and a step-by-step record of what
  * happened, which the UI shows — the steps ARE the demo.
  */
-export async function publishAgent(entryId, { baseUrl, visibility, user }) {
+export async function publishAgent(entryId, { baseUrl, visibility, user, assessmentId }) {
   const entry = index.get(entryId);
   if (!entry) throw new Error(`Unknown agent ${entryId}`);
+  if (!canRedTeam(entry, user)) throw new Error('Only the recorded builder or a red-team reviewer may publish this agent.');
+  const assessment = assessmentById(assessmentId);
+  if (!assessment || assessment.agentId !== entryId || assessment.ownerId !== user.id || !publicationVerdict(assessment).passed) throw new Error('Publication requires a successful native Foundry red-team assessment.');
+  const live = await index.foundry.getAgent(entry._source?.id || entry.id);
+  if (String(agentVersion(live)) !== assessment.target.version || assessment.target.name !== (entry._source?.id || entry.id)) throw new Error('The agent changed after its assessment. Run a new assessment before publishing.');
 
   /**
    * Republishing must never silently narrow who can reach an agent. If no
@@ -233,12 +308,17 @@ export async function publishAgent(entryId, { baseUrl, visibility, user }) {
       published: true,
       publishedAt: new Date().toISOString(),
       publishedBy: user?.name,
+      publishedVersion: assessment.target.version,
+      assessmentId: assessment.id,
       visibility: effectiveVisibility,
       apimApiId: apiId,
       apimMcpId: mcpId,
       connection: connectionName
     }
   });
+  const storedAgents = collection('agents', {});
+  await storedAgents.flush();
+  if (storedAgents.lastError) throw new Error(`Publication reached APIM but its state could not be saved: ${storedAgents.lastError}`);
 
   record('Registered it back in the marketplace', `visible as: ${vis.access}`);
 

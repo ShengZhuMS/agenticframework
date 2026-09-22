@@ -1,12 +1,14 @@
-# Zero-dependency image. No npm install, so the build is seconds and the
-# container starts near-instantly — cold start is the top demo risk.
+# Install locked runtime packages for GraphQL and the supported MCP client.
 FROM mcr.microsoft.com/azurelinux/base/nodejs:20
 
 WORKDIR /app
-COPY package.json ./
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY src ./src
-COPY seed ./seed
 COPY scripts ./scripts
+# The bootstrap content, because the bootstrap JOB runs from this image
+# (infra/modules/containerapps.bicep): bootstrap.js reads bootstrap/*.json.
+COPY bootstrap ./bootstrap
 
 ENV NODE_ENV=production
 ENV PORT=3000

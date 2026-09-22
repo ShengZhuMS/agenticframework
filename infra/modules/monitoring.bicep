@@ -26,7 +26,11 @@ resource appi 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
+// The workspace KEY is deliberately not an output. A list* value in a module
+// output is written to the deployment history in clear text (linter rule
+// outputs-should-not-contain-secrets). containerapps.bicep reads the key
+// itself from the workspace named here.
+output name string = law.name
 output customerId string = law.properties.customerId
-output primarySharedKey string = law.listKeys().primarySharedKey
 output connectionString string = appi.properties.ConnectionString
 output workspaceId string = law.id

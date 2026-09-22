@@ -43,15 +43,16 @@ class LiveFoundry {
     this.name = 'foundry:live';
   }
 
-  async _fetch(pathname, { method = 'GET', body, apiVersion = true, timeoutMs } = {}) {
+  async _fetch(pathname, { method = 'GET', body, apiVersion = true, timeoutMs, headers = {} } = {}) {
     const url = new URL(this.cfg.projectEndpoint + pathname);
-    if (apiVersion) url.searchParams.set('api-version', this.cfg.apiVersion);
+    if (apiVersion) url.searchParams.set('api-version', typeof apiVersion === 'string' ? apiVersion : this.cfg.apiVersion);
     const token = await getToken(this.cfg.scope);
     const res = await fetch(url, {
       method,
       headers: {
         Authorization: bearer(token),
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...headers
       },
       body: body ? JSON.stringify(body) : undefined,
       // fetch() has no default timeout. A model call is allowed longer than a
@@ -69,7 +70,7 @@ class LiveFoundry {
    * The approved model catalogue.
    *
    * This is a governance list, not a discovery call: it states which models
-   * Defra has approved for use, which is a policy decision rather than
+   * the organisation has approved for use, which is a policy decision rather than
    * something the platform can be asked. A model present in Foundry but not
    * here is deliberately not offered.
    */
@@ -135,7 +136,7 @@ class LiveFoundry {
    *   { type: 'mcp', server_label, server_url, require_approval,
    *     allowed_tools, project_connection_id }
    */
-  async createAgent({ name, model, instructions, tools = [] }) {
+  async createAgent({ name, model, instructions, tools = [], keepAllTools = false }) {
     return this._fetch('/agents', {
       method: 'POST',
       body: {
@@ -144,14 +145,22 @@ class LiveFoundry {
           kind: 'prompt',
           model: model || this.cfg.model,
           instructions,
-          tools: tools.filter((t) => ['mcp', 'openapi', 'function', 'azure_ai_search', 'file_search'].includes(t.type))
+          // keepAllTools: a repair re-creates a version from the definition
+          // Foundry holds, and must not drop a tool type this list has not
+          // heard of.
+          tools: keepAllTools ? tools : tools.filter((t) => ['mcp', 'openapi', 'function', 'azure_ai_search', 'file_search'].includes(t.type))
         }
       }
     });
   }
 
   async getAgent(name) {
-    return this._fetch(`/agents/${name}`).catch(() => null);
+    try {
+      return await this._fetch(`/agents/${encodeURIComponent(name)}`);
+    } catch (err) {
+      if (/ failed 404:/.test(err.message)) return null;
+      throw err;
+    }
   }
 
   async listAgents() {
@@ -169,13 +178,37 @@ class LiveFoundry {
    * the history server-side, so a follow-up carries the whole thread without
    * this app storing any of it.
    */
-  async respond({ agentName, input, conversationId, previousResponseId, maxApprovalRounds = this.cfg.maxApprovalRounds ?? 6 }) {
+  async respond({ agentName, agentVersion, input, conversationId, previousResponseId, maxApprovalRounds = this.cfg.maxApprovalRounds ?? 6 }) {
     const agentRef = { name: agentName, type: 'agent_reference' };
+    if (agentVersion) agentRef.version = String(agentVersion);
     const body = { input, agent_reference: agentRef };
     if (conversationId) body.conversation = conversationId;
     if (previousResponseId) body.previous_response_id = previousResponseId;
 
-    let res = await this._post(body);
+    let res;
+    try {
+      res = await this._post(body);
+    } catch (err) {
+      /**
+       * THE 401 THAT KEPT COMING BACK. "Authentication failed when connecting
+       * to the MCP server … 401 Access denied due to missing subscription
+       * key" means this agent's tool definition carries no usable project
+       * connection — an agent built before connections existed, or one whose
+       * record did not survive. The repair hook (services/agents.js
+       * ensureToolConnections, attached at start-up) gives the tools their
+       * connections in a new version; then the same turn is tried once more.
+       */
+      if (agentVersion || !isToolAuthFailure(err) || typeof this.repairTools !== 'function') throw err;
+      let repair;
+      try {
+        repair = await this.repairTools(agentName, { force: true });
+      } catch (repairErr) {
+        err.message += ` — Cortex tried to repair the agent's tool connections and could not: ${repairErr.message}`;
+        throw err;
+      }
+      if (!repair?.repaired) throw err;
+      res = await this._post(body);
+    }
     const toolCalls = [];
     let rounds = 0;
 
@@ -291,6 +324,12 @@ class LiveFoundry {
     await this.listAgents();
     return { ok: true, mode: 'live', model: this.cfg.model, latencyMs: Date.now() - started };
   }
+}
+
+/** The failure that means an MCP tool has no working project connection. */
+export function isToolAuthFailure(err) {
+  const m = String(err?.message || '');
+  return /Authentication failed when connecting to the MCP server/i.test(m) && /401|subscription key/i.test(m);
 }
 
 /** Pull every tool interaction out of a response's output items. */

@@ -87,7 +87,8 @@ let resolvedAz = null;
 const SAFE_RESOURCE = /^https:\/\/[A-Za-z0-9][A-Za-z0-9.\-/]*$/;
 
 function assertSafeResource(resource) {
-  if (!SAFE_RESOURCE.test(resource)) {
+  // Azure Databricks uses a fixed application ID rather than an HTTPS audience.
+  if (resource !== '2ff814a6-3304-4ab8-85cb-cd0e6f879c1d' && !SAFE_RESOURCE.test(resource)) {
     throw new Error(
       `Refusing to request a token for an unexpected resource: ${JSON.stringify(resource)}. ` +
         'Scopes are code-level constants and must look like https://host[/path].'

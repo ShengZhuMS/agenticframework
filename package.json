@@ -2,7 +2,7 @@
   "name": "cortex",
   "version": "0.1.0",
   "private": true,
-  "description": "Cortex \u2014 a front door to Microsoft Purview, API Management and Foundry, for Defra",
+  "description": "Data Cortex - a customer-neutral accelerator for Microsoft Purview, API Management and Foundry",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -22,7 +22,8 @@
     "sample-data": "node scripts/sample-data.js --list"
   },
   "dependencies": {
-    "govuk-frontend": "^5.7.1"
-  },
-  "devDependencies": {}
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "govuk-frontend": "^5.7.1",
+    "graphql": "16.11.0"
+  }
 }

@@ -176,7 +176,7 @@ export function askPage(ctx, { thread, history, threadId }) {
           ${thread ? 'Follow up in this thread' : 'Your question'}
         </label>
         <input class="govuk-input" id="q" name="q" type="text"
-               placeholder="How many waste carrier registrations lapsed in the last quarter?">
+               placeholder="What service performance data is available?">
       </div>
       <button class="govuk-button" type="submit">${thread ? 'Ask a follow-up' : 'Ask'}</button>
     </form>
@@ -187,11 +187,10 @@ export function askPage(ctx, { thread, history, threadId }) {
       !thread
         ? `<h2 class="govuk-heading-m">Try one of these</h2>
            <ul class="govuk-list govuk-list--spaced">
-             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('Which waste carrier registrations lapsed?')}">Which waste carrier registrations lapsed?</a></li>
-             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('What water quality data do we hold?')}">What water quality data do we hold?</a></li>
-             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('Average days sick per employee')}">Average days sick per employee</a>
-               <span class="cortex-src">Shows the "allowed the answer, not allowed the data" route</span></li>
-             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('Badger population trends')}">Badger population trends</a>
+             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('What service performance data is available?')}">What service performance data is available?</a></li>
+             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('Which products describe quality checks?')}">Which products describe quality checks?</a></li>
+             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('What synthetic workforce summaries can I request?')}">What workforce summaries can I request?</a></li>
+             <li><a class="govuk-link" href="/ask?q=${encodeURIComponent('Unregistered topic')}">Unregistered topic</a>
                <span class="cortex-src">Shows the working when nothing is found</span></li>
            </ul>`
         : ''

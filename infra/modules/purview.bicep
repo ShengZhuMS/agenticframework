@@ -14,15 +14,13 @@ param principalId string
 
 var reader = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
 
+// No `sku` block: on this api-version the property is read-only (BCP073) —
+// the service assigns Standard itself and manages capacity.
 resource purview 'Microsoft.Purview/accounts@2021-12-01' = {
   name: name
   location: location
   tags: tags
   identity: { type: 'SystemAssigned' }
-  sku: {
-    name: 'Standard'
-    capacity: 1
-  }
   properties: {
     publicNetworkAccess: 'Enabled'
     managedResourceGroupName: 'mrg-${name}'

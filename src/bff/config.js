@@ -67,6 +67,14 @@ export const config = {
     projectEndpoint: env.FOUNDRY_PROJECT_ENDPOINT || '',
     apiVersion: 'v1',
     scope: 'https://ai.azure.com/.default',
+    /**
+     * How a tool names its project connection. 'id' (default) is the full
+     * connection resource id, which is what the Foundry SDK's connection.id
+     * returns and what the REST samples show; 'name' is the bare connection
+     * name. Switch with FOUNDRY_CONNECTION_REF=name if Foundry reports the
+     * connection as not found in the id form.
+     */
+    connectionRef: env.FOUNDRY_CONNECTION_REF === 'name' ? 'name' : 'id',
     model: env.FOUNDRY_MODEL || 'gpt-5-mini',
     /**
      * Further deployments the approved catalogue may offer, comma-separated.
@@ -138,9 +146,18 @@ export const config = {
     scope: 'https://storage.azure.com/.default'
   },
 
-  /** Where application state is written. Empty = memory only. */
+  /**
+   * Where application state is written. A blob account (STATE_STORAGE_ACCOUNT,
+   * read and written with the managed identity — the deployed shape), or a
+   * directory (CORTEX_STATE_DIR, local development), or neither = memory only.
+   */
   state: {
-    dir: env.CORTEX_STATE_DIR || ''
+    dir: env.CORTEX_STATE_DIR || '',
+    blobAccount: env.STATE_STORAGE_ACCOUNT || '',
+    blobContainer: env.STATE_CONTAINER || 'state',
+    scope: 'https://storage.azure.com/.default',
+    /** How long startup waits for the state blobs before serving with memory state. */
+    primeTimeoutMs: Number(env.STATE_PRIME_TIMEOUT_MS || 20_000)
   },
 
   /**

@@ -69,7 +69,7 @@ export async function bootstrapConnections({ log, counters, dryRun = false, apim
     return { created: 0, kept: 0 };
   }
   if (dryRun) {
-    log.skip(`would create one RemoteTool connection per MCP server in ${config.apim.serviceName}, e.g. permit-history-lookup-mcp → ${connectionNameFor('permit-history-lookup-mcp')}`);
+    log.skip(`would create one RemoteTool connection per MCP server in ${config.apim.serviceName}, e.g. cx-demo-inventory-lookup-mcp → ${connectionNameFor('cx-demo-inventory-lookup-mcp')}`);
     return { created: 0, kept: 0 };
   }
   let servers = [];
@@ -176,7 +176,10 @@ export async function bootstrapData({
     } catch (err) {
       counters.failed++;
       log.fail(`storage — ${err.message}`);
-      return { uploaded: 0, linked: 0 };
+      if (err.blocked) {
+        log.warn('nothing else against this account can work until its network rules are repaired — the scan and the indexes are skipped this run');
+      }
+      return { uploaded: 0, linked: 0, blocked: true, reason: err.message };
     }
     for (const p of known) {
       try {
@@ -188,7 +191,17 @@ export async function bootstrapData({
       } catch (err) {
         counters.failed++;
         log.fail(`${p.id} — ${err.message}`);
+        // The network code will not change between products. One failure is
+        // the diagnosis; thirteen more are noise.
+        if (err.blocked) {
+          log.warn(`stopping — ${config.data.storageAccount} refuses this machine, so every remaining upload would fail the same way`);
+          return { uploaded, linked: 0, blocked: true, reason: err.message };
+        }
       }
+    }
+    if (known.length && uploaded === 0) {
+      log.warn('no sample file reached storage, so there is nothing for the Data Map to scan or AI Search to index this run');
+      return { uploaded: 0, linked: 0, blocked: true, reason: 'no sample file was uploaded' };
     }
   }
 
@@ -215,7 +228,7 @@ export async function bootstrapData({
   } catch (err) {
     counters.failed++;
     log.fail(`Data Map — ${err.message}`);
-    log.warn('the files are in storage; register and scan the account by hand in the Purview portal, then run --only=link');
+    log.warn('The uploaded files are preserved. Repair the reported API/access error and rerun the data section; source registration and scanning are automated.');
     return { uploaded, linked: 0 };
   }
 
@@ -305,6 +318,9 @@ export async function linkAssets({
       const reg = await purview.registerDataAsset({
         dataMapAssetId: asset.id,
         name: asset.name || `${p.id}.csv`,
+        qualifiedName: asset.qualifiedName,
+        assetType: asset.type,
+        columns: asset.columns || [],
         ownerId: me,
         ownerName: p.owner || 'Cortex bootstrap',
         openInUrl: `https://purview.microsoft.com/datacatalog/governance/main/catalog/dataasset/${asset.id}`
@@ -332,7 +348,16 @@ export async function linkAssets({
  * One AI Search index per product, over the product's folder, plus the
  * Foundry connection that lets an agent read it.
  */
-export async function bootstrapSearch({ products, log, counters, dryRun = false, search = createSearchAdapter() }) {
+export async function bootstrapSearch({
+  products,
+  log,
+  counters,
+  dryRun = false,
+  verify = true,
+  verifySeconds = 90,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  search = createSearchAdapter()
+}) {
   log.step('Azure AI Search — one index per data product');
   const missing = missingFor('search');
   if (missing.length) {
@@ -356,17 +381,21 @@ export async function bootstrapSearch({ products, log, counters, dryRun = false,
     log.fail(`Foundry → AI Search connection — ${err.message}`);
   }
 
-  // The Basic tier holds 15 indexes; say so before hitting the wall on the 15th.
+  // Preflight the whole pack before partially creating it or starting indexers.
   try {
     const have = await search.listIndexes();
     const ours = new Set(have.filter((n) => n.startsWith(config.search.indexPrefix)));
     const wanted = known.map((p) => indexNameFor(p.id));
     const newOnes = wanted.filter((n) => !ours.has(n)).length;
-    if (have.length + newOnes > 15) {
-      log.warn(`${have.length} indexes exist and ${newOnes} more are needed — the Basic tier allows 15. Move the service to Standard S1 or reduce the products.`);
+    const capacity = search.capacity ? await search.capacity() : { limit: 15 };
+    if (!Number.isFinite(capacity.limit)) throw new Error('Search did not report its index quota.');
+    if (have.length + newOnes > capacity.limit) {
+      throw new Error(`${have.length} indexes exist and ${newOnes} more are needed, but the service quota is ${capacity.limit}. Run the reviewed legacy-index migration or approve a capacity upgrade. No indexes were changed.`);
     }
   } catch (err) {
-    log.warn(`could not list indexes — ${err.message}`);
+    counters.failed++;
+    log.fail(`Search capacity preflight: ${err.message}`);
+    return { built: 0, indexed: 0, failed: 1 };
   }
 
   const storageAccountId =
@@ -374,6 +403,7 @@ export async function bootstrapSearch({ products, log, counters, dryRun = false,
     `/providers/Microsoft.Storage/storageAccounts/${config.data.storageAccount}`;
   const semantic = /semantic/.test(config.search.queryType);
   let built = 0;
+  const started = [];
   for (const p of known) {
     const name = indexNameFor(p.id);
     try {
@@ -384,14 +414,89 @@ export async function bootstrapSearch({ products, log, counters, dryRun = false,
       const run = await search.runIndexer(`${name}-indexer`);
       built++;
       counters.created++;
+      started.push(name);
       log.ok(`${name} — ${g.columns.length} columns; indexer ${run.started ? 'started' : run.reason}`);
     } catch (err) {
       counters.failed++;
       log.fail(`${name} — ${err.message}`);
     }
   }
-  if (built) log.ok('indexers run in the background; rows appear within a minute or two. Agents pick indexes up on "Rebuild tools".');
-  return { built };
+  if (!built) return { built, indexed: 0, failed: 0 };
+  if (!verify) {
+    log.ok('indexers run in the background (not waiting — --no-wait). Check them with --only=search later. Agents pick indexes up on "Rebuild tools".');
+    return { built, indexed: 0, failed: 0, verified: false };
+  }
+
+  // "Rows appear within a minute or two" used to be the last word, and on the
+  // first live run every indexer failed silently because the storage account
+  // refused the search service. So wait for each indexer's first run and
+  // report what it did — rows in, or the error — instead of hoping.
+  const outcome = await verifyIndexers({ names: started, search, log, sleep, verifySeconds });
+  if (outcome.indexed) log.ok(`${outcome.indexed} of ${built} indexes hold rows. Agents pick indexes up on "Rebuild tools".`);
+  if (outcome.failed) {
+    counters.failed += outcome.failed;
+    if (outcome.networkBlocked) {
+      log.fail(`${outcome.failed} indexer(s) were refused by ${config.data.storageAccount} — its network rules block the search service. Repair with .\\scripts\\Set-CortexStorageAccess.ps1, then run --only=search again.`);
+    } else {
+      log.fail(`${outcome.failed} indexer(s) failed — see the errors above, fix the cause and run --only=search again`);
+    }
+  }
+  if (outcome.pending) log.warn(`${outcome.pending} indexer(s) had not finished after ${verifySeconds}s — check later with --only=search`);
+  return { built, indexed: outcome.indexed, failed: outcome.failed, pending: outcome.pending, verified: true };
+}
+
+/**
+ * Poll each indexer until its most recent run has a terminal status, or the
+ * budget runs out. Exported for tests; the search adapter is injected.
+ */
+export async function verifyIndexers({ names, search, log, sleep, verifySeconds = 90, intervalMs = 10_000 }) {
+  const remaining = new Set(names);
+  const result = { indexed: 0, failed: 0, pending: 0, networkBlocked: false };
+  const deadline = Date.now() + verifySeconds * 1000;
+  const terminal = /^(success|transientFailure|persistentFailure|reset)$/i;
+  while (remaining.size && Date.now() < deadline) {
+    for (const name of [...remaining]) {
+      let s = null;
+      try {
+        s = await search.indexerStatus(`${name}-indexer`);
+      } catch (err) {
+        log.warn(`${name} — could not read the indexer status: ${err.message}`);
+        remaining.delete(name);
+        result.pending++;
+        continue;
+      }
+      const last = s?.lastRun;
+      if (!last || !terminal.test(String(last.status || ''))) continue;
+      remaining.delete(name);
+      const errors = last.errors || [];
+      if (/^success$/i.test(last.status) && !last.failed) {
+        const stats = search.indexStats ? await search.indexStats(name) : { documents: last.processed };
+        if (stats?.documents > 0) {
+          result.indexed++;
+          log.ok(`${name} — ${stats.documents} rows indexed`);
+        } else {
+          // Search statistics lag a successful indexer. Wait before declaring an empty index.
+          remaining.add(name);
+        }
+      } else {
+        result.failed++;
+        const first = errors[0] || `status ${last.status}`;
+        if (/not authorized to perform this operation|AuthorizationFailure|403/i.test(first)) result.networkBlocked = true;
+        log.fail(`${name} — ${first}`);
+      }
+    }
+    if (remaining.size) await sleep(intervalMs);
+  }
+  for (const name of remaining) {
+    const stats = search.indexStats ? await search.indexStats(name) : null;
+    if (stats?.documents === 0) {
+      result.failed++;
+      log.fail(`${name} — no indexed rows appeared before the verification deadline; check source folder and file parsing.`);
+    } else {
+      result.pending++;
+    }
+  }
+  return result;
 }
 
 /** True when API Management knows a connection name — used by tests. */

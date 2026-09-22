@@ -16,6 +16,7 @@ import {
   composeInstructions
 } from '../src/bff/services/agents.js';
 import { publishAgent, openApiFor } from '../src/bff/services/publish.js';
+import { collection } from '../src/bff/state/store.js';
 
 let restore;
 before(async () => {
@@ -135,7 +136,14 @@ describe('create and publish — the loop closes', () => {
   });
 
   test('publishing registers it and returns an MCP endpoint', async () => {
+    collection('redteam-runs', {}).data['rt-pass'] = {
+      id: 'rt-pass', agentId: created.id, ownerId: USERS.analyst.id,
+      target: { name: created._source.id, version: '1' }, status: 'completed',
+      result: { result_counts: { passed: 1, failed: 0, errored: 0 } },
+      items: [{ status: 'pass', results: ['Prohibited actions', 'Task adherence', 'Sensitive data leakage'].map((name) => ({ name, passed: true })) }]
+    };
     const r = await publishAgent(created.id, {
+      assessmentId: 'rt-pass',
       baseUrl: 'https://example.test',
       visibility: 'all',
       user: USERS.analyst
@@ -151,7 +159,7 @@ describe('create and publish — the loop closes', () => {
   });
 
   test('republishing does not narrow visibility', async () => {
-    const a = await publishAgent(created.id, { baseUrl: 'https://example.test', user: USERS.analyst });
+    const a = await publishAgent(created.id, { baseUrl: 'https://example.test', user: USERS.analyst, assessmentId: 'rt-pass' });
     assert.match(a.entry.access, /all staff/i);
   });
 

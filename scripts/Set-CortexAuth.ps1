@@ -37,11 +37,11 @@
   Sign-in on, groups claim on, every signed-in user treated as all-staff.
 
 .EXAMPLE
-  .\scripts\Set-CortexAuth.ps1 -GroupMap 'waste-crime=Waste Crime Observatory','analysts=Data Analysts'
+  .\scripts\Set-CortexAuth.ps1 -GroupMap 'operations=Cortex Operations','analysts=Cortex Analysts'
   Also map two Entra groups onto the names the access rules use.
 
 .EXAMPLE
-  .\scripts\Set-CortexAuth.ps1 -GroupMap 'waste-crime=Cortex Waste Crime' -CreateGroups
+  .\scripts\Set-CortexAuth.ps1 -GroupMap 'operations=Cortex Operations' -CreateGroups
   Create the Entra group if it does not exist and add you to it — for the
   "same page, different eyes" demo moment.
 
@@ -240,6 +240,35 @@ try {
   $configuredFor = $aad.registration.clientId
   $needsSecret = $RotateSecret -or (-not $aad) -or ($configuredFor -ne $app.appId)
 
+  # THE SECRET THAT WENT MISSING. Sign-in is configured on the app once, and
+  # the client secret lives in the app's secrets under clientSecretSettingName.
+  # A later provision or secret update can leave a revision without it — the
+  # web container runs, the http-auth sidecar sits in CreateContainerConfigError,
+  # and the platform never routes to the revision. The first perimeter run
+  # showed exactly that. So: if the secret is absent or empty, or the newest
+  # revision's sidecar is in that state, mint a new one and apply it.
+  if ($aad -and -not $needsSecret) {
+    $secretName = if ($aad.registration.clientSecretSettingName) { $aad.registration.clientSecretSettingName } else { 'microsoft-provider-authentication-secret' }
+    $secretValue = az containerapp secret show -n $webApp -g $rg --secret-name $secretName --query value -o tsv 2>$null
+    if (-not $secretValue) {
+      Warn2 "The sign-in secret '$secretName' is missing from $webApp — re-minting it."
+      $needsSecret = $true
+    } else {
+      $latest = az containerapp show -n $webApp -g $rg --query properties.latestRevisionName -o tsv 2>$null
+      if ($latest) {
+        $replicas = Get-AzJson @('containerapp','replica','list','-n',$webApp,'-g',$rg,'--revision',$latest,'-o','json')
+        foreach ($r in @($replicas)) {
+          foreach ($c in @($r.properties.containers)) {
+            if ($c.name -eq 'http-auth' -and "$($c.runningStateDetails) $($c.runningState)" -match 'CreateContainerConfigError') {
+              Warn2 "The sign-in sidecar on revision $latest cannot start (CreateContainerConfigError) — re-minting the client secret."
+              $needsSecret = $true
+            }
+          }
+        }
+      }
+    }
+  }
+
   if ($needsSecret) {
     # Minted only now. Every reset adds a credential to the app, so this is
     # not done on every run.
@@ -316,7 +345,7 @@ try {
     # Every group the signed-in person is in, named after its display name —
     # lower-case, spaces to hyphens — so /profile stops showing raw ids. Access
     # changes only where a derived name happens to match a rule (all-staff,
-    # analysts, waste-crime, cortex-official-sensitive, cortex-commercial-licence).
+    # analysts, operations, cortex-official-sensitive, cortex-commercial-licence).
     # No query string in the URL: on Windows `az` is a .cmd whose arguments pass
     # through cmd.exe, where an unquoted `&` splits the command. Parameters go
     # through --uri-parameters, one argument each, and the CLI encodes them.

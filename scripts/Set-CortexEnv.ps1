@@ -44,6 +44,8 @@
 [CmdletBinding()]
 param(
   [string]$EnvironmentName,
+  [string]$WebApp,
+  [string]$ResourceGroup,
   [switch]$Quiet
 )
 
@@ -63,6 +65,27 @@ if ($MyInvocation.InvocationName -ne '.') {
 
 $ErrorActionPreference = 'Stop'
 $cortexRoot = Split-Path -Parent $PSScriptRoot
+
+if ($WebApp) {
+  if (!$ResourceGroup) { throw '-ResourceGroup is required with -WebApp.' }
+  $app = az containerapp show -g $ResourceGroup -n $WebApp --only-show-errors -o json | ConvertFrom-Json
+  if ($LASTEXITCODE -ne 0) { throw 'Could not read the deployed web app.' }
+  $secrets = az containerapp secret list -g $ResourceGroup -n $WebApp --show-values --only-show-errors -o json | ConvertFrom-Json
+  if ($LASTEXITCODE -ne 0) { throw 'Could not resolve web app secrets.' }
+  foreach ($setting in $app.properties.template.containers[0].env) {
+    if ($setting.name -in @('AZURE_CLIENT_ID','PORT','NODE_ENV','ALLOW_UNAUTHENTICATED')) { continue }
+    $value = $setting.value
+    if ($setting.secretRef) {
+      $value = ($secrets | Where-Object name -eq $setting.secretRef).value
+      if (!$value) { throw "Missing secret referenced by $($setting.name)" }
+    }
+    [Environment]::SetEnvironmentVariable($setting.name, $value, 'Process')
+  }
+  $env:CORTEX_IDENTITY_PRINCIPAL_ID = ($app.identity.userAssignedIdentities.PSObject.Properties.Value | Select-Object -First 1).principalId
+  $env:KEYVAULT_NAME = ''
+  if (!$Quiet) { Write-Host "Loaded deployed configuration from $WebApp; secrets kept in process memory." }
+  return
+}
 
 try {
   Push-Location $cortexRoot

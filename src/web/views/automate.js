@@ -8,7 +8,7 @@
  */
 
 import { esc, attr, layout } from '../layout.js';
-import { CADENCES, DAYS } from '../../bff/services/automations.js';
+import { CADENCES, DAYS, MAX_STEPS } from '../../bff/services/automations.js';
 
 const fmt = (iso) => (iso ? new Date(iso).toLocaleString('en-GB', { timeZone: 'UTC', hour12: false }) + ' UTC' : '—');
 
@@ -50,7 +50,7 @@ export function automationsPage(ctx, { mine, all, created }) {
               .map(
                 (a) => `<tr class="govuk-table__row">
                   <td class="govuk-table__cell"><a class="govuk-link" href="/automate/${attr(a.id)}">${esc(a.name)}</a>
-                    <span class="cortex-src">${esc(a.kind === 'agent' ? `asks ${a.agentName}` : 'approved method')} · ${esc(cadenceText(a))}</span></td>
+                    <span class="cortex-src">${esc(a.kind === 'workflow' ? `${a.steps.length} ordered agent steps` : a.kind === 'agent' ? `asks ${a.agentName}` : 'approved method')} · ${esc(cadenceText(a))}</span></td>
                   <td class="govuk-table__cell">${a.runs.length}${a.runs[0]?.status === 'failed' ? ' <strong class="govuk-tag govuk-tag--red">last failed</strong>' : ''}</td>
                   <td class="govuk-table__cell">${a.status === 'active' ? esc(fmt(a.nextRunAt)) : '—'}</td>
                   <td class="govuk-table__cell">${esc(a.owner?.name || '—')}</td>
@@ -76,7 +76,7 @@ ${
     <h1 class="govuk-heading-xl govuk-!-margin-bottom-2">Automate a task</h1>
     <p class="govuk-body-l">Automations that draft, with a person at the checkpoint.</p>
     <div class="govuk-inset-text">
-      <p class="govuk-body govuk-!-margin-bottom-0">Everything starts, and stays, in <strong>propose-only</strong>. An automation asks an agent — or re-runs an approved request method — on a schedule and files the draft here. Nothing writes to any system until the accountable owner turns writing on, and that switch does not exist in this phase.</p>
+      <p class="govuk-body govuk-!-margin-bottom-0">Compose an ordered workflow of two to five agents. Each receives the previous agent's result; the final result stays a <strong>draft for human review</strong>. Use read-only agents and tools. Existing single-agent and approved-method schedules remain available in their histories.</p>
     </div>
     <a class="govuk-button" href="/automate/new" role="button">Set up an automation</a>
 
@@ -88,7 +88,7 @@ ${
     <div class="cortex-filters">
       <h2 class="govuk-heading-m">How it works</h2>
       <ol class="govuk-list govuk-list--number govuk-list--spaced govuk-!-margin-bottom-0">
-        <li>Pick an agent from the Marketplace and the question it is asked, or an approved request method.</li>
+        <li>Choose multiple agents and instructions for each step, in order.</li>
         <li>Choose how often. Name the accountable owner — that is you.</li>
         <li>Each run drafts an answer, with its sources and the tools it used, into the run history.</li>
         <li>A person reads it. Pause or delete at any time.</li>
@@ -101,7 +101,7 @@ ${
 
 export function automationFormPage(ctx, { agents, methods, form = {}, errors = [] }) {
   const f = form;
-  const kind = f.kind === 'method' ? 'method' : 'agent';
+  const kind = 'workflow';
   const err = (field) => errors.find((e) => e.field === field);
   const group = (field) => `govuk-form-group${err(field) ? ' govuk-form-group--error' : ''}`;
   const msg = (field) => (err(field) ? `<p class="govuk-error-message"><span class="govuk-visually-hidden">Error:</span> ${esc(err(field).message)}</p>` : '');
@@ -114,46 +114,40 @@ export function automationFormPage(ctx, { agents, methods, form = {}, errors = [
   <form method="post" action="/automate/new">
     <div class="${group('name')}">
       <label class="govuk-label govuk-label--s" for="name">What is it called?</label>
-      <div class="govuk-hint">Say what it does: "Weekly lapsed carriers digest".</div>
+      <div class="govuk-hint">For example: "Weekly operational insights and review".</div>
       ${msg('name')}
       <input class="govuk-input" id="name" name="name" type="text" value="${attr(f.name || '')}">
     </div>
 
-    <div class="govuk-form-group">
-      <fieldset class="govuk-fieldset">
-        <legend class="govuk-fieldset__legend govuk-fieldset__legend--s">What does it run?</legend>
-        <div class="govuk-radios" data-module="govuk-radios">
-          <div class="govuk-radios__item">
-            <input class="govuk-radios__input" id="kind-agent" name="kind" type="radio" value="agent" ${kind === 'agent' ? 'checked' : ''}>
-            <label class="govuk-label govuk-radios__label" for="kind-agent">An agent, asked the same question each time</label>
-          </div>
-          <div class="govuk-radios__item">
-            <input class="govuk-radios__input" id="kind-method" name="kind" type="radio" value="method" ${kind === 'method' ? 'checked' : ''} ${methods.length ? '' : 'disabled'}>
-            <label class="govuk-label govuk-radios__label" for="kind-method">An approved request method${methods.length ? '' : ' (none approved yet — release a request with "approve the method")'}</label>
-          </div>
+    <input type="hidden" name="kind" value="${kind}">
+    <p class="govuk-body">Steps run in order and stop on the first failure. Choose at least two different agents. Leave unused trailing steps blank.</p>
+    ${Array.from({ length: MAX_STEPS }, (_, n) => {
+      const i = n + 1;
+      return `<fieldset class="govuk-fieldset">
+        <legend class="govuk-fieldset__legend govuk-fieldset__legend--s">Step ${i}${i > 2 ? ' (optional)' : ''}</legend>
+        <div class="${group(`stepAgent${i}`)}">
+          <label class="govuk-label" for="stepAgent${i}">Agent</label>${msg(`stepAgent${i}`)}
+          <select class="govuk-select" id="stepAgent${i}" name="stepAgent${i}">
+            <option value="">Choose an agent</option>
+            ${agents.map((a) => `<option value="${attr(a.id)}" ${(f[`stepAgent${i}`] || (i === 1 ? f.agentId : '')) === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}
+          </select>
         </div>
-      </fieldset>
-    </div>
-
-    <div class="${group('agentId')}">
-      <label class="govuk-label govuk-label--s" for="agentId">Which agent?</label>
-      <div class="govuk-hint">Only if you chose an agent above. Agents come from the Marketplace.</div>
-      ${msg('agentId')}
-      <select class="govuk-select" id="agentId" name="agentId">
-        <option value="">Choose an agent</option>
-        ${agents.map((a) => `<option value="${attr(a.id)}" ${f.agentId === a.id ? 'selected' : ''}>${esc(a.name)} — ${esc(a.owner)}</option>`).join('')}
-      </select>
-    </div>
+        <div class="${group(`stepInstruction${i}`)}">
+          <label class="govuk-label" for="stepInstruction${i}">Instructions for this step</label>${msg(`stepInstruction${i}`)}
+          <textarea class="govuk-textarea" id="stepInstruction${i}" name="stepInstruction${i}" rows="2" maxlength="4000">${esc(f[`stepInstruction${i}`] || '')}</textarea>
+        </div>
+      </fieldset>`;
+    }).join('')}
 
     <div class="${group('question')}">
-      <label class="govuk-label govuk-label--s" for="question">The question it is asked</label>
+      <label class="govuk-label govuk-label--s" for="question">The overall task</label>
       <div class="govuk-hint">Written once, asked every run. Be specific about the period: "in the last 7 days".</div>
       ${msg('question')}
       <textarea class="govuk-textarea" id="question" name="question" rows="3">${esc(f.question || '')}</textarea>
     </div>
 
     ${
-      methods.length
+      kind === 'method' && methods.length
         ? `<div class="${group('methodId')}">
       <label class="govuk-label govuk-label--s" for="methodId">Which approved method?</label>
       <div class="govuk-hint">Only if you chose an approved method above. These were approved by a data holder when they released an answer.</div>
@@ -211,6 +205,7 @@ export function automationFormPage(ctx, { agents, methods, form = {}, errors = [
     <div class="govuk-inset-text">
       <p class="govuk-body govuk-!-margin-bottom-1"><strong>Accountable owner:</strong> ${esc(ctx.user.name)}${ctx.user.email ? ` (${esc(ctx.user.email)})` : ''}</p>
       <p class="govuk-body govuk-!-margin-bottom-0"><strong>What it writes:</strong> nothing. Drafts land on the automation\u2019s page and stop there.</p>
+      <p class="govuk-body">Scheduled runs use your captured permissions, not a fresh Entra token. Pause schedules when access changes. Keep agents read-only; Cortex does not sandbox external tool implementations.</p>
     </div>
 
     <button class="govuk-button" type="submit">Set it up</button>
@@ -241,6 +236,11 @@ function runBlock(a, r) {
                : ''
            }`
     }
+    ${r.steps?.length ? `<h3 class="govuk-heading-s">Step results</h3><ol class="govuk-list govuk-list--number">${r.steps.map((s) => `<li><strong>${esc(s.agentName)}: ${esc(s.status)}</strong>
+      ${s.error ? `<p class="govuk-error-message">${esc(s.error.message)}</p>` : ''}
+      <p style="white-space:pre-wrap">${esc(s.draft || '')}</p>
+      ${s.truncated ? '<p class="govuk-hint">Stored output truncated at the handoff limit; this step failed.</p>' : ''}
+      <details><summary>Sources and tool evidence</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(JSON.stringify({ sources: s.sources || [], toolCalls: s.toolCalls || [] }, null, 2))}</pre></details></li>`).join('')}</ol>` : ''}
     <form method="post" action="/automate/${attr(a.id)}/runs/delete" style="margin:6px 0 0">
       <input type="hidden" name="at" value="${attr(t)}">
       <button class="govuk-link" style="border:0;background:none;cursor:pointer;padding:0;font-size:16px" type="submit">Delete this draft</button>
@@ -267,7 +267,7 @@ ${
 
     <div class="cortex-four">
       <div><strong>What it does</strong>${
-        a.kind === 'agent'
+        a.kind === 'workflow' ? `Runs ${a.steps.map((s) => esc(s.agentName)).join(' → ')}: ${esc(a.question)}` : a.kind === 'agent'
           ? `Asks <a class="govuk-link" href="/agent/${attr(a.agentId)}">${esc(a.agentName)}</a>: \u201c${esc(a.question)}\u201d`
           : `Re-runs approved method ${esc(a.methodId)}: \u201c${esc(a.question)}\u201d`
       } — ${esc(cadenceText(a))}.</div>

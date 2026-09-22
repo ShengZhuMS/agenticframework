@@ -351,7 +351,7 @@ export function stubAzure({ agents = [], failing = [] } = {}) {
         DATAMAP_ASSETS.set('__policy_put__', body());
         return json(body());
       }
-      if (/\/scan\/datasources\/[^/]+\/scans\/[^/]+\/runs\/[^/?]+\?/.test(url)) return json({ scanResultId: 'run-1', status: 'Queued' });
+      if (/\/scan\/datasources\/[^/]+\/scans\/[^/]+:run\?/.test(url) && (init.method || 'GET') === 'POST') return json({ scanResultId: 'run-1', status: 'Queued' });
       if (/\/scan\/datasources\/[^/]+\/scans\/[^/]+\/runs\?/.test(url)) {
         return json({ value: [{ id: 'run-1', status: 'Succeeded', startTime: '2026-09-11T08:00:00Z', assetsDiscovered: 28 }] });
       }
@@ -433,8 +433,11 @@ export function stubAzure({ agents = [], failing = [] } = {}) {
     if (url.includes('/agents')) {
       if (init.method === 'POST') {
         const body = JSON.parse(init.body || '{}');
+        agents.push({ name: body.name, version: 1, definition: body.definition });
         return json({ name: body.name, version: 1, object: 'agent.version' });
       }
+      const single = new URL(url).pathname.match(/\/agents\/([^/]+)$/);
+      if (single) return json(agents.find((a) => a.name === decodeURIComponent(single[1])) || {}, agents.some((a) => a.name === decodeURIComponent(single[1])) ? 200 : 404);
       return json({ value: agents });
     }
     if (url.includes('/openai/v1/conversations')) return json({ id: 'conv_stub' });

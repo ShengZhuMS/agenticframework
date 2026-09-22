@@ -1,5 +1,8 @@
 // Reuse a Log Analytics workspace and Application Insights you already have.
-// Reads their keys so the container apps can send logs. Creates nothing.
+// Creates nothing. The workspace KEY is deliberately not an output: a list*
+// value in a module output lands in the deployment history in clear text
+// (linter rule outputs-should-not-contain-secrets). containerapps.bicep reads
+// the key itself from the workspace named here.
 param logAnalyticsName string
 param appInsightsName string
 
@@ -11,6 +14,7 @@ resource appi 'Microsoft.Insights/components@2020-02-02' existing = {
   name: appInsightsName
 }
 
+output name string = law.name
 output customerId string = law.properties.customerId
-output primarySharedKey string = law.listKeys().primarySharedKey
 output connectionString string = appi.properties.ConnectionString
+output workspaceId string = law.id
