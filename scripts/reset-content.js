@@ -14,6 +14,17 @@ const readPack = (name) => JSON.parse(readFileSync(new URL(`../bootstrap/${name}
 const hash = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const segment = (value) => encodeURIComponent(value);
 const LEGACY_DOMAINS = ['Water', 'Flood and coastal', 'Marine and fisheries', 'Waste and resources', 'Air quality', 'Land and biodiversity', 'Farming and countryside', 'Animal and plant health', 'Corporate services'];
+const LEGACY_FOLDERS = ['ammonia-emissions-grid','bathing-water-results','catchment-land-cover','flood-risk-model-outputs','hydrology-flow-level','livestock-movements','marine-catch-returns','national-forest-inventory','rural-land-parcels','servicenow-incidents','waste-carrier-registrations','water-quality-archive'];
+
+export function cortexOwnedAgentIds(records, artefacts = []) {
+  const ids = new Set(records.filter((record) => {
+    const id = record._source?.id || record.id;
+    return record._agent?.definition?.builtById ||
+      record._agent?.apimApiId === `${id}-api` || record._agent?.apimMcpId === `${id}-mcp`;
+  }).map((record) => record._source?.id || record.id));
+  for (const record of artefacts) if (record.agentId) ids.add(record.agentId);
+  return ids;
+}
 
 export function targetScope(c = config) {
   return {
@@ -24,6 +35,7 @@ export function targetScope(c = config) {
     purview: c.purview.endpoint, dataMap: c.purview.dataMapEndpoint,
     search: c.search.endpoint, dataAccount: c.data.storageAccount, dataContainer: c.data.container,
     stateAccount: c.state.blobAccount, stateContainer: c.state.blobContainer,
+    stateContainers: c.state.resetContainers || [c.state.blobContainer],
     web: c.publicBaseUrl
   };
 }
@@ -41,6 +53,7 @@ export function resourceUrl(item, scope) {
     product: [`${catalogue}/dataProducts/${id}?api-version=2026-03-20-preview`, 'https://purview.azure.net/.default'],
     domain: [`${catalogue}/businessdomains/${id}?api-version=2026-03-20-preview`, 'https://purview.azure.net/.default'],
     asset: [`${catalogue}/dataAssets/${id}?api-version=2026-03-20-preview`, 'https://purview.azure.net/.default'],
+    relationship: [`${catalogue}/dataProducts/${segment(item.parent || '')}/relationships?api-version=2026-03-20-preview&entityType=DATAASSET&entityId=${id}`, 'https://purview.azure.net/.default'],
     mapAsset: [`${scope.dataMap}/datamap/api/atlas/v2/entity/guid/${id}?api-version=2023-09-01`, 'https://purview.azure.net/.default'],
     scan: [`${scope.dataMap}/scan/datasources/${segment(item.parent || '')}/scans/${id}?api-version=2023-09-01`, 'https://purview.azure.net/.default'],
     source: [`${scope.dataMap}/scan/datasources/${id}?api-version=2023-09-01`, 'https://purview.azure.net/.default'],
@@ -50,9 +63,12 @@ export function resourceUrl(item, scope) {
   paths.response = [`${scope.foundry}/openai/v1/responses/${id}`, 'https://ai.azure.com/.default'];
   paths.conversation = [`${scope.foundry}/openai/v1/conversations/${id}`, 'https://ai.azure.com/.default'];
   for (const kind of ['indexers', 'indexes', 'datasources']) paths[kind] = [`${scope.search}/${kind}/${id}?api-version=2024-07-01`, 'https://search.azure.com/.default'];
+  for (const kind of ['knowledgebases', 'knowledgesources']) paths[kind] = [`${scope.search}/${kind}/${id}?api-version=2026-08-01-preview`, 'https://search.azure.com/.default'];
   for (const kind of ['dataBlob', 'stateBlob']) {
     const state = kind === 'stateBlob';
-    paths[kind] = [`https://${state ? scope.stateAccount : scope.dataAccount}.blob.core.windows.net/${segment(state ? scope.stateContainer : scope.dataContainer)}/${item.id.split('/').map(segment).join('/')}`, 'https://storage.azure.com/.default'];
+    const container = state ? item.parent || scope.stateContainer : scope.dataContainer;
+    if (item.kind === 'stateBlob' && state && !(scope.stateContainers || [scope.stateContainer]).includes(container)) throw new Error('State container is outside the reviewed reset scope.');
+    paths[kind] = [`https://${state ? scope.stateAccount : scope.dataAccount}.blob.core.windows.net/${segment(container)}/${item.id.split('/').map(segment).join('/')}`, 'https://storage.azure.com/.default'];
   }
   if (!Object.hasOwn(paths, item.kind)) throw new Error(`Unsupported reset resource kind: ${item.kind}`);
   const [url, tokenScope] = paths[item.kind];
@@ -77,6 +93,11 @@ export async function requestResource(item, scope, method = 'GET', { fetchFn = f
   const text = await res.text();
   let body = text;
   if (text && res.headers.get('content-type')?.includes('json')) body = JSON.parse(text);
+  if (method === 'DELETE' && body?.deleted === false) throw new Error(`${item.kind} ${item.id}: provider returned deleted:false; the object must not be reported as deleted.`);
+  if (item.kind === 'relationship' && method === 'GET') {
+    body = body?.value?.find((relation) => relation.entityId === item.id);
+    if (!body) return null;
+  }
   return { body, etag: res.headers.get('etag'), status: res.status };
 }
 
@@ -88,16 +109,26 @@ export async function buildPlan({ includeLegacy = false, reviewedItems = [] } = 
   const skills = readPack('skills');
   const state = new LiveStorage({ storageAccount: scope.stateAccount, container: scope.stateContainer, scope: config.state.scope });
   const data = new LiveStorage(config.data);
-  const stateFiles = await state.list(scope.stateContainer);
+  const stateFiles = [];
   const stateDocs = {};
-  for (const file of stateFiles.filter((f) => f.name.endsWith('.json') && !f.name.includes('/'))) stateDocs[file.name] = JSON.parse(await state.download(scope.stateContainer, file.name));
+  for (const container of scope.stateContainers) {
+    if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(container)) throw new Error('Invalid state container.');
+    const files = await state.list(container);
+    stateFiles.push(...files.map((file) => ({ ...file, container })));
+    for (const file of files.filter((f) => f.name.endsWith('.json') && !f.name.includes('/'))) {
+      const value = JSON.parse(await state.download(container, file.name));
+      if (!stateDocs[file.name]) stateDocs[file.name] = [];
+      stateDocs[file.name].push(value);
+    }
+  }
+  const recordsOf = (name) => (stateDocs[name] || []).flatMap((value) => Object.values(value || {}));
   const candidates = reviewedItems.map((item) => ({ kind: item.kind, id: item.id, ...(item.parent ? { parent: item.parent } : {}), reason: 'Explicit operator-reviewed orphan resource' }));
   const add = (kind, id, reason, parent) => { if (id) candidates.push({ kind, id: String(id), reason, ...(parent ? { parent } : {}) }); };
   const warnings = [
     'Review every resource before applying. Selection is based on this demo pack and this app state, not ownership of the entire shared Azure estate.',
     'Legacy content and agents whose Cortex state was lost cannot be identified reliably. Use --include-legacy for legacy catalogue domains; add exact reviewed kind/id entries for other orphaned resources, then create a new plan.',
     'This deletes active content, not platform audit logs, backups, soft-delete retention or provider telemetry. Azure retention policies still apply.',
-    'Stop ALL apps and jobs that write to or use this shared demo content, including themed variants, before applying. Separate state containers require separate plans.'
+    'Quiesce ALL apps and jobs that write shared demo content before applying. This plan includes only its explicitly named state containers.'
   ];
   const allDomains = await listAllDomains();
   const allProducts = await listAllDataProducts();
@@ -108,6 +139,10 @@ export async function buildPlan({ includeLegacy = false, reviewedItems = [] } = 
   const dataMap = createDataMapAdapter();
   const indexNames = new Set();
   const folders = new Set(products.map((p) => p.id));
+  if (includeLegacy) for (const folder of LEGACY_FOLDERS) {
+    folders.add(folder);
+    indexNames.add(`${config.search.indexPrefix}${folder}`);
+  }
   for (const p of selectedProducts) {
     add('product', p.id, `Product inside selected demo domain: ${p.name}`);
     const attrs = toAttributeMap(p.managedAttributes);
@@ -118,6 +153,7 @@ export async function buildPlan({ includeLegacy = false, reviewedItems = [] } = 
       const mapped = asset.dataMapAssetId ? await requestResource({ kind: 'mapAsset', id: asset.dataMapAssetId }, scope) : null;
       const qualifiedName = mapped?.body?.entity?.attributes?.qualifiedName;
       if ([asset.fqn, asset.openInUrl, qualifiedName].some((url) => url?.startsWith(prefix))) {
+        add('relationship', asset.id, `Binding between selected product ${p.name} and its selected sample asset`, p.id);
         add('asset', asset.id, `Sample asset attached to ${p.name}`);
         add('mapAsset', asset.dataMapAssetId, 'Data Map asset in the exact sample-data container');
       } else warnings.push(`Asset ${asset.id} attached to ${p.name} has no verified sample-storage URL; it is preserved. Review explicitly.`);
@@ -133,15 +169,45 @@ export async function buildPlan({ includeLegacy = false, reviewedItems = [] } = 
     add('indexes', name, 'Selected demo grounding index');
     add('datasources', `${name}-source`, 'Data source for selected demo data');
   }
-  const agentRecords = Object.values(stateDocs['agents.json'] || {});
+  const agentRecords = recordsOf('agents.json');
+  const artefacts = recordsOf('artefacts.json').filter((record) => record.ownerId && /^cx-art-[a-f0-9-]+$/.test(record.id || ''));
+  const ownedAgentIds = cortexOwnedAgentIds(agentRecords, artefacts);
   for (const a of agentRecords) {
+    if (!ownedAgentIds.has(a._source?.id || a.id)) {
+      warnings.push(`Agent ${a._source?.id || a.id} has no recorded Cortex builder/publication provenance; preserved unless explicitly reviewed.`);
+      continue;
+    }
     add('agent', a._source?.id || a.id, 'Agent recorded by this Cortex app');
     if (a._agent?.published) {
       add('api', `${a.id}-api`, 'Published agent backing API');
       add('api', `${a.id}-mcp`, 'Published agent MCP API');
       add('connection', connectionNameFor(`${a.id}-mcp`), 'Published agent MCP connection');
     }
-    for (const connection of a._agent?.connections || []) add('connection', connection.name, 'Connection recorded for this agent');
+    for (const connection of a._agent?.connections || []) add('connection', connection.name || connection.connection, 'Connection recorded for this agent');
+  }
+  for (const record of artefacts) {
+    add('api', record.id, `Cortex artefact backing API: ${record.name}`);
+    add('api', `${record.id}-mcp`, `Cortex artefact MCP: ${record.name}`);
+    add('connection', record.connection || connectionNameFor(`${record.id}-mcp`), 'Cortex artefact connection');
+    if (record.agentId) add('agent', record.agentId, 'Cortex wrapper agent recorded by artefact publisher');
+  }
+  for (const record of recordsOf('knowledge-artefacts.json')) {
+    if (!record._knowledge || record._source?.system !== 'cortex') continue;
+    add('knowledgebases', record._knowledge.name, 'Foundry IQ base recorded by Cortex');
+    add('knowledgesources', record._knowledge.sourceName, 'Foundry IQ source recorded by Cortex');
+    add('connection', record._knowledge.connectionId?.split('/').pop(), 'Foundry IQ project connection recorded by Cortex');
+  }
+  for (const record of recordsOf('knowledge-jobs.json')) {
+    if (!record.ownerId || !/^cx-iq-[a-f0-9-]+$/.test(record.id || '')) continue;
+    add('knowledgebases', record.id, 'Completed or partial Cortex knowledge publication');
+    add('knowledgesources', `${record.id}-source`, 'Completed or partial Cortex knowledge publication');
+    add('connection', connectionNameFor(record.id, 'cx-iq-'), 'Completed or partial Cortex knowledge connection');
+  }
+  for (const product of products) {
+    const name = `cx-kb-${product.id}`;
+    add('knowledgebases', name, 'Bootstrap-owned per-product knowledge base');
+    add('knowledgesources', `${name}-source`, 'Bootstrap-owned per-product knowledge source');
+    add('connection', connectionNameFor(name, 'cx-iq-'), 'Bootstrap-owned knowledge connection');
   }
   add('agent', config.ask.agentName, 'Configured Cortex Ask agent (shared by variants)');
   const inspectHistory = (value) => {
@@ -166,7 +232,7 @@ export async function buildPlan({ includeLegacy = false, reviewedItems = [] } = 
     }
   }
   add('connection', config.foundry.searchConnection, 'Configured Cortex grounding connection');
-  for (const r of Object.values(stateDocs['redteam-runs.json'] || {})) {
+  for (const r of recordsOf('redteam-runs.json')) {
     add('evaluation', r.evalId, 'Cortex red team evaluation and its runs');
     add('taxonomy', r.taxonomyName, 'Cortex red team taxonomy');
   }
@@ -174,6 +240,8 @@ export async function buildPlan({ includeLegacy = false, reviewedItems = [] } = 
   add('scan', process.env.PURVIEW_SCAN_NAME || 'cortex-sample-scan', 'Configured Cortex sample scan', source);
   add('source', source, 'Configured Cortex sample data source');
   for (const file of await data.list(scope.dataContainer)) {
+    // HNS exposes directory markers as zero-byte blobs; preserve empty folders.
+    if (folders.has(file.name) && !file.name.includes('/') && file.size === 0) continue;
     if (folders.has(file.name.split('/')[0])) {
       add('dataBlob', file.name, 'File under selected demo product folder');
       const asset = await dataMap.getAssetByQualifiedName(adlsQualifiedName(scope.dataAccount, scope.dataContainer, file.name));
@@ -181,10 +249,10 @@ export async function buildPlan({ includeLegacy = false, reviewedItems = [] } = 
     }
     else warnings.push(`Unmatched sample-container file ${file.name} preserved; review its ownership.`);
   }
-  for (const file of stateFiles) add('stateBlob', file.name, 'All user-created application state in the explicitly selected state container');
-  const order = ['scan','source','indexers','api','response','conversation','agent','connection','evaluation','taxonomy','product','asset','mapAsset','domain','indexes','datasources','dataBlob','stateBlob'];
+  for (const file of stateFiles) add('stateBlob', file.name, 'Application state in an explicitly selected state container', file.container);
+  const order = ['scan','source','indexers','api','response','conversation','agent','connection','evaluation','taxonomy','relationship','asset','product','mapAsset','domain','knowledgebases','knowledgesources','indexes','datasources','dataBlob','stateBlob'];
   const unique = [...new Map(candidates.map((c) => [`${c.kind}:${c.parent || ''}:${c.id}`, c])).values()]
-    .sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || (a.kind === 'api' ? Number(b.id.endsWith('-mcp')) - Number(a.id.endsWith('-mcp')) : 0));
+    .sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || (a.kind === 'api' ? Number(b.id.endsWith('-mcp')) - Number(a.id.endsWith('-mcp')) : a.kind === 'dataBlob' ? b.id.split('/').length - a.id.split('/').length : 0));
   const items = [];
   const responseIds = new Set(unique.filter((item) => item.kind === 'response').map((item) => item.id));
   for (const item of unique) {
@@ -239,6 +307,7 @@ export function confirmationFor(plan) {
 
 export async function main(args = process.argv.slice(2)) {
   const option = (name) => args.find((a) => a.startsWith(`${name}=`))?.slice(name.length + 1);
+  if (option('--state-containers')) config.state.resetContainers = [...new Set(option('--state-containers').split(','))];
   const file = option('--plan');
   if (!file) throw new Error('Usage: node scripts/reset-content.js --plan=<file.json> [--include-legacy] to create a READ-ONLY inventory; then --apply --confirm=<hash> --writers-stopped to delete that reviewed content.');
   await hydrateConfig();

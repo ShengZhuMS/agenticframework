@@ -91,3 +91,14 @@ test('empty, partial, errored and missing-grader reports fail closed', () => {
     { result: { result_counts: { passed: 1, failed: 0, errored: 1 } } }
   ]) assert.equal(publicationVerdict({ ...valid, ...changes }).passed, false);
 });
+
+test('explicit advisory acknowledgement publishes the current version without fabricating scan evidence', async () => {
+  const entry = index.get('auto-test');
+  index.upsert({ ...entry, _agent: { ...entry._agent, version: '1' } });
+  const result = await requestPublication(entry.id, { user, baseUrl: 'https://stub', acknowledge: true });
+  assert.equal(result.entry._agent.published, true);
+  assert.equal(result.entry._agent.assessmentId, null);
+  assert.equal(result.entry._agent.assuranceAcknowledgement.by, user.id);
+  assert.ok(result.entry._agent.assuranceAcknowledgement.findings.some((finding) => finding.id === 'redteam'));
+  assert.equal(calls.some((call) => call.path.endsWith('/openai/evals')), false);
+});

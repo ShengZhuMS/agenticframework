@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { applyPlan, confirmationFor, resourceUrl, requestResource, targetScope } from '../scripts/reset-content.js';
+import { applyPlan, confirmationFor, resourceUrl, requestResource, targetScope, cortexOwnedAgentIds } from '../scripts/reset-content.js';
 
 const fingerprint = (body) => createHash('sha256').update(JSON.stringify(body)).digest('hex');
 const makePlan = () => ({
@@ -78,4 +78,48 @@ test('resource kinds are allowlisted and ids cannot replace the destination host
     assert.equal(init.headers['If-Match'], '"version"');
     return new Response(null, { status: 204 });
   } });
+});
+
+test('multi-app reset scopes state blobs to explicitly selected containers', () => {
+  const scope = { ...targetScope(), stateAccount: 'stateaccount', stateContainer: 'state',
+    stateContainers: ['state', 'state-cortex-web-microsoft', 'state-cortex-web-novo'] };
+  assert.match(resourceUrl({ kind: 'stateBlob', id: 'chats.json', parent: 'state-cortex-web-novo' }, scope).url, /\/state-cortex-web-novo\/chats\.json/);
+  assert.throws(() => resourceUrl({ kind: 'stateBlob', id: 'chats.json', parent: 'unrelated-state' }, scope), /outside/);
+  assert.match(resourceUrl({ kind: 'scan', id: 'scan', parent: 'sample-source' }, { ...scope, dataMap: 'https://example.purview.azure.com' }).url, /datasources\/sample-source\/scans\/scan/);
+});
+
+test('knowledge objects use their supported API without widening reset to infrastructure', () => {
+  const scope = { ...targetScope(), search: 'https://example.search.windows.net' };
+  assert.match(resourceUrl({ kind: 'knowledgebases', id: 'cx-kb-demo' }, scope).url, /\/knowledgebases\/cx-kb-demo\?api-version=2026-08-01-preview$/);
+  assert.match(resourceUrl({ kind: 'knowledgesources', id: 'cx-kb-demo-source' }, scope).url, /\/knowledgesources\//);
+  assert.throws(() => resourceUrl({ kind: 'searchService', id: 'example' }, scope), /Unsupported/);
+});
+
+test('merely discovering an external agent does not make it owned demo content', () => {
+  const ids = cortexOwnedAgentIds([
+    { id: 'external', _agent: { version: '5' } },
+    { id: 'built', _agent: { definition: { builtById: 'owner' } } },
+    { id: 'published', _agent: { apimApiId: 'published-api' } },
+    { id: 'unrelated', _agent: { apimApiId: 'some-other-api' } }
+  ], [{ agentId: 'wrapper' }]);
+  assert.deepEqual([...ids], ['built', 'published', 'wrapper']);
+});
+
+test('provider deleted:false is a failure even with HTTP 200', async () => {
+  const scope = { ...targetScope(), foundry: 'https://example.services.ai.azure.com/api/projects/demo' };
+  await assert.rejects(requestResource({ kind: 'evaluation', id: 'eval-demo' }, scope, 'DELETE', {
+    tokenFn: async () => 'stub', fetchFn: async () => Response.json({ object: 'eval.deleted', deleted: false })
+  }), /deleted:false/);
+});
+
+test('relationship reads select only the approved pair and absence is confirmed', async () => {
+  const scope = { ...targetScope(), purview: 'https://api.purview-service.microsoft.com' };
+  const item = { kind: 'relationship', id: 'asset-a', parent: 'product-a' };
+  const read = await requestResource(item, scope, 'GET', {
+    tokenFn: async () => 'stub', fetchFn: async () => Response.json({ value: [{ entityId: 'asset-a', relationshipType: 'Related' }, { entityId: 'other' }] })
+  });
+  assert.equal(read.body.entityId, 'asset-a');
+  assert.equal(await requestResource(item, scope, 'GET', {
+    tokenFn: async () => 'stub', fetchFn: async () => Response.json({ value: [{ entityId: 'other' }] })
+  }), null);
 });

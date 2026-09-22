@@ -57,9 +57,9 @@ describe('ordered multi-agent workflows', () => {
     assert.equal(run.steps[0].sources[0].name, 'Synthetic source');
   });
 
-  test('rejects duplicate agents, gaps, invalid days and missing instructions', () => {
+  test('allows reuse of an agent but rejects gaps, invalid days and missing instructions', () => {
+    assert.equal(auto.validate({ ...form(), stepAgent2: 'digest-agent' }, USERS.analyst).ok, true);
     for (const changes of [
-      { stepAgent2: 'digest-agent' },
       { stepAgent2: '', stepInstruction2: '', stepAgent3: 'review-agent', stepInstruction3: 'Review' },
       { dayOfWeek: 8 }, { stepInstruction2: '' }, { stepAgent2: 'not-found' }
     ]) assert.equal(auto.validate({ ...form(), ...changes }, USERS.analyst).ok, false);

@@ -105,6 +105,7 @@ function groundingPanel(e, g, built) {
 
   return `
     <h2 class="govuk-heading-m" id="data">The data behind it</h2>
+    <p class="govuk-body-s">The source storage remains private. A container URL is not a browsable file listing and may be blocked outside the approved network. The asset links, index row count and connected agent demonstrate the data path without making the files public.</p>
     <p class="govuk-body">
       A data product describes data. Underneath it, in the <strong>Purview Data Map</strong>, sit the files or tables the scan found — with their schema and classifications.
       Cortex builds an <strong>Azure AI Search</strong> index from those same files so an agent built on this product can read rows, not just the description.
@@ -146,8 +147,8 @@ export function entryPage(ctx, { entry: e, cluster, requested, grounding = null,
   let actions = '';
   const chatButton =
     e.cat === 'Agent' && chat?.allowed
-      ? `<a class="govuk-button" href="/agent/${attr(e.id)}/chat" data-chat-window target="_blank" rel="noopener" role="button">Chat with this agent</a>
-         <p class="govuk-body-s">Opens in a new window. ${chat.policy === 'all-staff' ? 'Every member of staff can chat with every agent in this phase.' : ''}</p>`
+      ? `<a class="govuk-button" href="/agent/${attr(e.id)}/chat" role="button">Chat with this agent</a>
+         <p class="govuk-body-s">Opens a bottom-right chat panel. ${chat.policy === 'all-staff' ? 'Every member of staff can chat with every agent in this phase.' : ''}</p>`
       : '';
   if (e.cat === 'Agent' && chatButton && e.vis !== 'available') {
     actions = chatButton;
@@ -408,10 +409,10 @@ ${
     </div>
 
     <p class="govuk-body-s">
-      <a class="govuk-link" href="/marketplace">Back to the marketplace</a>
+      <a class="govuk-link" href="/cortex">Back to Cortex</a>
     </p>
     <p class="govuk-body-s">
-      <a class="govuk-link" href="/marketplace?cluster=${attr(e.cluster)}">
+      <a class="govuk-link" href="/cortex?cluster=${attr(e.cluster)}">
         Everything in ${esc(cluster?.name || e.cluster)}
       </a>
     </p>
@@ -436,7 +437,7 @@ export function entryNotFoundPage(ctx, { id }) {
       thing to know.
     </p>
     <a class="govuk-button" href="/share" role="button">Tell us about something that is missing</a>
-    <p class="govuk-body"><a class="govuk-link" href="/marketplace">Search the marketplace</a></p>
+    <p class="govuk-body"><a class="govuk-link" href="/cortex">Search Cortex</a></p>
   </div>
 </div>`;
   return layout({ ...ctx, title: 'Entry not registered', section: 'marketplace' }, content);

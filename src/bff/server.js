@@ -35,9 +35,17 @@ import { sharePage } from '../web/views/share.js';
 import { lineagePage } from '../web/views/lineage.js';
 import { connectors } from './adapters/connectors.js';
 import { channelMetadata } from './adapters/channels.js';
-import { artefactById, artefactsFor, registerArtefact, validateMetadata, queryArtefact, invokeArtefact, proxyArtefact, agentInvocationBody } from './services/artefacts.js';
+import { artefactById, artefactsFor, registerArtefact, validateMetadata, demoMetadata, queryArtefact, invokeArtefact, proxyArtefact, agentInvocationBody } from './services/artefacts.js';
+import { sourceOptions, knowledgeJobs, startKnowledge, finishKnowledge } from './services/knowledge-publishing.js';
+import { channelPackage } from './services/channel-package.js';
+import { blueprintForm } from './services/demo-blueprints.js';
 import { requestsPage, requestDetailPage } from '../web/views/requests.js';
 import { ask, threadsFor, getThread } from './services/ask.js';
+import { discoveryTarget } from './services/discovery.js';
+import { guideAnswer } from './services/guide.js';
+import { guidePage } from '../web/views/help.js';
+import { ensureResponsibleAI, evidenceGates, saveAccessibility } from './services/evidence.js';
+import { evidencePage } from '../web/views/assurance.js';
 import { userFromRequest, authConfigured } from './services/identity.js';
 import * as reqs from './services/requests.js';
 import * as chatSvc from './services/chat.js';
@@ -59,6 +67,7 @@ import {
   rebuildAgent,
   ensureToolConnections,
   resolveDefinition,
+  runtimeToolOptions,
   gatesForDefinition,
   composeInstructions
 } from './services/agents.js';
@@ -219,6 +228,9 @@ async function handle(req, res) {
   const { pathname } = url;
 
   if (pathname.startsWith('/assets/')) return serveAsset(res, pathname);
+  if (config.maintenance && pathname !== '/api/health') {
+    return send(res, 503, '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cortex demo refresh</title></head><body><main><h1>Cortex demo refresh in progress</h1><p>Demo content is being backed up and rebuilt. Please return after the maintenance window.</p></main></body></html>', { 'Retry-After': '120' });
+  }
 
   /* ---- health, for the deployment guide's four checks ---- */
   if (pathname === '/api/health') {
@@ -403,6 +415,7 @@ async function handle(req, res) {
 
     try {
       const answer = await index.foundry.respond({
+        ...runtimeToolOptions(entry),
         agentName: entry._source?.id || entry.id,
         agentVersion: entry._agent.publishedVersion,
         input: body.question,
@@ -465,7 +478,7 @@ async function handle(req, res) {
     const [entry] = decorate([raw], ctx.user);
     const def = entry._agent?.definition || {};
     const { knowledge, tools } = resolveDefinition(def);
-    const gates = entry._agent?.gates || (await gatesForDefinition(def));
+    const gates = evidenceGates(entry, await gatesForDefinition(def));
     return send(
       res,
       200,
@@ -485,6 +498,26 @@ async function handle(req, res) {
     );
   }
 
+  const evidenceMatch = pathname.match(/^\/agent\/([^/]+)\/assurance$/);
+  if (evidenceMatch) {
+    const entry = index.get(evidenceMatch[1]);
+    if (!entry || entry.cat !== 'Agent') return send(res, 404, entryNotFoundPage(ctx, { id: evidenceMatch[1] }));
+    if (!redteam.canRedTeam(entry, ctx.user)) return send(res, 403, errorPage(ctx, { code: 403, heading: 'Reviewer access required', message: 'Only the recorded builder or a red-team reviewer can view and record assurance evidence.' }));
+    const report = ensureResponsibleAI(entry);
+    if (req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        const data = req.headers['content-type']?.includes('application/json') ? JSON.parse(body) : parseForm(body);
+        saveAccessibility(index.get(entry.id), ctx.user, data);
+        if (data.automatic) return json(res, 200, { saved: true });
+        return redirect(res, `/agent/${encodeURIComponent(entry.id)}/assurance#a11y`);
+      } catch (err) {
+        return send(res, 400, errorPage(ctx, { code: 400, heading: 'Evidence not saved', message: err.message }));
+      }
+    }
+    return send(res, 200, evidencePage(ctx, { entry: index.get(entry.id), report }));
+  }
+
   const askMatch = pathname.match(/^\/agent\/([^/]+)\/ask$/);
   if (askMatch && req.method === 'POST') {
     const entry = index.get(askMatch[1]);
@@ -492,6 +525,7 @@ async function handle(req, res) {
     const form = parseForm(await readBody(req));
     try {
       const answer = await index.foundry.respond({
+        ...runtimeToolOptions(entry),
         agentName: entry._source?.id || entry.id,
         input: form.question || ''
       });
@@ -515,6 +549,7 @@ async function handle(req, res) {
   if (rebuildMatch && req.method === 'POST') {
     const entry = index.get(rebuildMatch[1]);
     if (!entry || entry.cat !== 'Agent') return send(res, 404, entryNotFoundPage(ctx, { id: rebuildMatch[1] }));
+    if (!redteam.canRedTeam(entry, ctx.user)) return send(res, 403, errorPage(ctx, { code: 403, heading: 'Builder access required', message: 'Only the recorded builder or a red-team reviewer may create a new agent version.' }));
     try {
       await rebuildAgent(entry, ctx.user);
       sessionAnswers.delete(entry.id);
@@ -554,17 +589,22 @@ async function handle(req, res) {
     const entry = index.get(publishMatch[1]);
     if (!entry) return send(res, 404, entryNotFoundPage(ctx, { id: publishMatch[1] }));
     const form = parseForm(await readBody(req));
+    if (form.publishMode === 'acknowledge' && form.acknowledge !== 'yes') return send(res, 400, errorPage(ctx, {
+      code: 400, heading: 'Acknowledgement required', message: 'Review the outstanding findings and explicitly acknowledge them. No assessment or publication was started.'
+    }));
     const base =
       config.publicBaseUrl || `http://${req.headers.host || 'localhost:' + config.port}`;
     try {
-      await requestPublication(entry.id, {
+      const publication = await requestPublication(entry.id, {
         baseUrl: base,
         // Pass through undefined when the form omits it, so publishAgent can
         // fall back to the visibility already in force. Defaulting here would
         // silently re-label an all-staff agent as team-only on republish.
         visibility: form.visibility || undefined,
-        user: ctx.user
+        user: ctx.user,
+        acknowledge: form.publishMode === 'acknowledge' && form.acknowledge === 'yes'
       });
+      if (publication.entry) return send(res, 200, publishResultPage(ctx, publication));
       return redirect(res, `/agent/${encodeURIComponent(entry.id)}/redteam`);
     } catch (err) {
       console.error('[publish]', err);
@@ -585,6 +625,20 @@ async function handle(req, res) {
     return send(res, 200, startPage(ctx, { stats: index.stats(), coverage: index.coverage() }));
   }
 
+  if (pathname === '/discover' && req.method === 'POST') {
+    const form = parseForm(await readBody(req));
+    let target;
+    try { target = discoveryTarget(form.q, form.mode); }
+    catch (err) {
+      return send(res, 400, startPage(ctx, { stats: index.stats(), coverage: index.coverage(), error: err.message, q: form.q }));
+    }
+    if (target.mode === 'ask') {
+      const result = await ask(target.q, ctx.user, {});
+      return redirect(res, `/ask?thread=${encodeURIComponent(result.threadId)}`);
+    }
+    return redirect(res, `${target.path}?q=${encodeURIComponent(target.q)}`);
+  }
+
   if (pathname === '/profile') {
     const all = decorate(index.all(), ctx.user);
     const counts = {};
@@ -594,7 +648,7 @@ async function handle(req, res) {
     return send(res, 200, profilePage(ctx, { counts }));
   }
 
-  if (pathname === '/marketplace') {
+  if (pathname === '/marketplace' || pathname === '/cortex') {
     const filters = {
       q: url.searchParams.get('q') || '',
       cats: multi(url.searchParams, 'cat'),
@@ -731,6 +785,11 @@ async function handle(req, res) {
     ]);
     // Pre-tick knowledge when arriving from an entry page.
     const pre = url.searchParams.get('knowledge');
+    let form = pre ? { knowledge: [pre] } : {};
+    if (url.searchParams.has('template')) {
+      try { form = blueprintForm(url.searchParams.get('template'), knowledge, index.all().filter((entry) => entry.cat === 'Agent').map((entry) => entry.name)); }
+      catch (err) { return send(res, 400, buildFormPage(ctx, { models, knowledge, tools, errors: [{ field: 'knowledge', message: err.message }] })); }
+    }
     return send(
       res,
       200,
@@ -738,7 +797,7 @@ async function handle(req, res) {
         models,
         knowledge,
         tools,
-        form: pre ? { knowledge: [pre] } : {}
+        form
       })
     );
   }
@@ -801,7 +860,7 @@ async function handle(req, res) {
 
   /* ==================================================== WP14 — the map =====*/
 
-  if (pathname === '/marketplace/map' || pathname === '/map') {
+  if (pathname === '/marketplace/map' || pathname === '/cortex/map' || pathname === '/map') {
     const all = index.all();
     const counts = {};
     for (const e of all) counts[e.cluster] = (counts[e.cluster] || 0) + 1;
@@ -841,7 +900,7 @@ async function handle(req, res) {
       res,
       200,
       sharePage(ctx, {
-        publishing: { kind: url.searchParams.get('kind') || 'external-agent', connectors: connectors().map(({ id, name, provider }) => ({ id, name, provider })), records: artefactsFor(ctx.user), entries: index.searchEntries({}, ctx.user) },
+        publishing: { kind: url.searchParams.get('kind') || 'knowledge', protocol: url.searchParams.get('protocol'), sources: sourceOptions(ctx.user), knowledgeJobs: knowledgeJobs(ctx.user), connectors: connectors().map(({ id, name, provider }) => ({ id, name, provider })), records: artefactsFor(ctx.user), entries: index.searchEntries({}, ctx.user) },
         mine,
         proposed,
         requests,
@@ -858,18 +917,45 @@ async function handle(req, res) {
   }
 
   if (pathname === '/share/publish' && req.method === 'POST') {
-    const form = parseForm(await readBody(req));
+    const form = demoMetadata(parseForm(await readBody(req)), ctx.user);
     try {
+      if (form.kind === 'knowledge') {
+        await startKnowledge(form, ctx.user);
+        return redirect(res, '/share?kind=knowledge');
+      }
       const baseUrl = config.publicBaseUrl;
       if (form.kind === 'm365') {
         validateMetadata(form, ctx.user);
-        const record = await requestPublication(form.sourceId, { baseUrl, user: ctx.user, microsoft365: channelMetadata(form) });
+        const entry = index.get(form.sourceId);
+        if (!redteam.canRedTeam(entry, ctx.user)) throw new Error('Only the recorded builder or reviewer may prepare this package.');
+        const metadata = channelMetadata({ ...form,
+          developerWebsiteUrl: form.developerWebsiteUrl || baseUrl,
+          privacyUrl: form.privacyUrl || `${baseUrl}/help/privacy`,
+          termsOfUseUrl: form.termsOfUseUrl || `${baseUrl}/help/privacy`
+        }, { requireConsent: form.channelMode === 'native' });
+        if (form.channelMode !== 'native') {
+          const live = await index.foundry.getAgent(entry._source?.id || entry.id);
+          const pack = channelPackage(entry, live, metadata, ctx.user, baseUrl);
+          return send(res, 200, pack.bytes, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${pack.filename.replace(/[^a-zA-Z0-9_.-]/g, '-')}"` });
+        }
+        const record = await requestPublication(form.sourceId, { baseUrl, user: ctx.user, microsoft365: metadata });
         return redirect(res, `/agent/${encodeURIComponent(record.agentId)}/redteam`);
       }
+
       const record = await registerArtefact(form, ctx.user, baseUrl);
-      return redirect(res, record.agentId ? `/agent/${encodeURIComponent(record.agentId)}/redteam` : `/share?kind=${record.kind}`);
+      return redirect(res, record.agentId ? `/agent/${encodeURIComponent(record.agentId)}${record.state === 'draft' ? '' : '/redteam'}` : `/share?kind=${record.kind}`);
     } catch (err) {
       return send(res, 400, errorPage(ctx, { code: 400, heading: 'Artefact publication did not complete', message: err.message }));
+    }
+  }
+
+  const knowledgeMatch = pathname.match(/^\/share\/knowledge\/(cx-iq-[a-f0-9-]+)\/refresh$/);
+  if (knowledgeMatch && req.method === 'POST') {
+    try {
+      await finishKnowledge(knowledgeMatch[1], ctx.user);
+      return redirect(res, '/share?kind=knowledge');
+    } catch (err) {
+      return send(res, 400, errorPage(ctx, { code: 400, heading: 'Knowledge publication not completed', message: err.message }));
     }
   }
 
@@ -939,7 +1025,8 @@ async function handle(req, res) {
     // Propose holders on the first submit so the requester picks one, rather
     // than needing to know the org chart.
     if (!form.holderEntryId && reqs.proposeHolders(question).length) {
-      return redirect(res, `/requests?view=new&q=${encodeURIComponent(question)}`);
+    return send(res, 200, requestsPage(ctx, { view: 'new', question, form,
+      holders: reqs.proposeHolders(question), mine: reqs.raisedBy(ctx.user), waiting: reqs.waitingOn(ctx.user) }));
     }
     const r = reqs.raise({
       question,
@@ -1014,7 +1101,7 @@ async function handle(req, res) {
   const automationAgents = () =>
     index
       .all()
-      .filter((e) => e.cat === 'Agent')
+      .filter((e) => chatSvc.canChat(e, ctx.user).allowed)
       .sort((a, b) => a.name.localeCompare(b.name));
 
   if (pathname === '/automate/new' && req.method === 'GET') {
@@ -1025,12 +1112,33 @@ async function handle(req, res) {
 
   if (pathname === '/automate/new' && req.method === 'POST') {
     const form = parseForm(await readBody(req));
+    if (form.editStep) {
+      try {
+        return send(res, 200, automationFormPage(ctx, { agents: automationAgents(), methods: [], form: auto.editSteps(form, form.editStep) }));
+      } catch (err) {
+        return send(res, 400, automationFormPage(ctx, { agents: automationAgents(), methods: [], form, errors: [{ field: 'stepAgent1', message: err.message }] }));
+      }
+    }
     const result = auto.validate(form, ctx.user);
+    if (form.kind === 'workflow' && form.approved !== 'yes') {
+      result.ok = false;
+      result.errors.push({ field: 'stepAgent1', message: 'Review and approve the proposed steps and schedule before saving.' });
+    }
     if (!result.ok) {
       return send(res, 400, automationFormPage(ctx, { agents: automationAgents(), methods: reqs.approvedMethods(), form, errors: result.errors }));
     }
     const a = auto.create(result.definition);
     return redirect(res, `/automate?created=${a.id}`);
+  }
+
+  if (pathname === '/automate/suggest' && req.method === 'POST') {
+    const form = parseForm(await readBody(req));
+    try {
+      const proposal = await auto.suggestWorkflow(form.goal, ctx.user);
+      return send(res, 200, automationFormPage(ctx, { agents: automationAgents(), methods: [], form: proposal }));
+    } catch (err) {
+      return send(res, 400, automationFormPage(ctx, { agents: automationAgents(), methods: [], form: { question: form.goal }, errors: [{ field: 'goal', message: err.message }] }));
+    }
   }
 
   const autoAction = pathname.match(/^\/automate\/(AUT-\d+)\/(run|pause|resume|delete|runs\/delete)$/);
@@ -1072,6 +1180,16 @@ async function handle(req, res) {
   }
 
   if (pathname === '/help' || pathname.startsWith('/help/')) {
+    if (req.method === 'POST') {
+      const form = parseForm(await readBody(req));
+      try {
+        const answer = await guideAnswer(form.q);
+        return send(res, 200, guidePage(ctx, { answer, question: form.q }));
+      } catch (err) {
+        console.error('[guide]', err.message);
+        return send(res, 502, guidePage(ctx, { error: 'The guide assistant could not answer. Check Foundry availability or try a shorter question.', question: form.q }));
+      }
+    }
     const probe = (fn) => fn().catch((e) => ({ ok: false, error: e.message }));
     const health = {
       Purview: await probe(() => index.purview.health()),
@@ -1082,7 +1200,7 @@ async function handle(req, res) {
       'Sample data storage': await probe(() => index.storage.health()),
       'Application state': stateHealth()
     };
-    return send(res, 200, helpPage(ctx, { stats: index.stats(), health }));
+    return send(res, 200, guidePage(ctx, { health }));
   }
 
   return send(res, 404, errorPage(ctx, notFound()));
@@ -1152,10 +1270,11 @@ function sortEntries(entries, sort) {
 
 /* ----------------------------------------------------------------- start */
 
-export async function start() {
+export async function start({ host } = {}) {
   // Key Vault first: every adapter is constructed from configuration, so the
   // vault must be read before anything reads config.
   await hydrateConfig();
+  if (config.maintenance) config.index.refreshMinutes = 0;
   // State — before anything reads a collection. Blobs on the state account
   // when deployed (read first, so a start with storage unreachable never
   // overwrites what is there), a directory locally, memory otherwise.
@@ -1174,8 +1293,8 @@ export async function start() {
   // An agent whose tools lack their project connections is repaired on the
   // first 401 and the turn retried — see foundry.js respond().
   index.foundry.repairTools = (name, opts) => ensureToolConnections(name, opts);
-  auto.startScheduler();
-  const publicationTimer = startPublicationScheduler();
+  if (!config.maintenance) auto.startScheduler();
+  const publicationTimer = config.maintenance ? null : startPublicationScheduler();
 
   const server = http.createServer((req, res) => {
     const started = Date.now();
@@ -1211,7 +1330,7 @@ export async function start() {
   });
 
   server.on('close', () => clearInterval(publicationTimer));
-  server.listen(config.port, async () => {
+  server.listen(config.port, host, async () => {
     const s = index.stats();
     console.log(`Cortex listening on http://localhost:${config.port}`);
     console.log('  mode: live — Purview, API Management and Foundry');

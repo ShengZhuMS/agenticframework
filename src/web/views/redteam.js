@@ -1,4 +1,5 @@
 import { esc, attr, layout } from '../layout.js';
+import { publicationVerdict } from '../../bff/services/redteam.js';
 
 export function redTeamPage(ctx, { entry, runs }) {
   return layout({ ...ctx, title: 'Foundry red teaming', section: 'build' }, `
@@ -23,6 +24,11 @@ export function redTeamPage(ctx, { entry, runs }) {
       <p class="govuk-body">Agent ${esc(r.target.name)}, version ${esc(r.target.version)}. Created ${esc(r.createdAt)}.</p>
       ${entry._agent?.version && String(entry._agent.version) !== String(r.target.version) ? '<p class="govuk-error-message">This assessment targets an older agent version. Prepare a new assessment for the current version before reviewing assurance.</p>' : ''}
       ${r.error ? `<p role="alert" class="govuk-error-message">${esc(r.error)}</p>` : ''}
+      <p class="govuk-body"><strong>${publicationVerdict(r).passed ? 'PASSED' : r.error ? 'BLOCKED - no passing evidence' : r.status === 'completed' ? 'FAILED / INCOMPLETE EVIDENCE' : 'NOT COMPLETE'}</strong>: ${esc(publicationVerdict(r).reason)}</p>
+      ${r.result?.result_counts ? `<p class="govuk-body">Samples: ${esc(r.result.result_counts.total ?? 'not reported')} total / ${esc(r.result.result_counts.passed ?? 0)} passed / ${esc(r.result.result_counts.failed ?? 0)} failed / ${esc(r.result.result_counts.errored ?? 0)} errors.</p>` : ''}
+      ${r.items?.length ? `<table class="govuk-table"><caption>Evaluator results (failed or missing checks need review)</caption><thead><tr><th scope="col">Sample</th><th scope="col">Evaluator</th><th scope="col">Result</th><th scope="col">Finding</th></tr></thead><tbody>
+        ${r.items.slice(0, 100).flatMap((item, i) => (item.results || []).map((result) => `<tr><th scope="row">${i + 1}</th><td>${esc(result.name)}</td><td>${result.passed === true ? 'Passed' : result.passed === false ? 'Failed' : 'Not reported'}</td><td>${esc(result.reason || result.explanation || result.error?.message || 'See detailed output for evidence.')}</td></tr>`)).join('')}
+      </tbody></table><p class="govuk-hint">Showing up to 100 samples; the detailed output below contains all retrieved items. Current-version findings are reflected in the agent assurance table.</p>` : ''}
       <p class="govuk-body">Evaluation: ${esc(r.evalId || 'not created')}; run: ${esc(r.runId || 'not submitted')}.</p>
       ${r.taxonomy ? `<details class="govuk-details"><summary>Review generated taxonomy</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(JSON.stringify(r.taxonomy, null, 2))}</pre></details>` : ''}
       ${r.status === 'review-required' && !r.publication ? `<form method="post" action="/agent/${attr(entry.id)}/redteam/${attr(r.id)}/start">

@@ -9,6 +9,7 @@ COPY scripts ./scripts
 # The bootstrap content, because the bootstrap JOB runs from this image
 # (infra/modules/containerapps.bicep): bootstrap.js reads bootstrap/*.json.
 COPY bootstrap ./bootstrap
+RUN npm run build:assets
 
 ENV NODE_ENV=production
 ENV PORT=3000

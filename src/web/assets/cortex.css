@@ -870,6 +870,27 @@ summary:focus,
 .cortex-theme-microsoft .cortex-about-hero, .cortex-theme-novo .cortex-about-hero { background: var(--cx-dark); }
 .cortex-theme-microsoft a:focus, .cortex-theme-novo a:focus,
 .cortex-theme-microsoft button:focus, .cortex-theme-novo button:focus { outline: 3px solid #ffdd00; outline-offset: 3px; }
+/* Compact discovery and an accessible, progressively enhanced chat dialog. */
+.cortex-eyebrow { font-size: .8rem; font-weight: 700; letter-spacing: .08em; color: #345674; }
+.cortex-discovery { padding: 1.5rem; margin: 1rem 0 2rem; border: 1px solid #9cb6cf; border-radius: 1rem; background: #f4f8fc; }
+.cortex-intent { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
+.cortex-intent label { display: inline-flex; align-items: center; gap: .4rem; min-height: 32px; }
+.cortex-intent legend { font-size: 1rem; }
+.cortex-discovery .govuk-button { margin-right: 1rem; }
+.cortex-chat-panel { position: fixed; inset: auto 1rem 1rem auto; margin: 0; width: min(460px, calc(100vw - 2rem)); max-width: none; max-height: calc(100dvh - 2rem); height: 680px; box-sizing: border-box; border: 2px solid #345674; border-radius: 1rem; padding: 1rem; overflow: auto; box-shadow: 0 12px 45px #17324d55; }
+.cortex-chat-panel::backdrop { background: #17324d33; }
+.cortex-chat-panel--expanded { width: min(900px, calc(100vw - 2rem)); height: calc(100dvh - 2rem); }
+.cortex-chat-panel__toolbar { display: flex; align-items: center; gap: .5rem; position: sticky; top: -1rem; background: white; padding: .75rem 0; z-index: 1; }
+.cortex-chat-panel__toolbar h2 { margin: 0 auto 0 0; }
+.cortex-chat-panel__toolbar button { min-height: 32px; padding: .4rem; }
+.cortex-chat-panel .cortex-chat__head { display: block; }
+.cortex-chat-panel .cortex-chat__thread { padding: .5rem; }
+.cortex-chat-panel .cortex-chat__q, .cortex-chat-panel .cortex-chat__a { max-width: 100%; overflow-wrap: anywhere; }
+.cortex-chat-panel .govuk-heading-l { font-size: 1.5rem; }
+.cortex-about svg { display: block; width: 100%; height: auto; }
+button, input, select, textarea { scroll-margin: 5rem; }
+:focus-visible { outline: 3px solid #ffdd00; outline-offset: 3px; box-shadow: 0 0 0 5px #0b0c0c; }
+@media (max-width: 480px) { .cortex-chat-panel { inset: auto .5rem .5rem; width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); } }
 
 @font-face { font-family: "NovoOfficialMark"; src: url("/assets/novo-official-icons.woff") format("woff"); font-display: block; }
 .cx-novo-logo { font-family: "NovoOfficialMark" !important; font-size: 48px; line-height: 1; color: white; font-weight: normal; display: inline-block; }
@@ -877,6 +898,7 @@ summary:focus,
 .cortex-theme-microsoft .govuk-header { background: white; color: #262626; border-bottom: 1px solid #d2d2d2; }
 .cortex-theme-microsoft .govuk-header a, .cortex-theme-microsoft .govuk-header__product, .cortex-theme-microsoft .govuk-header__org { color: #262626; }
 .cortex-theme-microsoft .govuk-header__product b { color: #262626; }
+.cortex-theme-microsoft .govuk-header__product span { color: #505a5f; }
 .cortex-theme-microsoft .cx-exec-hero { border-radius: 0; background: linear-gradient(120deg, #eef5ff, #d7e9fa); color: #17324d; }
 .cortex-theme-microsoft .cx-exec-hero h1, .cortex-theme-microsoft .cx-exec-hero-link { color: #17324d; }
 .cortex-theme-novo { --cx-surface: #e7f4f5; }
@@ -899,3 +921,28 @@ summary:focus,
 .cortex-chat__form { position: sticky; bottom: 0; padding: 18px 0; background: white; border-top: 1px solid #c5d5e5; }
 @media (max-width: 640px) { .cx-lineage-lists { grid-template-columns: 1fr; } .cx-publish { padding: 16px; } .cx-novo-logo { font-size: 38px; } }
 @media print { .cx-map-scroll { overflow: visible; } .cx-estate-map { min-width: 0; } .cortex-chat__form { position: static; } }
+
+/* Original illustrations complement the existing approved brand marks. */
+.cortex-brand-illustration { display: block; width: 100%; height: auto; margin: 0 0 18px; }
+.cortex-theme-novo .govuk-header { background: #fff; border-bottom: 1px solid #c8dce8; }
+.cortex-theme-novo .govuk-header a, .cortex-theme-novo .govuk-header__product,
+.cortex-theme-novo .govuk-header__org, .cortex-theme-novo .cx-novo-logo { color: #001965; }
+.cortex-theme-novo .govuk-header__product span { color: #465976; }
+.cortex-theme-novo .cx-exec-hero { background: #eaf6fb; color: #001965; border-radius: 0 60px 0 60px; border-bottom: 4px solid #007d99; }
+.cortex-theme-novo .cx-exec-hero h1, .cortex-theme-novo .cx-exec-hero-link { color: #001965; }
+.cortex-theme-novo .cx-exec-card, .cortex-theme-novo .cortex-filters { border-radius: 0 22px 0 22px; background: #f1f8fc; }
+.cortex-theme-novo .govuk-button { border-radius: 24px; padding-left: 24px; padding-right: 24px; }
+.cortex-theme-microsoft .cx-exec-card { border-radius: 12px; box-shadow: 0 4px 18px #17324d0a; border-color: #d8e5f4; }
+.cortex-theme-microsoft .govuk-heading-xl { letter-spacing: -.035em; font-weight: 600; }
+.cortex-theme-microsoft .cortex-discovery { border: 2px solid #0078d4; background: #f7fbff; box-shadow: 0 8px 28px #0078d411; }
+.cortex-theme-defra .govuk-header { border-bottom-color: #00703c; }
+.cortex-theme-defra .cx-exec-hero { background: #005a30; border-radius: 0; }
+.cortex-theme-defra .cx-exec-card { border-radius: 0; border-top: 5px solid #00703c; background: #f3f6f1; }
+.cortex-demo-tip { border-left: 4px solid #0078d4; background: #f1f7fc; padding: 12px 16px; margin: 12px 0 20px; }
+.cortex-theme-novo .cortex-demo-tip { border-color: #001965; background: #eaf6fb; }
+.cortex-theme-defra .cortex-demo-tip { border-color: #00703c; background: #edf5ec; }
+.cortex-demo-tip button { min-height: 32px; margin-top: 8px; }
+@media (max-width: 640px) {
+  .cortex-theme-novo .cx-exec-hero { border-radius: 0 28px 0 28px; }
+  .cortex-brand-illustration { max-width: 320px; margin-inline: auto; }
+}

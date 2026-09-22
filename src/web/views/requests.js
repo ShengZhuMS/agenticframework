@@ -19,6 +19,7 @@
 
 import { esc, attr, layout } from '../layout.js';
 import { STATUS } from '../../bff/services/requests.js';
+import { demoTip, DEMO_PROMPTS } from '../demo.js';
 
 const when = (iso) =>
   new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
@@ -50,9 +51,10 @@ function tabs(active) {
 
 /* --------------------------------------------------------------- raise */
 
-function newRequestForm(ctx, { question, holders }) {
+function newRequestForm(ctx, { question, holders, form = {} }) {
   return `
 <h2 class="govuk-heading-m">Ask for something you cannot reach yourself</h2>
+${demoTip({ text: DEMO_PROMPTS.request, fields: { question: DEMO_PROMPTS.request, purpose: DEMO_PROMPTS.purpose }, note: 'This demonstrates submitting and tracking a request. Only an authorised data holder can draft or release the answer.' })}
 <form method="post" action="/requests/new">
   <div class="govuk-form-group">
     <label class="govuk-label govuk-label--s" for="question">What do you need to know?</label>
@@ -102,18 +104,18 @@ function newRequestForm(ctx, { question, holders }) {
   <div class="govuk-form-group">
     <label class="govuk-label govuk-label--s" for="purpose">What is it for?</label>
     <div class="govuk-hint">The holder uses this to judge what they can release.</div>
-    <textarea class="govuk-textarea" id="purpose" name="purpose" rows="3"></textarea>
+    <textarea class="govuk-textarea" id="purpose" name="purpose" rows="3">${esc(form.purpose || (ctx.query?.example ? DEMO_PROMPTS.purpose : ''))}</textarea>
   </div>
   <div class="govuk-form-group">
     <fieldset class="govuk-fieldset">
       <legend class="govuk-fieldset__legend"><strong>How often do you need it?</strong></legend>
       <div class="govuk-radios govuk-radios--small">
         <div class="govuk-radios__item">
-          <input class="govuk-radios__input" id="c-once" name="cadence" type="radio" value="once" checked>
+          <input class="govuk-radios__input" id="c-once" name="cadence" type="radio" value="once" ${form.cadence !== 'monthly' ? 'checked' : ''}>
           <label class="govuk-radios__label" for="c-once">Once</label>
         </div>
         <div class="govuk-radios__item">
-          <input class="govuk-radios__input" id="c-month" name="cadence" type="radio" value="monthly">
+          <input class="govuk-radios__input" id="c-month" name="cadence" type="radio" value="monthly" ${form.cadence === 'monthly' ? 'checked' : ''}>
           <label class="govuk-radios__label" for="c-month">Every month
             <span class="cortex-src">If the holder approves the method, it issues without them.</span>
           </label>
@@ -215,10 +217,10 @@ function waitingOnMe(ctx, { waiting }) {
       .join('')}`;
 }
 
-export function requestsPage(ctx, { view, mine, waiting, holders, question }) {
+export function requestsPage(ctx, { view, mine, waiting, holders, question, form = {} }) {
   const body =
     view === 'new'
-      ? newRequestForm(ctx, { question, holders })
+      ? newRequestForm(ctx, { question, holders, form })
       : view === 'waiting'
         ? waitingOnMe(ctx, { waiting })
         : myRequests(ctx, { mine });

@@ -1,56 +1,136 @@
-# Data Cortex - architecture
+# Data Cortex - technical architecture
 
-Data Cortex is a customer-neutral PoC front end to Microsoft Purview, Azure API Management and Microsoft Foundry. It demonstrates discovery, governed composition and reuse over an AI landing zone, rather than implementing the entire landing zone.
+This document describes the implementation and the **22 September 2026** deployment snapshot. The [README architecture diagram](../README.md#technical-solution-architecture) is the visual overview; [DEPLOY.md](DEPLOY.md) describes operations. Rehearsed capabilities and external blockers are not interchangeable.
 
-## Components
+## Technology and infrastructure
 
-```text
-Browser (server-rendered HTML)
-  -> Entra / Container Apps authentication
-  -> Cortex backend-for-frontend
-       -> metadata index: Purview + APIM + Foundry
-       -> agents, chat, requests, ordered agent workflows
-       -> Foundry Evals/taxonomy red team integration
-       -> blob state: one writer per app-specific container
-  -> Purview Unified Catalog: domains, products, asset relationships
-  -> Purview Data Map: scanned assets, schema, classifications
-  -> APIM: REST APIs, MCP projections, gateway analytics
-  -> Foundry: versioned agents, responses, project connections, evaluations
-  -> synthetic files -> Data Map scan -> AI Search -> agent grounding
+| Layer | Technology / resource | Responsibility and boundary |
+|---|---|---|
+| User identity | Microsoft Entra ID, Container Apps authentication | Terminates sign-in and supplies identity/group claims; does not automatically delegate user credentials to data tools |
+| Application | Node.js 20+, ESM, native HTTP/fetch, server-rendered HTML | BFF keeps credentials and Azure management calls off the browser; three themes share implementation |
+| Web hosting | Azure Container Apps, `cae-cortex`, North Europe | `cortex-web`, `cortex-web-microsoft`, `cortex-web-novo`; one writer per state container |
+| Catalogue tools | Separate `cortex-purview-mcp` Container App | Exposes Purview metadata tools, not arbitrary source records |
+| Governance | Microsoft Purview `prdcorepurvieweus`, East US | Unified Catalog domains/products/relationships and Data Map scanned assets/schema/classification |
+| Models and agents | Microsoft Foundry `prdcorefdryeus001`, project `prdcorefdryproj-default`, East US | Versioned agents, Responses API, tool connections and evaluation APIs; configured deployment `gpt-5.4-mini` |
+| Source data | ADLS Gen2 / Blob Storage `stcortexdatazha7pf`, container `products` | Authoritative synthetic CSV files and dictionaries; private network access |
+| Retrieval | Azure AI Search `srch-cortex-zha7pf`, North Europe | Data sources, CSV indexers, indexes, semantic ranking, knowledge sources/bases; Foundry IQ uses this managed retrieval layer |
+| API reuse | Azure API Management `prdcoreapimneu001`, North Europe | REST/GraphQL endpoints, MCP projections, subscription-key access and real gateway usage |
+| External agents | Azure Databricks, Microsoft Fabric, Copilot Studio | Administrator-approved adapters; Databricks exercised live, Fabric/Studio subject to recorded tenant restrictions |
+| State | Blob Storage `stcortexstatezha7pf`, North Europe | Separate JSON collections per app container; not Cosmos DB or mounted Azure Files |
+| Secrets | Container Apps secret references; Key Vault adapter and existing `prdcorekveus` | Rehearsed apps use direct configuration/secrets; Key Vault reads depend on its network accessibility |
+| Networking | Azure Network Security Perimeter `nsp-cortex` | Storage associations enforced; Search association in learning mode. No claim of a complete private-endpoint topology |
+| Operations | Azure Monitor / Log Analytics; existing Application Insights configuration | Container logs and diagnostic infrastructure. An Insights connection string does not prove complete application traces |
+| Build / deployment | Azure Container Registry `prdcoreamlacr001`, Azure CLI, azd, Bicep | Versioned images; `infra\main.bicep` is the active IaC entry point |
+| Bootstrap | Approved operator scripts; manual `cortex-web-bootstrap` job | Creates sample content using existing access; job image/configuration must be reviewed independently |
+| Optional channels | Azure Bot Service + Foundry Activity Protocol | Native tenant submission path after explicit consent; downloadable ZIP alone provisions nothing |
+
+The deployment spans regions. Data, prompts, retrieval planning and external connectors can cross those boundaries; customer residency review is required. Shared identities and backend services are not a customer-isolation model.
+
+## Discovery and knowledge flow
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant B as Cortex BFF
+  participant P as Purview
+  participant S as ADLS Gen2 / Blob
+  participant Q as Azure AI Search / Foundry IQ
+  participant F as Foundry agent
+  U->>B: Search / ask / select knowledge
+  B->>P: Read catalogue metadata and asset relationships
+  Note over B,P: Catalogue answers identify sources; metadata is not source data
+  Note over S,Q: Bootstrap or approved publication, not every query
+  Q->>S: Indexer reads CSV using Search service identity
+  S-->>Q: Records become derived index documents
+  B->>F: Create version with selected knowledge connections
+  U->>B: Ask for a record
+  B->>F: Responses request and private conversation context
+  F->>Q: MCP knowledge retrieval using project connection
+  Q->>F: Configured planning-model invocation
+  F-->>Q: Retrieval plan
+  Q-->>F: Retrieved evidence
+  F-->>B: Answer, citations and tool activity
+  B-->>U: Answer with provenance / explicit failure
 ```
 
-The separate Purview MCP app exposes catalogue metadata, not arbitrary source rows. The publishing shim presents an agent invocation operation for APIM to expose as MCP. Neutral sample skills read bounded portions of uploaded synthetic files and require the gateway subscription key.
+The planning-model interaction represents the rehearsed preview configuration, not a recursive agent call. The stable minimal mode does not use a planning model.
 
-The artefact publisher adds approved source connectors: Databricks serving endpoints, Fabric's published MCP runtime and Copilot Studio secured Direct Line or application-authenticated Direct Engine connections. Source protocol/availability preflight runs before creating gateway resources or assessments; successful connectivity does not establish model/data permission. Direct Engine HTTP/SSE requests have explicit time and size bounds, and disabled preview capabilities fail closed. A versioned Foundry wrapper delegates to an external source and remains subject to native pre-publication assessment. Generic JSON APIs are projected as APIM MCP tools; data products can expose a bounded GraphQL query over their existing Search indexes. Source credentials stay in managed identity or Container Apps secret references. Requests cannot change the administrator-approved origin or path prefix.
+### Bootstrap contract
 
-After a passing assessment, Teams/Microsoft 365 publication pins the stable Foundry endpoint version, creates a dedicated Azure Bot Service and submits a tenant package through the documented publish API. The platform supplies authenticated Activity Protocol handling; a duplicate custom bot HTTP server and its separate session database are unnecessary. Catalogue submission is not tenant administrator approval, installation or entitlement.
+The 14 products define deterministic CSVs, containing 15,050 rows across 1-21 September 2026. File uploads are verified; Data Map scans and registers the CSV assets; Unified Catalog relationships bind those assets to products. Search indexers read the same files. Exact expected row counts are required before knowledge metadata is published.
 
-## Metadata and Map
+Purview carries `cortexDataFolder`, `cortexSearchIndex`, `cortexKnowledgeBase`, `cortexKnowledgeSource`, `cortexKnowledgeMcp`, `cortexKnowledgeConnection`, `cortexKnowledgeReasoning` and `cortexIndexedRows`. This preserves the connection across application restarts and across themes.
 
-The Cortex Index merges live API responses, caching them to avoid page-by-page service fan-out and Purview rate limits. Backend errors are surfaced; unavailable sources may leave stale data. There is no runtime seeded fallback.
+Foundry IQ does not create a separate copy of data in Cortex. Search indexes **are** derived copies. A product with an IQ endpoint becomes a managed-identity MCP tool when attached to an agent; a catalogue-only product must not be described as having accessible rows.
 
-The Map lays out live domains deterministically in SVG. Domain count controls canvas height; registered entry counts control circle size. Dependencies must be recorded and resolve to real entries. Missing domains and unresolved dependencies are shown separately. Positions are not geography.
+`SYN-17` repeats independently in each dataset. It is a demonstration lookup anchor, not a relational join key. The UI does not infer totals or causality from a retrieved subset.
 
-## Governance
+### Retrieval modes
 
-Entra group claims are mapped to aliases for the visibility engine. `visibilityFor()` describes the viewer's route; `canReachUnderlying()` is the separate holder-access question. Agent creation validates attachments server-side.
+| Mode | Contract | Operational requirement |
+|---|---|---|
+| Minimal | `2026-04-01` knowledge-base/MCP path; no planner | Documented model-free path; the sandbox MCP endpoint rejected this API version during rehearsal |
+| Planned, rehearsed | `2026-08-01-preview` MCP with low-effort planning and extractive output | Explicit `SEARCH_KNOWLEDGE_MODEL_NAME`, `SEARCH_KNOWLEDGE_MODEL_ENDPOINT` and existing `FOUNDRY_MODEL`; Search identity needs approved model access |
+| Legacy native tool | `azure_ai_search` on a CognitiveSearch connection | Still supported in code for older products; the sandbox native tool returned access denied despite account roles, so demo grounding uses the verified IQ path |
 
-Requests are drafted with holder permissions and require a human release. Chat follows the configured `all-staff` or `visibility` policy. Workflow drafts are owner-only; scheduled execution uses captured permissions and needs live directory revalidation before production adoption.
+Do not turn the native-tool failure or stable-version rejection into a universal product limitation. API support and effective caller identities must be established per deployment.
 
-Assurance gates describe review requirements. **Test and publish** persists an assessment request, enables generated prohibited-action scenarios, runs native Foundry evaluation and publishes only when every sample passes all three distinct evaluators. A background worker resumes after restart. Published invocation pins the assessed agent version. Standalone reviewer-led scans remain available. Passing the configured sandbox gate is not a production safety certification.
+## Application surfaces
 
-## Persistence and isolation
+Ask/Search routing is explainable and overridable, not a billable classifier. Ask uses permitted catalogue context; the Help guide uses curated platform guidance and a tool-free model call, not live logs or other users' conversations.
 
-Application state is JSON collections in Blob Storage with managed identity authentication. Local development can use files; missing/unreachable storage leaves explicit memory-only mode. The app never overwrites existing blob state after a failed initial read.
+Agent chat uses server-side owner checks, cross-agent thread isolation, serialized turns and saved provenance. The bottom-right dialog enhances ordinary links; without JavaScript, the full conversation page remains available. Rebuilding a native agent uses its version collection. External-wrapper rebuilds preserve their source tools.
 
-One replica is supported per state container. The Microsoft/Novo-inspired variants share platform services and the neutral demo pack, but use distinct state containers. Shared identities and catalogues are not a tenant/customer isolation boundary.
+The Map computes positions from live governance domains and resolves recorded dependencies. It is a catalogue view, not geographical topology, discovered network connectivity or verified end-to-end lineage.
 
-Chat now rejects cross-agent thread reuse, requires stable owner identity, serializes turns within a process and reports failed persistence. Published conversations pin the assessed version. This does not turn whole-collection blob persistence into a multi-writer database: keep the single-writer restriction. The existing Cosmos module is a future scale-out option, not a deployed session store. Native Bot/Foundry channels manage their own conversation state.
+Requests capture question, purpose, cadence and a holder. `cortexAskable` identifies supported holder questions; missing metadata can leave a request unassigned. Holder selection preserves input. Drafting/release requires underlying-access checks and human action, not an automatic permission grant.
 
-Reset operates on reviewed object plans, not resource groups. Fingerprints detect changes between inventory and deletion. Unknown orphan ownership, platform audit history and soft-delete retention require separate operator review.
+## Publishing and external systems
 
-## PoC boundaries
+| Path | Implementation |
+|---|---|
+| Configured source to IQ | Indexer lifecycle, exact data checks, real knowledge source/base, project-managed-identity connection and catalogue artefact |
+| REST to MCP | Selected OpenAPI 3.0 JSON operations projected by APIM; GET default, explicit consent for non-GET methods |
+| Existing GraphQL to MCP | One parsed, fixed read-only query; callers supply variables, not replacement query text; mutations/subscriptions rejected |
+| Indexed-data GraphQL | Seeded bounded `rows(search, first)` query over an existing Search index; not general database federation |
+| Existing agent | Foundry wrapper -> APIM -> Cortex protected shim -> approved Databricks/Fabric/Studio adapter |
+| Teams/Microsoft 365 package | `fflate` ZIP with manifest, generated icons and installation instructions |
+| Native channel submission | Separate consented path: passing native assessment, Bot Service/channel configuration, fixed-version endpoint, tenant submission |
 
-The system is not a production access-control gateway for arbitrary tools. Some legacy machine routes rely on the trusted gateway deployment boundary; external tools need their own authorization. Synthetic data is indexed and metadata/transcripts/reports are stored, so the claim that nothing is copied is incorrect.
+External wrappers request `tool_choice: required`; the adapter refuses to present a generic model response as a delegated answer. Source configuration can change independently of a wrapper version, so its provenance and assessment need review.
 
-Production requires threat modeling, scoped identities, stronger machine-route controls, fresh scheduled-run permissions, durable multi-writer state, managed report retention, approval policy and operational monitoring. Preview API availability must be established in the target region. No savings, compliance certification or customer outcomes are asserted.
+Connectors allow only configured destinations and secret references. APIM subscription-key protection does not establish per-user authorization for arbitrary source tools. Fabric's dedicated connector remained model-policy blocked; Studio's environment rejected app-only S2S. Do not remove authentication to hide those failures.
+
+## Assurance and orchestration
+
+The Responsible AI report automatically maps configuration to Microsoft's six principles and NIST AI RMF. It identifies needed review; it is not a behavioural evaluation or legal certification. Red-team status comes from complete, version-matched evidence. Failed, stale, missing or blocked evidence never becomes a pass.
+
+**Test and publish** uses a durable native evaluation lifecycle and publishes only after all configured evaluators pass complete non-empty output. **Publish with acknowledgement** is the explicit advisory alternative, recording outstanding findings and the accepted version without clearing gates. Native tenant submission remains a separate path.
+
+Browser axe-core checks cover selected WCAG A/AA rules. Interface/agent fingerprints prevent stale evidence reuse; manual keyboard, screen-reader, zoom, contrast and authentication review remain necessary.
+
+Workflows form ordered stages: one to five total steps, maximum three concurrent siblings, then an all-success join. Siblings settle before downstream work; failed/empty/oversized output stops the chain. Draft handoff is bounded to 24,000 characters, with separately bounded structured citations and explicit omission counts. Evidence is flushed before completion is returned. Manual cadence schedules nothing; recurring schedules use captured owner context and require stronger directory revalidation for production.
+
+## State, recovery and infrastructure boundaries
+
+`state`, `state-cortex-web-microsoft` and `state-cortex-web-novo` store separate application collections. Catalogue/backend changes are shared. Each container supports one writer; multiple replicas or a local process pointed at the same state are unsafe. File state is for isolated local development. Failed initial reads disable writes rather than replacing remote history with empty collections.
+
+`CORTEX_MAINTENANCE=true` blocks application and shim routes, retaining the health endpoint and disabling application schedulers/periodic index refresh. It does not stop external jobs, scans or clients of shared services. Reset additionally requires reviewed backups, exact object scope, fingerprints, quiesced writers and verified deletion. Provider audit/soft-delete retention is outside a content reset.
+
+Active IaC is `infra\main.bicep`, which composes create-or-reuse modules. `azure.yaml` declares base web and Purview MCP apps. Variants and the bootstrap job require explicit rollout handling; the root `containerapps.bicep` and optional Cosmos module are not the current runtime architecture.
+
+## API/version reference
+
+| Integration | Contract used by this repository |
+|---|---|
+| Foundry | Project agents `api-version=v1`; versions at `/agents/{name}/versions`; Responses at `/openai/v1/responses` without that query parameter |
+| Native evaluations | `/openai/evals`, `/evaluationtaxonomies`, runs and output items; `2025-11-15-preview`, `Evaluations=V1Preview` header |
+| Foundry IQ connection | ARM RemoteTool, `ProjectManagedIdentity`, Search audience, `2025-10-01-preview` |
+| APIM MCP | `2025-09-01-preview`; inline tools and full backing-operation ARM IDs |
+| Purview Unified Catalog | `2026-03-20-preview`; array-form managed attributes, full-replace PUT and relationships |
+| Purview Data Map | `2023-09-01`; ADLS scan and Atlas asset APIs |
+| Search indexing | `2024-07-01`; CSV indexers and Entra authentication |
+| Knowledge resources | Stable source definition and explicit minimal/planned base mode; see retrieval table above |
+| Bot Service | `2022-09-15` ARM API; Foundry Activity Protocol endpoint in the channel adapter |
+
+Preview contracts must be tested in the target region. Existing-role assignments, model deployments, source health and tenant entitlements are not inferred from a successful build.

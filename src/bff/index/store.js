@@ -37,6 +37,7 @@ const AGENT_OVERLAY_FIELDS = [
 ];
 
 const agentRecords = () => collection('agents', {});
+const artefactRecords = () => collection('knowledge-artefacts', {});
 const accessRequestsCol = () => collection('access-requests', []);
 const gatewayRequestsCol = () => collection('gateway-requests', []);
 
@@ -191,6 +192,7 @@ class CortexIndex {
         // What is in memory wins; what was persisted before a restart is
         // next; only a never-seen agent gets the generic defaults.
         const existing = this.entries.get(id) || this.agentRecord(id);
+        const liveVersion = a.version || a.versions?.latest?.version || a.versions?.[0]?.version;
         this.upsert({
           ...(existing || {}),
           id,
@@ -211,7 +213,8 @@ class CortexIndex {
             maintainedBy: 'human',
             syncedAt: new Date().toISOString()
           },
-          _endpoints: existing?._endpoints || {}
+          _endpoints: existing?._endpoints || {},
+          ...(liveVersion ? { _agent: { ...existing?._agent, version: String(liveVersion) } } : {})
         });
       }
     }
@@ -233,6 +236,7 @@ class CortexIndex {
       }
     }
 
+    for (const entry of Object.values(artefactRecords().data)) this.entries.set(entry.id, this.normalise(entry));
     for (const record of Object.values(collection('artefacts', {}).data)) {
       if (record.state === 'published' && record.entry) this.upsert(record.entry);
       if (record.kind === 'external-agent' && record.agentId && this.entries.has(record.agentId)) {
@@ -275,6 +279,11 @@ class CortexIndex {
     merged.cluster = resolveDomainId(merged.cluster, this.domains);
     this.entries.set(entry.id, merged);
     if (merged.cat === 'Agent' && merged._agent) this._persistAgent(merged);
+    if (merged._source?.system === 'cortex') {
+      const records = artefactRecords();
+      records.data[entry.id] = merged;
+      records.save();
+    }
     return merged;
   }
 

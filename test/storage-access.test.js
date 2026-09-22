@@ -267,7 +267,7 @@ describe('bootstrapSearch verification', () => {
       ensureDataSource: async () => ({}),
       ensureIndexer: async () => ({}),
       runIndexer: async () => ({ started: true }),
-      indexerStatus: async () => ({ lastRun: { status: 'success', processed: 200, failed: 0, errors: [] } })
+      indexerStatus: async () => ({ lastRun: { status: 'success', processed: 750, failed: 0, errors: [] } })
     };
     const r = await bootstrapSearch({
       products: [{ id: 'cx-demo-service-performance', name: 'Demo - Service performance' }],
@@ -280,7 +280,7 @@ describe('bootstrapSearch verification', () => {
     assert.equal(r.built, 1);
     assert.equal(r.indexed, 1);
     assert.equal(r.verified, true);
-    assert.match(log.lines.ok.join('\n'), /200 rows indexed/);
+    assert.match(log.lines.ok.join('\n'), /750 rows indexed/);
     assert.match(log.lines.ok.join('\n'), /1 of 1 indexes hold rows/);
   });
 

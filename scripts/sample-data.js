@@ -28,9 +28,11 @@ export function generateProduct(id, product = {}, { rows } = {}) {
   const columns = spec.columns.map(([name, type, description]) => ({ name, type, description }));
   const lines = [columns.map((c) => c.name).join(',')];
   for (let i = 0; i < count; i++) {
-    const date = new Date(Date.UTC(2026, 0, 1 + (i % 240))).toISOString().slice(0, 10);
+    const date = new Date(Date.UTC(2026, 8, 1 + (i % 21))).toISOString().slice(0, 10);
+    const integerMetric = /count|units|capacity/.test(metadata.metric);
+    const value = integerMetric ? String(Math.floor(100 + random() * 4900)) : (random() * 100).toFixed(2);
     lines.push([`SYN-${i + 1}`, date, `Unit-${1 + i % 5}`, `Site-${1 + i % 12}`,
-      (random() * 100).toFixed(2), ['reviewed', 'pending', 'needs-review'][i % 3], 'true'].join(','));
+      value, ['reviewed', 'pending', 'needs-review'][i % 3], 'true'].join(','));
   }
   const csv = lines.join('\n') + '\n';
   const readme = `# ${metadata.name} - sample data
@@ -41,6 +43,7 @@ ${metadata.description}
 
 Domain: ${metadata.domain}. Sensitivity: ${metadata.sensitivity}. Licence: ${metadata.licence}.
 Rows: ${count}. Minimum aggregation: ${metadata.minimumAggregation || 'None stated'}.
+Reporting window: 1-21 September 2026. Sites and business units are fictional; this is not Novo operational or clinical data.
 
 | Column | Type | Meaning |
 |---|---|---|

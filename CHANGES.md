@@ -1,6 +1,35 @@
 # Data Cortex - change report
 
-## Cross-platform artefact and conversation iteration
+## Documentation alignment
+
+- Updated all repository documentation for the three-app `novo-demo-20260923-r3` release and added the technical solution/infrastructure diagram to README.
+- Separated deployed/rehearsed services from conditional channels, configured monitoring and production design gaps.
+- Replaced superseded operational guidance with current bootstrap, single-writer state, reviewed reset and advisory assurance procedures.
+
+## Current: Novo operational demo refresh
+
+Recorded 22 September 2026. The same image is deployed to Defra (`cortex-web--0000032`), Microsoft (`cortex-web-microsoft--0000017`) and Novo (`cortex-web-novo--0000014`). See [README](README.md) for the maintained architecture and [DEPLOY.md](docs/DEPLOY.md) for current commands. Release history below describes its own point in time, not current permissions or deployment restrictions.
+
+- Restored the original full Novo About source exactly and aligned all three apps on one release with improved brand-specific visuals.
+- Added guarded maintenance mode, multi-container reset selection, ownership checks, relationship cleanup and truthful handling of provider `deleted:false` responses.
+- Backed up the reviewed inventory, removed 313 approved objects and retained 18 provider-history objects by explicit user approval.
+- Rebuilt and verified 14 datasets/asset links/indexes/knowledge bases, with exactly 15,050 synthetic rows.
+- Added five data-backed analyst/reviewer blueprints, manual-only demo workflows, and resolved publishing defaults for every supported category.
+- Added one-click Try examples without automatic submission, preserved request details across holder selection, and populated holder-supported catalogue questions.
+- Enforced actual delegation for external wrappers, preserved their tools on rebuild, propagated workflow citations and awaited durable result persistence.
+- Rehearsed the real Novo application paths, including all five workflow steps and both REST/GraphQL MCP tools. Tenant installation and unavailable native assessment capacity remain explicit prerequisites.
+
+## Historical: Cortex experience redesign
+
+- Preserved the newer deployed integration source, connectors, artefact overlays and conversation protections.
+- Renamed the catalogue to Cortex; added one Ask/Search landing input with an explicit override, a grounded platform guide and a compact Microsoft architecture story.
+- Added an accessible bottom-right chat dialog, fixed version creation through Foundry's `/versions` route and guarded rebuilds by builder/reviewer access.
+- Added automatic Microsoft Responsible AI/NIST mappings, current-version red-team gate evidence, advisory publication acknowledgement, axe-core browser audits and a separate manual WCAG 2.2 AA checklist.
+- Simplified publishing metadata; added configured-source Foundry IQ onboarding, fixed GraphQL queries as MCP tools, and downloadable Teams/Microsoft 365 packages without implicit tenant installation.
+- Added one-to-five-step workflows, up to three parallel branches, all-success joins and AI proposals requiring approval.
+- Added synthetic agent blueprints and `docs/DEMO.md`. Live knowledge retrieval and the repaired agent returned the recorded SYN-17 value; native red teaming remains blocked by Foundry's hosted-session 429.
+
+## Historical: cross-platform artefact and conversation iteration
 
 - Added metadata-driven external-agent onboarding, real indexed-data GraphQL publishing, OpenAPI-to-MCP publishing and assessment-gated Teams/Microsoft 365 package submission.
 - Added approved-connector boundaries, source secret references, synthetic Fabric workspace/service principal, Databricks identity onboarding, and scoped Bot Service permissions.
@@ -13,7 +42,7 @@
 - Applied the separately approved Fabric cross-region processing grant only to the dedicated connector group, preserving existing groups.
 - Remaining live blockers are explicit: Foundry hosted red-team ACA-session 429, Fabric connector model-policy 403, and Copilot Studio's disabled app-only S2S environment preview. No assessment bypass, tenant-wide app installation, full reset or licence purchase was performed.
 
-## Customer-neutral accelerator revision
+## Historical: customer-neutral accelerator revision
 
 - Replaced sector-specific bootstrap content with one synthetic, cross-industry pack and removed the unused historical seed pack.
 - Replaced the About narrative and operational documentation with neutral architecture, demo steps and explicit PoC limitations.
@@ -26,14 +55,14 @@
 - Added a real read-only synthetic skill invocation handler and paginated storage listing.
 - Product bootstrap now stops if existing products cannot be queried, avoiding accidental duplicate creation.
 
-## Deployment impact
+## Historical: deployment impact before the demo reset
 
 Deployed `cortex-web-microsoft` and `cortex-web-novo` independently in the existing environment, with Entra authentication and separate blob state. Original web image is unchanged. Updated the bootstrap job image, repaired the protected-secret connection, completed the Purview scan and fourteen product attachments, and populated fourteen neutral Search indexes.
 
 Log-driven repairs include additive Search schemas, real capacity preflight, eventual-consistency-aware row verification, required storage ARM identity, supported scan POST, correct Atlas type and full Unified Catalog asset metadata. Twelve approved unreferenced legacy demo index groups were removed; catalogue records and files remain. No full reset or capacity upgrade was performed.
 
-The executive About page now explains objectives, business value, governance and a business-friendly architecture, with attributed messages from Microsoft's June 2026 system-over-model article.
+At that stage, the executive About page explained objectives, business value, governance and a business-friendly architecture, with attributed messages from Microsoft's June 2026 system-over-model article. Its full Novo version was subsequently restored unchanged; the maintained technical diagram now lives in README.
 
-The two presentations share connected services, not isolated customer estates. Native Foundry run submission currently fails inside the hosted runtime with ACA-session 429; publication remains blocked rather than treating unavailable assessments as success.
+The presentations share connected services, not isolated customer estates. Native Foundry run submission failed inside the hosted runtime with ACA-session 429. The later advisory publication path records explicit acceptance of findings; it does not turn unavailable assessment evidence into success.
 
 Earlier implementation history remains in Git. [FIXES.md](FIXES.md) retains the integration lessons without customer-specific incident details.
