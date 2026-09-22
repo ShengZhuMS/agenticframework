@@ -1,382 +1,235 @@
-# Data Cortex - deploy, verify and iterate
+# Data Cortex - deployment and operations
 
-Use PowerShell 7 on Windows. Follow sections 1-5 for a first deployment; use section 6 for subsequent changes. Sections 7-9 cover assessments, variants and destructive content reset.
+This is the current runbook for `novo-demo-20260923-r3`, recorded **22 September 2026**. The [README](../README.md) contains the technical diagram; [ARCHITECTURE.md](ARCHITECTURE.md) explains boundaries and [DEMO.md](DEMO.md) contains the rehearsed presentation. Commands marked as mutations require operator approval for the actual environment; previous approvals are not standing authorization.
 
-**Current sandbox status (21 September 2026):** the follow-up authorizes updates to all three web apps, necessary Azure infrastructure, dedicated channel-app submission (not tenant-wide installation), and synthetic-only source discovery. All three now receive the integration release. Original content and separate state containers are preserved. The repaired catalogue has fourteen linked sample products and fourteen populated indexes. Agent publication still fails closed on Foundry's hosted ACA-session 429. The GraphQL and API-to-MCP paths have been exercised through APIM; not every cross-platform agent path is end-to-end operational. See section 11 for the exact remaining blockers. No full reset, new paid capacity or Microsoft 365 licence purchase was performed.
+## 1. Current deployment
 
-## 1. Understand the deployment
+All apps run `prdcoreamlacr001.azurecr.io/cortex/web-cortex:novo-demo-20260923-r3` in `cae-cortex`, resource group `PRDCORECORTEX001`, with maintenance off.
 
-Data Cortex is a customer-neutral Microsoft technology accelerator over Purview Data Map and Unified Catalog, APIM and Foundry. It is not a replacement for those services or a production AI landing zone.
+| App | Theme | Ready revision | State container |
+|---|---|---|---|
+| `cortex-web` | Defra | `cortex-web--0000032` | `state` |
+| `cortex-web-microsoft` | Microsoft | `cortex-web-microsoft--0000017` | `state-cortex-web-microsoft` |
+| `cortex-web-novo` | Novo | `cortex-web-novo--0000014` | `state-cortex-web-novo` |
 
-The standard deployment creates a web Container App, a Purview MCP Container App, a bootstrap job, an identity, AI Search, sample-data storage, blob-state storage and optionally a Network Security Perimeter. It can reuse existing platform services.
+Use the [README application links](../README.md#current-release). The original full Novo About source is preserved with SHA-256 `43f42a42f2599de9cacb0ed8590bdeccd934e28bc0a024c5ef6f79e4b924a354`.
 
-**Existing-deployment compatibility:** `Deploy-Cortex.ps1` retains the original sandbox resource-name defaults, including `PRDCORECORTEX001`. They are not generic defaults suitable for another customer. Supply every resource-name/group parameter for a new environment and inspect `-WhatIfResources` before proceeding. Do not reuse the existing deployment's azd environment for another customer's estate.
+Shared infrastructure includes Foundry/Purview in East US; APIM, Container Apps, registry, storage and Search in North Europe. Review residency before customer reuse. Key Vault is supported, but the rehearsed apps use direct configuration and Container Apps secrets. Application Insights configuration is not proof of complete application instrumentation.
 
-| Resource | Ownership and protection |
-|---|---|
-| APIM, Purview, Foundry, registry, monitoring, vault | Shared services; do not delete or replace them to refresh a demo |
-| Original web and MCP apps | Retained; application-only deployment updates their images |
-| Additional themed web apps | Created only by the separate variants script; never tagged as the original azd web service |
-| State | One JSON blob per collection, one writer per container; never point two apps at the same state container |
-| Demo records | Synthetic, but written to real Azure services; changes can affect every app sharing the catalogue |
+## 2. Prerequisites and access
 
-## 2. Prerequisites and permissions
-
-Install Node 20 or later, PowerShell 7, Azure CLI, Azure Developer CLI (`azd`), Git and Docker Desktop. Start Docker Desktop before a deployment.
+Use Node.js 20+, npm, PowerShell 7, Azure CLI and azd. Docker is needed for local image builds; ACR remote builds are an alternative and incur usage.
 
 ```powershell
-pwsh --version
 node --version
+pwsh --version
 az version
 azd version
-docker --version
 az login
 az account set --subscription <subscription-id>
 ```
 
-If downloaded scripts are blocked, review them before removing their Mark of the Web with `Unblock-File`. The existing deployment script also unblocks repository scripts and runs its hook under an execution-policy bypass.
+Check existing rights before requesting changes. Global Administrator does not imply Azure RBAC or Purview data-plane permissions.
 
-**Global Administrator does not automatically grant Azure subscription RBAC or Purview data-plane roles.** Check each plane:
-
-| Plane | Deployer permissions |
+| Plane | Required access depends on the operation |
 |---|---|
-| Azure subscription/resources | Contributor plus User Access Administrator where role grants are required |
-| Registry | AcrPush |
-| Entra | Application Administrator for sign-in; Groups Administrator for demo groups; appropriate guest-invitation rights |
-| Purview Unified Catalog | Data Governance Administrator |
-| Purview Data Map | Collection administrator able to grant Data Source Administrator, Data Curator and Data Reader |
-| Storage | Data-plane access and network reachability when running data operations locally |
-| Network/perimeter/policy | Rights to create associations; separate approval for any policy exemption |
+| Azure management | Resource creation/update, registry build/push, identity and role assignment rights |
+| Purview Unified Catalog | Catalogue/domain permissions for read, create, update and delete; not interchangeable with Azure account RBAC |
+| Purview Data Map | Source/scan administration and asset curation/read roles |
+| Storage | Network access plus data-plane roles; Search/Purview/workload identities need their own permissions |
+| Foundry | Model/agent/connection access and native evaluation permissions |
+| Foundry IQ | Project-managed-identity Search read access; Search identity model access when planning is enabled |
+| External platforms | Approved Databricks endpoint entitlement, Fabric consent/policy and Studio environment capabilities |
+| Teams/Microsoft 365 | App policies, channel provisioning, installation approval and relevant entitlements |
 
-The managed identity receives APIM and Foundry roles, storage/search access, and Purview roles through Bicep and bootstrap. Foundry, Search and Purview identities also need their documented downstream data access.
+Do not use a broader role, an anonymous connector or a public-storage change as a silent fix. The native Search tool and IQ MCP use different identity contracts.
 
-Do not weaken tenant policies or guest MFA requirements just to make a demo work. `-TrustHomeMfa` changes tenant-wide inbound trust; use only with identity-administrator approval. A policy exemption also changes governance and needs explicit approval.
-
-### Network and configuration choices
-
-With an enforced perimeter, your laptop cannot read or write the data/state blobs. Run storage-touching jobs from an approved Azure execution environment inside that boundary. The existing `cortex-web-bootstrap` job handles sample-data bootstrap.
-
-The app supports Key Vault configuration or direct environment variables plus Container Apps secrets. A vault with public access disabled needs a valid private/perimeter network path; managed identity permissions alone do not make it reachable. The deployment script's `auto` mode chooses direct configuration when required.
-
-## 3. Check source and inspect the resource plan
+## 3. Inspect before provisioning
 
 ```powershell
+npm ci
 npm test
 node .\scripts\bootstrap.js --dry-run
+node .\scripts\bootstrap-demo.js
 node .\scripts\sample-data.js --list
 .\scripts\Deploy-Cortex.ps1 -WhatIfResources
 ```
 
-The first three are offline. `-WhatIfResources` performs Azure discovery and local setup checks: it is not an offline command. Confirm every `REUSE` and `CREATE`, subscription, group, model deployment/version and image.
+The tests and listed dry runs do not mutate Azure. `-WhatIfResources` performs Azure discovery and local setup checks; it is not an offline command. Review create/reuse choices, subscription, regions, model/version, identities and images.
 
-For a new estate, use a dedicated azd environment and explicit parameters:
+`infra\main.bicep` is the active entry point referenced by `azure.yaml`. Supply explicit parameters for a different estate; do not copy the sandbox defaults blindly. Inspect `scripts\Deploy-Cortex.ps1` parameter names and `infra\main.parameters.json`. The root `containerapps.bicep` is a legacy file, not the active azd module.
 
-```powershell
-.\scripts\Deploy-Cortex.ps1 -WhatIfResources `
-  -SubscriptionId <subscription-id> -EnvironmentName <environment> `
-  -CortexResourceGroup <cortex-rg> -Location <region> `
-  -ApimName <apim> -ApimResourceGroup <apim-rg> `
-  -PurviewName <purview> -PurviewResourceGroup <purview-rg> `
-  -FoundryAccountName <foundry> -FoundryProjectName <project> -FoundryResourceGroup <foundry-rg> `
-  -KeyVaultName <vault> -KeyVaultResourceGroup <vault-rg> `
-  -RegistryName <registry> -RegistryResourceGroup <registry-rg> `
-  -LogAnalyticsName <workspace> -AppInsightsName <insights> -MonitoringResourceGroup <monitoring-rg>
-```
+## 4. Deploy or update applications
 
-A model name/version in the source is not proof it is available in your region. Check the deployment plan and set `-ModelName`, `-ModelVersion`, and `-ModelDeploymentName` as needed.
+The full `Deploy-Cortex.ps1` flow can provision resources, reconcile authentication/roles and bootstrap content. Use it only after reviewing those effects. **Never use its `-Reset` switch for demo-content cleanup**: that is a resource-group/environment deletion path.
 
-## 4. Deploy the base application - after approval
+`azure.yaml` declares `web` and `purview-mcp`. A base `azd deploy` or `-AppOnly` is not proof that both themed variants or the manual bootstrap job now use the same image.
 
-Use the same reviewed parameters without `-WhatIfResources`. The existing script:
-
-1. Checks tools, authentication, resource reuse and pinned model support.
-2. Provisions and deploys the web and MCP images.
-3. Reconciles image, ingress, revision health and storage/perimeter configuration.
-4. Sets secrets and Entra sign-in with group claims.
-5. Grants Purview roles and writes domains, products, skills and connections.
-6. Runs the sample-data job inside Azure, links scanned assets, and builds search indexes.
-7. Refreshes the register and reports health; any recorded failure must be resolved.
-
-Do not use `-Reset` during iteration. It removes the original Cortex resource group, not just demo content.
-
-### Neutral bootstrap and migration
-
-`bootstrap\` is the single demo pack: nine neutral domains, fourteen synthetic data products, and six read-only sample skills. `sample-data.js` derives every schema from that pack. The obsolete unused `seed\` pack was removed.
-
-New domains have `cx-demo-*` identifiers. Two historic generic product IDs (`finance-ledger`, `endpoint-telemetry`) remain stable. Search schema updates preserve existing fields and add new ones; retyping existing fields is refused. Old rows are not silently deleted. A clean replacement of retained historical datasets needs a reviewed content-reset plan.
-
-Bootstrap does **not** silently delete the old sector-specific catalogue. Use section 9 to plan its removal, with approval. On a Basic Search tier, keeping both packs may exceed the index limit. Review the tier/capacity or remove the old demo indexes first; do not drop unrelated indexes.
-
-For the known legacy pack, `node .\scripts\migrate-demo-indexes.js` is a read-only plan. It checks Foundry agents and versions before proposing removal of twelve allowlisted old demo indexes and their indexers/data sources. `--apply` requires explicit approval. The approved migration was executed in this sandbox; catalogue products, files, agents and unknown indexes were preserved. External consumers cannot all be discovered automatically. Search now preflights actual capacity and waits for eventually consistent document counts instead of reporting zero-row success.
-
-## 5. Verify in the target environment
+For an already configured app, the narrow image-only operation is:
 
 ```powershell
-.\scripts\Test-Cortex.ps1
-.\scripts\Test-Cortex.ps1 -Diagnose
+# Cloud mutations: after approval, use a new immutable tag.
+az acr build --registry <registry> --resource-group <registry-rg> `
+  --image cortex/web-cortex:<release-tag> --file Dockerfile .
+
+az containerapp update --name <app-name> --resource-group <cortex-rg> `
+  --image <registry>.azurecr.io/cortex/web-cortex:<release-tag>
+
+az containerapp show --name <app-name> --resource-group <cortex-rg> `
+  --query "{latest:properties.latestRevisionName,ready:properties.latestReadyRevisionName}"
 ```
 
-Then sign in and check `/profile`, `/help`, `/marketplace` and `/marketplace/map`. The Map uses live Purview domains; SVG positions are computed by Cortex, not geographical coordinates. Zero domains produces an explicit empty state; backend failures produce a stale/incomplete notice.
+Repeat the approved image update for each intended app. Verify revision health, sign-in, state mode and real HTTP responses; template provisioning success alone is insufficient. Preserve per-app `PUBLIC_BASE_URL`, `CORTEX_THEME`, `STATE_CONTAINER`, all existing secret references and Entra callback URLs.
 
-Walk a synthetic product through Data Map assets, AI Search grounding, agent creation, test/chat and APIM publication. Invoke a bootstrap skill: it must read the uploaded file, not return fabricated runtime business data.
+To create/reconfigure variants, review `Deploy-CortexVariants.ps1 -WhatIf` first. It requires a working direct-config source app, appends callback URLs, isolates state and refuses unrelated targets. It does not update its source app. Copying source configuration can omit later variant-specific settings, so review `CORTEX_CONNECTORS` and knowledge-model settings before using it for routine redeployment.
 
-Application state should report **blob**, not memory, at `/api/health/state`. An unavailable state container at startup disables persistence to avoid overwriting existing records. Repair storage and restart the revision before using the app.
-
-## 6. Redeploy only what changed
-
-Load the deployment configuration before standalone bootstrap commands:
-
-```powershell
-. .\scripts\Set-CortexEnv.ps1
-
-# Existing deployment without a local azd environment:
-. .\scripts\Set-CortexEnv.ps1 -WebApp cortex-web -ResourceGroup PRDCORECORTEX001
-```
-
-The leading dot is required. Commands below write to Azure unless stated otherwise.
-
-| Change | Command |
-|---|---|
-| Web/MCP source | `.\scripts\Deploy-Cortex.ps1 -AppOnly` |
-| Domains/products only | `node .\scripts\bootstrap.js --only=purview` |
-| Skills/API/MCP only | `node .\scripts\bootstrap.js --only=apim` |
-| Purview roles only | `node .\scripts\bootstrap.js --only=roles` |
-| Foundry MCP connections | `node .\scripts\bootstrap.js --only=connections` |
-| Link completed scan results | `node .\scripts\bootstrap.js --only=link` |
-| Search indexes | `node .\scripts\bootstrap.js --only=search` |
-| Data generator | Deploy the image, update the bootstrap job to that image, then run its data section inside Azure |
-| Resume after provisioning | `.\scripts\Deploy-Cortex.ps1 -SkipProvision -SkipAuth` |
-| Auth/group mapping | `.\scripts\Set-CortexAuth.ps1 -GroupMap 'operations=Cortex Operations'` |
-| Infrastructure | Full deployment with the reviewed original environment parameters |
-| Additional themed app | Section 8, with `-Only microsoft` or `-Only novo` |
-
-`-AppOnly` does not bootstrap content. An `azd deploy` does not update a Container Apps **job**: the main script updates the job image before starting it. After a generator change, prefer the main resume path with the correct current image rather than running a stale job.
-
-`--only` accepts one section, not a comma-separated list. Run connections and search as separate commands. `--skip=data,search` runs catalogue/skills/connections without laptop storage access. `--no-wait` starts scans/indexers but is not proof they completed. `--only=link` and `--only=search` finish those stages later.
-
-Data Map registration includes the storage account ARM `resourceId`. Scans use `POST .../scans/{name}:run`; files use Atlas type `azure_datalake_gen2_path`. Unified Catalog registration supplies the scanned file's name, source identity and ADLS type properties before attaching it to a product. Re-running link does not start another scan.
+The manual `cortex-web-bootstrap` job is separate. Inspect its image, arguments and secrets before starting it; a web rollout does not update that job automatically. Prefer explicitly ordered bootstrap stages over an unreviewed stale job.
 
 ### Local development
 
+Load the existing configuration without writing secrets to disk, then **replace deployed state settings before starting a local server**:
+
 ```powershell
-.\scripts\Start-Local.ps1 -Groups all-staff,analysts,operations
+. .\scripts\Set-CortexEnv.ps1 -WebApp cortex-web-novo -ResourceGroup PRDCORECORTEX001 -Quiet
+$env:STATE_STORAGE_ACCOUNT = ''
+$env:CORTEX_STATE_DIR = Join-Path $env:TEMP "cortex-local-$([guid]::NewGuid())"
+$env:CORTEX_MAINTENANCE = 'false'
+$env:CORTEX_AUTOMATIONS = 'false'
+$env:ALLOW_UNAUTHENTICATED = 'true'
+$env:LOCAL_DEV_USER = 'Local developer'
+$env:LOCAL_DEV_GROUPS = 'all-staff'
+npm start
 ```
 
-Local app execution still calls real Azure. Never deploy `ALLOW_UNAUTHENTICATED=true`. Use a local state directory instead of inaccessible perimeter blobs. Test fixtures stub Azure calls; they are separate from runtime behavior.
+This still calls real Azure and does not bypass storage network rules. `ALLOW_UNAUTHENTICATED` is local-only and must never be deployed. Do not add fabricated production auth headers from an untrusted client.
 
-## 7. Native Foundry red teaming and multi-agent tasks
+`Start-Local.ps1` is the older azd/Key Vault helper and requires a reachable configured vault; it is not a substitute for the direct-config setup above. Use test fixtures for offline development.
 
-### Red teaming
+## 5. Rebuild sample content in order
 
-Open an agent and choose **Test and publish**. Newly created agents store the builder's Entra object ID; legacy agents require an authorized `cortex-redteam` reviewer. Only the initiator can read or operate their stored assessment.
+Run mutations from an approved environment with the necessary network access. `Set-CortexEnv.ps1` must be dot-sourced; `--only` accepts one stage, not a comma-separated list.
 
-1. Cortex persists a publication request and pins the current Foundry agent version.
-2. It creates native evaluators and a generated prohibited-actions taxonomy, then enables every generated scenario under the documented sandbox policy. Taxonomy activation uses PATCH with the returned resource identity; a file reference alone is insufficient.
-3. A background worker submits and monitors the scan automatically, including after application restart. No portal scan setup or manual polling is required.
-4. Publication requires a non-empty, complete report: every sample passes each of the three distinct evaluators, with no failed/error results.
-5. Only then are APIM REST/MCP endpoints published. Invocation pins the assessed version; rebuilding requires a new assessment before republishing.
+| Stage | Command / purpose |
+|---|---|
+| Catalogue | `node .\scripts\bootstrap.js --only=purview --skip-roles` |
+| Skills | `node .\scripts\bootstrap.js --only=apim --skip-roles` |
+| Tool connections | `node .\scripts\bootstrap.js --only=connections --skip-roles` |
+| Sample files and scan | `node .\scripts\bootstrap.js --only=data --skip-roles` from an authorised network/workload |
+| Asset relationships | `node .\scripts\bootstrap.js --only=link --skip-roles` after the scan succeeds |
+| Indexes | `node .\scripts\bootstrap.js --only=search --skip-roles` |
+| Foundry IQ links | `node .\scripts\bootstrap.js --only=knowledge --skip-roles` |
+| Demo agents/workflow | `node .\scripts\bootstrap-demo.js --apply --user-id=<approving-presenter-id>` in maintenance mode |
 
-Standalone reviewer-led assessments remain available. Their confirmation enables every generated scenario too. Neither workflow certifies that an agent is safe for production.
+`--skip-roles` avoids role reconciliation; if permissions are insufficient, stop and review access rather than dropping that flag without approval. Connection bootstrap can enumerate existing MCP services; inspect its scope if the APIM instance is shared.
 
-The integration follows the [Foundry cloud red teaming REST examples](https://learn.microsoft.com/en-us/azure/foundry/how-to/develop/run-ai-red-teaming-cloud): `/openai/evals`, `/evaluationtaxonomies`, and evaluation runs, with `api-version=2025-11-15-preview` and `Foundry-Features: Evaluations=V1Preview`. This tests a **named, versioned agent**, not just its base model. Persistent state is mandatory before creating billable assessment resources.
+The fourteen-product pack includes stable legacy IDs `finance-ledger` and `endpoint-telemetry`. Upload verification and exact expected document counts prevent stale or missing rows from looking complete. Schema evolution is additive; incompatible retyping needs a reviewed migration. `--no-wait` only starts work: it does not prove scan/index success, and knowledge linking must wait.
 
-The configured `FOUNDRY_MODEL` is the evaluator deployment for task adherence. Strategies are Flip, Base64 and IndirectJailbreak, with five turns per scenario; usage increases with generated scenario count. Confirm model/region availability and Foundry User permissions. The sandbox accepted native eval/taxonomy creation and enabled 28 generated scenarios, but two submitted runs failed with `SystemError: The ACA session initiation failed ... 429 (Too Many Requests)`. This is not an APIM or taxonomy-validation error. No customer-visible session pool was found in the Foundry resource group; investigate Foundry hosted evaluation capacity with Azure support rather than weakening the gate or silently retrying billable scans.
+Physical files are private. Data Map uses the storage ARM identity and `azure_datalake_gen2_path` assets; Unified Catalog relationships link the scanned assets to products. Search then reads those files and populates per-product indexes. Knowledge bootstrap writes the `cortexKnowledge*` attributes only after verification.
 
-No generated jailbreak text is hardcoded in Cortex. Reports may contain sensitive test output; restrict access and retention. Use synthetic data and read-only tools: cloud assessment can exercise real agent tools. A completed scan is **not** automatic assurance approval.
+The seed script creates five analyst/reviewer agents, the operations GraphQL API, a draft Databricks wrapper and manual workflow `AUT-0001`. It merges those owned seed records into the three app-state containers and must not run alongside live writers. It starts no native red-team scan and schedules no recurring workflow.
 
-After an ambiguous submission timeout, status is `submission-unknown`. Inspect the recorded evaluation in Foundry before starting another assessment; automatic POST retries could duplicate billable scans.
+The stock demo script targets the three container names shown in section 1 and the configured Databricks demo endpoint. Review that scope before reuse in another estate. Catalogue data-plane access must be available to both the operator and workload identity; if new domains require additional role assignments, request those explicitly rather than implying `--skip-roles` will supply them.
 
-### Ordered agent workflows
+After catalogue updates, refresh each app's index from an authorised route/operator context. A process that holds stale in-memory state must be restarted before leaving maintenance after a reset.
 
-**Automate a task** lets you choose two to five agent steps, with at least two distinct agents. Every step has its own instruction. The next agent receives the previous draft as untrusted data alongside the task; histories retain step outputs, sources and tools.
+### Foundry IQ configuration
 
-The first failed/empty/oversized result stops the chain. Handoffs are limited to 24,000 characters. Only the accountable owner sees and controls the workflow. Existing single-agent/method schedules are preserved.
+Set both `SEARCH_KNOWLEDGE_MODEL_NAME` and `SEARCH_KNOWLEDGE_MODEL_ENDPOINT` only after approving the existing-model planning path. The planner deployment is `FOUNDRY_MODEL`; no model is created by those settings.
 
-Scheduled runs use captured owner permissions, not live directory membership resolution. Manual runs use the signed-in owner's current context. Access follows `CORTEX_CHAT_POLICY`; `visibility` is recommended for stricter demos. These are draft workflows, not a sandbox for arbitrary tools: connect only read-only agents/tools.
+The recorded sandbox values are `gpt-5.4-mini` and `https://prdcorefdryeus001.openai.azure.com`. The Search identity has approved Cognitive Services OpenAI User access to the Foundry account; the project identity has Search Index Data Reader. Semantic ranking uses the free tier; Search remains Basic.
 
-## 8. Two additional themed web apps
+The stable minimal MCP contract (`2026-04-01`) was rejected by this sandbox endpoint. The rehearsed configuration uses `2026-08-01-preview`, an explicit existing planning model and extractive grounding output. Do not claim stable availability in another region or silently enable paid semantic/model capacity.
 
-The existing app defaults to `CORTEX_THEME=defra`. `microsoft` and `novo` are original inspired presentations with neutral content, not copied websites, logos, or claims of customer endorsement.
+## 6. Source connectors and publishing
 
-Build and push an image first. `-Image` lets the variants use new code without updating the original app. Omit it only when intentionally reusing the original image. The variants script does not invoke azd.
+`CORTEX_CONNECTORS` is administrator-controlled metadata, not a place for secret values. Keep credentials in Container Apps secret references or supported managed identities. The browser cannot choose an arbitrary authenticated destination.
+
+| UI category | Rehearsed path / prerequisite |
+|---|---|
+| Build Foundry IQ from Data Source | Configured ADLS Gen2/Blob-backed CSV product; index/base reuse and successful ingestion before catalogue publication |
+| REST API to MCP | `cortex-demo-api`; selected catalogue-health GET with prefilled OpenAPI |
+| GraphQL API to MCP | `cortex-demo-graphql`; fixed query `{ rows(first: 2) { id json } }` through the seeded API |
+| Existing agent | Databricks `databricks-gpt-oss-20b`; draft wrapper, actual `source_agent` invocation required |
+| Teams/Microsoft 365 | Download ZIP for a seeded native agent; installation is a separate tenant operation |
+
+Metadata defaults to the selected source/signed-in team, with advanced fields available. Consent is never preselected. REST write methods require an additional explicit choice. Fixed GraphQL templates do not allow mutations/subscriptions or caller replacement of query text.
+
+`cortex-demo-graphql` points to the seeded API `cx-art-86c659ca-57d0-4c0d-8116-05c7de96b5d7`, authenticating with the existing APIM-key reference. Never paste the key into example text. The seeded GraphQL API is bounded indexed-data access, not arbitrary database federation.
+
+Operator scripts have distinct effects:
+
+| Script | Effects requiring review |
+|---|---|
+| `Set-CortexIntegrations.ps1 -WhatIf` | Previews source configuration; applying can onboard Databricks identity, provision Fabric resources/credentials and grant scoped channel roles |
+| `Enable-CortexFabricAI.ps1` | Tenant/group-scoped AI policy changes; preserve existing allowed groups and review cross-region processing |
+| `Deploy-CortexStudio.ps1` | Creates/publishes the synthetic Studio source; review environment and authentication |
+| `Set-CortexStudioConnector.ps1` | Configures the authenticated Studio connector and application credentials |
+| `test-live-publishing.js` | Privileged container-side acceptance runner; `--apply` can create actual artefacts/assessments |
+
+The Studio source pack excludes tenant-bound `.mcs` metadata. Fabric's operator invocation succeeded historically, but the dedicated connector remained model-policy blocked; Studio app-only S2S remained disabled. Never make a source anonymous to get a demo through.
+
+## 7. Assurance and automation
+
+The default existing-agent publishing form creates a usable **draft wrapper**, without a native scan. Review its current assurance before sharing.
+
+**Test and publish** starts a billable version-pinned native assessment using `/openai/evals` and `/evaluationtaxonomies`, `2025-11-15-preview` and `Foundry-Features: Evaluations=V1Preview`. It requires durable state, activates generated scenarios and publishes only on complete non-empty passing evidence from prohibited-actions, task-adherence and sensitive-data-leakage evaluators.
+
+**Publish with acknowledgement** is the advisory alternative for an authorised publisher. It records outstanding findings and the reviewed version without marking gates as passed. Native channel submission is separate and requires explicit consent, its assessment prerequisite, Bot Service setup and tenant approval.
+
+Hosted evaluation runs failed with ACA-session 429 before sampling. Diagnose the recorded run; do not assume model-token quota or the web app's replica limit is responsible. No customer-managed session pool was found in the Foundry resource group. Ambiguous submissions are not automatically retried.
+
+RAI reports map configuration to Microsoft principles/NIST AI RMF; jurisdiction-specific obligations are not assessed. Browser axe results and manual attestations are versioned evidence, not full WCAG certification. Keep sensitive reports access-controlled.
+
+Automation allows one to five total steps, maximum three siblings in a stage. All must succeed before the next stage. Failed/empty/oversized results stop downstream work; source evidence and drafts are bounded and saved. AI proposals are editable and need approval. Use **manual** cadence for demos. Recurring schedules use captured owner context, not continuous Entra membership revalidation.
+
+## 8. Maintenance and reviewed content reset
+
+Reset is never part of a normal rollout. Back up source files, all affected state containers and selected resource definitions to an approved private location, then verify the backups. Old approval hashes must not be reused after reseeding.
+
+Enable `CORTEX_MAINTENANCE=true` on all affected web apps and wait for ready revisions. The health endpoint remains available, user/shim routes return 503, and app schedulers/periodic refresh stop. Also inspect independent jobs, scans and external writers; maintenance cannot stop them.
 
 ```powershell
-npm run build:assets
-az acr login --name <registry>
-docker build -t <registry>.azurecr.io/cortex/web-cortex:<unique-release-tag> .
-docker push <registry>.azurecr.io/cortex/web-cortex:<unique-release-tag>
-
-.\scripts\Deploy-CortexVariants.ps1 `
-  -SubscriptionId <subscription-id> -ResourceGroup <cortex-rg> `
-  -SourceApp <existing-web-app> `
-  -Image <registry>.azurecr.io/cortex/web-cortex:<unique-release-tag> `
-  -MicrosoftApp cortex-web-microsoft -NovoApp cortex-web-novo -WhatIf
+# Read-only cloud inventory; creates a new local plan file.
+node .\scripts\reset-content.js --plan=reset-plan.json `
+  --state-containers=state,state-cortex-web-microsoft,state-cortex-web-novo `
+  --include-legacy
 ```
 
-Review, then run without `-WhatIf` and answer the confirmation. Use `-Only microsoft` or `-Only novo` to redeploy one.
-
-The script requires a direct-config source with working Entra auth, a user-assigned identity and blob state. It copies configuration/secrets without printing values, creates `state-<app-name>` containers, and adds each callback URL to the source Entra registration **without removing existing redirects**. Initial ingress stays internal until authentication is configured. It refuses an unrelated existing target app.
-
-The variants script never updates the source app. For this follow-up, the user separately approved deploying the new source image to `cortex-web` too. The Entra registration receives additional redirect URLs; the identity, APIM, Purview and Foundry backends remain shared. This is presentation/state isolation, **not customer data isolation**. Use separate platform resources and identities for real customer boundaries.
-
-The script uses control-plane storage container creation, so a laptop need not cross the storage perimeter. It reads and writes one pinned ARM schema to avoid copying newer, unsupported CLI properties. Each target needs runtime storage access through the reused identity.
-
-Deployed sandbox apps (same `cae-cortex` environment):
-
-| App | URL | State container |
-|---|---|---|
-| Microsoft | https://cortex-web-microsoft.icybeach-1b7b9f0d.northeurope.azurecontainerapps.io | `state-cortex-web-microsoft` |
-| Novo | https://cortex-web-novo.icybeach-1b7b9f0d.northeurope.azurecontainerapps.io | `state-cortex-web-novo` |
-
-Both report healthy blob persistence and retain Entra authentication. Shared backend catalogue changes appear across all three apps; historical catalogue products were deliberately not removed. For job code changes, update `cortex-web-bootstrap` to the same image before starting it; do not run another scan just to redeploy web presentation.
-
-## 9. Reset content without deleting infrastructure
-
-**Destructive, opt-in and separate from deployment.** `reset-content.js` replaces the old reset script that only printed names. It inventories selected demo content and the selected app's complete state container. It never deletes Azure accounts, resource groups, Entra groups, app registrations, RBAC grants or shared platform services.
-
-Run from an approved environment that can reach both data and state storage (inside the perimeter when enforced). Load the full deployment configuration first.
+Review every exact ID, parent/container, fingerprint, warning and dependency. Unknown ownership is preserved, including discovered agents without Cortex builder/publication provenance. Additional exact orphan IDs can be supplied with `--include=reviewed-items.json` when creating a new plan.
 
 ```powershell
-# Read-only Azure inventory, writing a new local plan file:
-node .\scripts\reset-content.js --plan=reset-plan.json
-
-# Migration: also consider the historical sector-specific demo pack:
-node .\scripts\reset-content.js --plan=legacy-reset-plan.json --include-legacy
-```
-
-Review **every item and warning**. Plans include exact endpoints, object IDs and content fingerprints, not a wildcard delete. The script discovers domain products, recorded agents/published APIs/connections, current skills, search resources, verified sample assets, scan/source, sample files, assessment resources and state blobs.
-
-Unidentified orphan records are preserved, never guessed from an agent name. Lost state, externally created content, unlinked scan artifacts or assets with no verified sample-storage URL may require explicit IDs. Supply a JSON array of reviewed `{ "kind": "agent", "id": "exact-name" }` items using `--include=reviewed-items.json` **when creating a new plan**. Supported kinds are listed in `resourceUrl()`; there is no arbitrary-URL deletion.
-
-Before planning/applying: stop all affected apps, automation schedulers, jobs and scans; snapshot state if retention is required; ensure no unrelated workload uses the selected content. Active or unknown-status scan runs block reset. If writers changed objects after the inventory, create a new plan. Shared backend deletion affects the original app and both variants. Each distinct state container needs its own reviewed plan.
-
-```powershell
+# Destructive: execute only after explicit approval of this exact plan.
 node .\scripts\reset-content.js --plan=reset-plan.json --apply `
-  --confirm=<exact-hash-printed-during-planning> --writers-stopped
+  --state-containers=state,state-cortex-web-microsoft,state-cortex-web-novo `
+  --confirm=<approved-plan-hash> --writers-stopped
 ```
 
-The apply phase checks target configuration and all fingerprints before deletion, stops on errors and records progress after each confirmed deletion. Re-running the same reviewed plan resumes completed items. A changed resource requires a new plan; do not forge its fingerprint. Keep the same confirmation hash when resuming.
+All targets/fingerprints are checked before deletion. Relationships between approved products/assets must be removed first. Progress is saved only after absence/deleted-state confirmation. HTTP 200 with `deleted:false` is an error. Stop for unsupported provider deletion or changed objects; a narrower retained-object plan needs explicit approval, not fabricated receipts.
 
-After completing all plan items and resolving warnings, re-run bootstrap sections in order: Purview, APIM, connections, data inside Azure, link, search. Restart apps and confirm state persistence. Historical audit logs, backups and provider soft-delete retention are not erased by this script.
+The recorded refresh backed up 331 objects in private container `stcortexstatezha7pf/backup-cortex-20260922122439`. The user then retained 9 evaluations and 9 taxonomies after provider deletion refusal; 313 functional objects were confirmed deleted. Empty ADLS directory markers/ACLs, infrastructure, identities, external sources and unrelated `nyctaxi-v2` were preserved. This is historical evidence, not a reusable reset authorization.
 
-`Deploy-Cortex.ps1 -Reset` is different: it deletes the Cortex resource group and local azd environment. It also removes any additional apps placed in that group. It is not a demo-content reset.
+Rebootstrap only after approved deletion is complete. Bring all apps online only after valid state and sample data are restored. Preserve source-system audit logs, backup retention and provider soft deletes.
 
-## 10. Troubleshooting and settings
+## 9. Verification and troubleshooting
 
-| Symptom | Check |
+Use the existing `Test-Cortex.ps1` checks, then sign in and walk the [demo script](DEMO.md). Check `/profile`, `/help`, `/cortex`, `/map`, `/api/health/state`, physical-asset links and actual tool invocations. State must report blob rather than memory. A healthy BFF is not proof of Foundry tool access or tenant installation.
+
+| Symptom | Safe interpretation / next step |
 |---|---|
-| Map blank in old deployment | Deploy the new view; live domains never contained SVG coordinates |
-| No domains/partial map | `/help`, Purview roles, catalogue content, refresh errors |
-| MCP missing subscription key | Rebuild tools; bootstrap connections; Foundry connection identity and target |
-| New sample skill fails | Latest web image contains the shim; sample files uploaded; APIM forwards `Ocp-Apim-Subscription-Key` |
-| Storage `AuthorizationFailure` | Network/perimeter access, not automatically an RBAC failure |
-| Storage `AuthorizationPermissionMismatch` | Data-plane role assignment and propagation |
-| State reports memory | Correct account/container, reachable storage at startup, then restart |
-| Red team 400/404/403 | Preview API availability, supported evaluator deployment, pinned version, identity roles |
-| Variant refuses Key Vault mode | Use a direct-config source; shared vault values could overwrite per-app URLs |
-| Bootstrap query fails | Repair access first; product creation now stops rather than risking duplicates |
-| New index schema rejected | Old product schema still exists; review and reset only the affected demo resources |
-| Foundry secret deleted with purge protection | Connection bootstrap tries stable replacement names; never purge protected secrets |
-| Native red-team ACA-session 429 | Foundry hosted evaluation capacity; publication fails closed and reports the service error |
-| Scan 405 / unknown Atlas type / missing UC fields | Use this revision's bootstrap job image, then rerun the affected data/link section |
-| Authentication sidecar fails | Check secret names and registration; original auth script can rotate a missing secret |
-| Stale Entra token after role change | Sign in again; use device-code flow when the Windows broker reuses stale claims |
+| Container URL looks empty / storage `AuthorizationFailure` | No public directory listing; inspect via an authorised identity/network, not a firewall bypass |
+| `AuthorizationPermissionMismatch` | Check the actual caller's storage data-plane rights and propagation |
+| Native Search access denied | Distinguish account/project/agent caller and connection type; do not add speculative grants. The demo uses IQ |
+| IQ asks for a planning model | Check explicit planner mode, API version, existing deployment and Search-to-model access |
+| Model answers without external delegation | Preserve `runtimeToolOptions()` and required tool-call validation |
+| Foundry agent-name conflict | Existing agents must use `/agents/{name}/versions` |
+| MCP 401 | Check per-target project connection and APIM subscription-key forwarding |
+| Connection name is purge-protected | Use the existing stable replacement-name mechanism; do not purge secrets |
+| Requests have no proposed holder | Verify `cortexAskable` metadata and refresh the catalogue |
+| State missing / result appears before persistence | Check the selected container and write errors; avoid a second writer |
+| Search bootstrap has stale counts | Review data/schema migration; knowledge linking must not publish on mismatched counts |
+| Purview delete blocked by references | Detach only approved product/asset relationships before deleting endpoints |
+| Native scan ACA-session 429 | Escalate hosted-runtime evidence; do not claim a passing scan or blindly upgrade capacity |
+| Container exec 404 for a long command | Shorten the websocket command payload; prefer a reviewed script in the image |
+| Container exec 429 | Honour the provided retry interval; do not repeatedly open sessions |
 
-Key settings: `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, Foundry ARM names; `PURVIEW_ENDPOINT`, `PURVIEW_ACCOUNT_NAME`; APIM subscription/group/service/key; `SEARCH_ENDPOINT`; `DATA_STORAGE_ACCOUNT`, `DATA_CONTAINER`; `STATE_STORAGE_ACCOUNT`, `STATE_CONTAINER`; `PUBLIC_BASE_URL`; `CORTEX_THEME`; `CORTEX_GROUP_NAMES`; `CORTEX_CHAT_POLICY`; `CORTEX_AUTOMATIONS`.
-
-Keep one replica per state container. Keep infrastructure settings in the deployment parameters, not just one-off portal edits. Read [HANDOVER.md](HANDOVER.md) for implementation boundaries and [ARCHITECTURE.md](ARCHITECTURE.md) for the data flow.
-
-## 11. Share your artefact and cross-platform integrations
-
-### Publishing paths and metadata
-
-Open **Share your artefact** and choose a publication type. Every path requires a name, description, purpose, accountable owner, contact, governance domain, semantic version, classification, licence, limitations and explicit source-authority confirmation. Optional registered dependencies feed the lineage view. Credentials are referenced by administrator-configured connectors, never submitted in the publishing form.
-
-| Path | Implementation and boundary |
-|---|---|
-| Databricks/Fabric/Microsoft 365 source agent | A Foundry wrapper calls the source through an authenticated APIM tool. The wrapper is natively assessed before marketplace publication. The original agent remains in its platform. Remote source configuration is not made immutable by a wrapper version; source changes require reassessment. |
-| Data product to GraphQL | Read-only GraphQL over the product's existing Search index. `rows(search, first)` returns `id` and JSON-encoded row content. Maximum 50 rows per resolver, 40 query fields and 8,000 query characters. This is not arbitrary database federation. |
-| API to MCP | Import selected OpenAPI 3.0 JSON operations, then create a real APIM MCP projection. GET is the default. Other supported JSON methods require explicit confirmation. External `$ref` and `servers` are rejected; the connector fixes the destination and credentials. |
-| Non-Copilot agent to Teams/Microsoft 365 | Assess a Foundry agent/wrapper, pin its endpoint version, provision a dedicated Azure Bot Service, and submit through `POST /agents/{name}/microsoft365/publish?api-version=v1`. This presents a custom-engine agent; it does not convert its implementation into a Copilot Studio agent. Tenant submission remains subject to administrator approval and licensing. |
-
-Use synthetic data and read-only agents. A registered API's permitted write operations can change its source when called; enabling them is not a general-purpose sandbox. Gateway subscription keys and source permissions remain required.
-
-### Configure source identities once
-
-```powershell
-.\scripts\Set-CortexIntegrations.ps1 `
-  -ResourceGroup PRDCORECORTEX001 `
-  -DatabricksHost adb-7405608443657059.19.azuredatabricks.net `
-  -FabricCapacityId 11bb386e-6eba-41c5-9377-d5e7d7d7846c -WhatIf
-```
-
-After approval, run without `-WhatIf`. This script onboards the existing app identity into Databricks, creates/reuses a dedicated Fabric service principal and synthetic workspace, stores its secret in Container Apps, configures the three apps and grants the narrow Bot Service Contributor role in the Foundry resource group. It does not enable tenant AI settings automatically or add a Microsoft 365 source credential.
-
-`CORTEX_CONNECTORS` is a JSON array of administrator-approved metadata. Source-specific fields:
-
-- Databricks: `id`, `provider: "databricks"`, `baseUrl`, `scope: "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default"`. The source ID is a serving endpoint name.
-- Fabric: `provider: "fabric"`, `baseUrl: "https://api.fabric.microsoft.com"`, Fabric `.default` scope, `workspaceId`, `clientId`, `tenantId`, `secretEnv: "CORTEX_FABRIC_SECRET"`. The source ID is `workspace-id/data-agent-id`. Use a service principal, not managed identity; runtime uses the published MCP endpoint, not the retired Assistants API.
-- Copilot Studio/Microsoft 365 source: either a secured Direct Line connector (`baseUrl: "https://directline.botframework.com"`, `auth: "bearer-secret"`, `secretEnv`, matching `agentId`) or application-authenticated Direct Engine (`protocol: "direct-engine"`, environment API `baseUrl`, `scope: "https://api.powerplatform.com/.default"`, `clientId`, `tenantId`, `secretEnv`, and the published schema as `agentId`). Direct Engine requires the environment's app-only S2S preview to be enabled. No existing agent or channel is reconfigured automatically.
-- Generic API: `provider: "openapi"`, approved `baseUrl`, and either `auth: "anonymous"`, configured OAuth `scope`, or `auth: "header"` with `header` and `secretEnv`. Service-principal OAuth also accepts `clientId`/`tenantId`.
-
-The Bicep parameters `connectorConfiguration` and secure `fabricConnectorSecret`/`studioConnectorSecret` keep configuration reproducible. Before full infrastructure reprovisioning, load the current app settings or explicitly supply those values; empty defaults intentionally disable connectors. App-only image deployment preserves them. The base connector setup preserves separately configured Studio connectors. Never commit credentials or persist them in a PR body.
-
-### Scoped Fabric AI policy
-
-The operator explicitly approved a dedicated connector security group, not tenant-wide AI enablement. The initial OpenAI-subprocessor toggle was insufficient: Fabric uses the distinct `EnableAOAI` Azure OpenAI policy. The approved correction adds the connector group while preserving the existing administrator group, and reverts the unused subprocessor toggle:
-
-```powershell
-.\scripts\Enable-CortexFabricAI.ps1 -ApplicationId 0dc99e98-cb18-4427-a1ca-d2c241b51ec8 -WhatIf
-```
-
-Cross-region processing remains opt-in. During the resumed session the operator explicitly approved adding only the dedicated connector group to the existing `AllowSendAOAIDataToOtherRegions` policy, because Fabric documents this prerequisite:
-
-```powershell
-.\scripts\Enable-CortexFabricAI.ps1 -ApplicationId 0dc99e98-cb18-4427-a1ca-d2c241b51ec8 `
-  -AllowCrossRegionProcessing -WhatIf
-```
-
-The approved change was applied while preserving the existing administrator group. Synthetic prompts/responses can therefore be processed outside the capacity's region for this connector. No other group was added and the OpenAI-subprocessor policy remains disabled. The last model invocation still returned 403 even after this change; protocol handshake success is not proof of model permission. Do not enable AI tenant-wide as a workaround.
-
-`node .\scripts\provision-fabric-demo.js` previews a synthetic, instruction-only catalogue guide. `--apply` creates/publishes it through public Fabric APIs and invokes its MCP endpoint. It attaches no business data. `--operator` uses the already-authorized Azure CLI operator for management, while the runtime probe still uses the configured connector identity. That path created and published agent `7e478267-9ccf-4468-b05d-ec4ba9382c8b` in the dedicated workspace. An operator-authenticated MCP query returned its accurate synthetic catalogue explanation; the app's service-principal query still fails with HTTP 403, `OpenAI usage disallowed: Disallowed`. The source exists, but its unattended app integration is not yet operational.
-
-### Live acceptance and current limits
-
-The privileged runner executes **inside the app container**, so requests use the existing trusted ingress-header contract without exposing a public authentication bypass. Supply the approving operator object ID:
-
-```powershell
-az containerapp exec -g PRDCORECORTEX001 -n cortex-web-microsoft `
-  --command "node scripts/test-live-publishing.js --graphql --user-id=<operator-object-id>"
-```
-
-Use `--apply` only to create the clearly named synthetic acceptance artefact. Omit `--graphql` for API-to-MCP, or use `--agent` for Databricks wrapper onboarding. These operations can incur Azure usage. APIM gateway propagation can lag successful control-plane creation; rerun the read-only acceptance command rather than creating another artefact.
-
-Confirmed: ordinary Foundry chat preserved a synthetic word across two turns; dedicated Fabric credentials can access the new workspace; the synthetic Fabric agent answered through MCP with operator authentication; a synthetic Databricks request succeeded; GraphQL returned real indexed synthetic rows through APIM; the published MCP health tool was listed and invoked. A live wrapper test exposed APIM's single-argument raw-body mapping, now normalized only on the gateway-protected agent shim. After repair, popup chat returned SYNTHETIC through Foundry, APIM and the Databricks source.
-
-Remaining blockers: native Foundry red-team runtime still returns ACA-session 429 on a fresh deployed-app retry; Fabric rejects the connector service principal's model invocation with 403 although operator access works; Copilot Studio rejects the dedicated app with HTTP 405 and the explicit message `App-only S2S access is not enabled for this environment`; and outgoing tenant channel publication still awaits a passing native assessment. These are not successful live publishing paths.
-
-### Synthetic Copilot Studio source and authenticated connector
-
-The reusable source is in `bootstrap\copilot-studio`. It was scaffolded and published with Microsoft Power Platform CLI 2.12.2 in the existing Dataverse environment. Agent schema: `cortex_SyntheticCatalogueGuide`; agent ID: `a6517ae7-32ad-4d5f-8c9a-6580a86d3b13`. It has no business data or external tools; web browsing and file analysis are disabled. Generated `.mcs` deployment metadata is excluded from Git and Docker.
-
-Use PAC with an explicitly authenticated profile for the reviewed environment. The script preserves that profile rather than changing the user's global sign-in:
-
-```powershell
-.\scripts\Deploy-CortexStudio.ps1 `
-  -EnvironmentUrl https://orge2c8e454.crm.dynamics.com -WhatIf
-
-.\scripts\Set-CortexStudioConnector.ps1 -ResourceGroup PRDCORECORTEX001 `
-  -EnvironmentId Default-f92adce5-4bb9-4361-a380-9deaeee24c67 -WhatIf
-```
-
-The operator separately approved the dedicated application's `CopilotStudio.Copilots.Invoke` application permission. App `5fa30651-a803-452f-888b-be77641f8880` is configured in all three apps; its secret is stored as a Container Apps secret, not in the source pack. No tenant-wide installation was performed.
-
-The supported Direct Engine protocol uses bounded authenticated HTTP/SSE requests, rejects incomplete streams and interactive OAuth-card responses, and does not retry conversation POSTs. A known disabled-S2S response fails preflight before any new APIM resource or Foundry assessment is created. The source retains integrated user authentication: the proposed app-only sign-in change was not applied because a disabled environment feature cannot be fixed by making the agent anonymous.
-
-Microsoft's [client documentation](https://github.com/microsoft/Agents-for-js/tree/main/packages/agents-copilotstudio-client) describes app-only access as a preview requiring environment enablement. The deployed environment must be enabled by the service owner/Microsoft before this unattended connection can work. Existing reset tooling does not delete Fabric/Studio source solutions or their Entra registrations; source-platform teardown needs a separately reviewed operation.
-
-### Branding and presentation
-
-Header marks were taken from the official homepages on 21 September 2026, not redrawn: Microsoft's `https://uhf.microsoft.com/images/microsoft/RE1Mu3b.png`, and Novo Nordisk's current `icon-logo-white-v2` glyph from its `clientlib-site/resources/fonts/icomoon.woff` asset. Local copies avoid third-party requests from the demo pages. Preserve company trademark rights and do not imply endorsement; obtain brand approval before external marketing use.
-
-The About diagram expands the target landing zone into identity, networking, data/session services, security/governance, operations/FinOps and platform engineering. Its labels distinguish target design from deployed controls. Lineage shows declared registered relationships, not inferred runtime tracing.
+Keep credentials out of command output, logs and repository files. Azure billing can lag; record resource/model activity and monitor the approved budget rather than claiming an exact real-time cost.

@@ -1,81 +1,63 @@
 # Data Cortex - developer handover
 
-Read [DEPLOY.md](DEPLOY.md) before any Azure operation. This revision was prepared from the approved cached `MainFeature` baseline, commit `1998fc9`. The user subsequently approved live repairs, both independent themed apps and removal of unreferenced legacy demo Search indexes. The original web image and shared infrastructure were preserved; no full reset was executed.
-
-**Follow-up supersedes the original-image restriction:** the user approved deploying this integration iteration to all three web apps, necessary Azure resources, dedicated Microsoft 365 catalogue submission (not tenant-wide installation), and narrowly scoped Fabric AI policy updates. No full reset or licence purchase is approved.
+**Current baseline:** the three-app demo release `novo-demo-20260923-r3`, rehearsed on 22 September 2026. Read [README](../README.md) for the architecture diagram, [DEPLOY](DEPLOY.md) for operations and [DEMO](DEMO.md) for presenter evidence. Earlier Microsoft-only rollout restrictions and pre-reset artefact IDs are obsolete.
 
 ## Repository map
 
 | Path | Responsibility |
 |---|---|
-| `src\bff\server.js` | HTTP routes, auth context and form dispatch |
-| `src\bff\index\store.js` | Live merged catalogue and persisted agent overlays |
-| `src\bff\adapters\` | Purview, APIM, Foundry, red team, storage/search and token boundaries |
-| `src\bff\services\` | Visibility, assurance, build/publish, chat/requests, workflows and assessments |
-| `src\bff\state\store.js` | Blob/file/memory persistence; one writer |
-| `src\web\` | Server-rendered views, themes and styles |
-| `bootstrap\` | The single neutral demo pack |
-| `scripts\sample-data.js` | Deterministic synthetic CSVs and dictionaries derived from the pack |
-| `scripts\reset-content.js` | Reviewable/resumable scoped content reset |
-| `scripts\Deploy-CortexVariants.ps1` | Additional themed apps without changing original app deployment tags |
-| `infra\` and `azure.yaml` | Base infrastructure and azd services |
-| `test\` | Node tests, Azure HTTP stubs and local HTTP smoke tests |
+| `src\bff\server.js` | HTTP routing, authenticated form actions, maintenance gate and schedulers |
+| `src\bff\config.js` | Environment configuration and optional Key Vault hydration |
+| `src\bff\index\store.js` | Purview/APIM/Foundry catalogue merge and persisted overlays; `searchEntries()` is distinct from the Search adapter |
+| `src\bff\adapters\` | Azure APIs, token acquisition, Databricks/Fabric/Studio connectors and native channel publishing |
+| `src\bff\services\agents.js`, `chat.js` | Attachment validation, version creation, runtime tool requirements and owner-scoped conversations |
+| `src\bff\services\artefacts.js`, `knowledge-publishing.js` | REST/GraphQL/external-agent publishing and resumable source-to-IQ flow |
+| `src\bff\services\assurance.js`, `evidence.js`, `redteam.js`, `publish.js` | Configuration gates, fingerprints, native scan lifecycle and publication decisions |
+| `src\bff\services\automations.js` | Validated stages, concurrent siblings, bounded handoff and durable results |
+| `src\bff\services\guide.js`, `discovery.js` | Curated tool-free guidance and Ask/Search routing |
+| `src\bff\state\store.js` | Blob/file/memory collections; one writer per container |
+| `src\web\` | Server-rendered views, themes, safe Try examples and progressive browser enhancements |
+| `bootstrap\` | Neutral data/skill definitions, synthetic operational journey and Studio source pack |
+| `scripts\bootstrap*.js` | Catalogue/data/knowledge bootstrap and analyst/workflow seeding |
+| `scripts\reset-content.js` | Fingerprinted, scoped, resumable content deletion |
+| `infra\main.bicep`, `azure.yaml` | Active IaC and base azd service declarations |
+| `test\` | Node tests, Azure HTTP stubs, route smoke tests and installed-browser coverage |
 
-## Integration facts to preserve
+## Invariants that must survive refactoring
 
-- Foundry agent CRUD uses project `/agents?api-version=v1`; responses use `/openai/v1/responses`. Agents have names and versions.
-- Native agent red teaming follows the separate Evals/taxonomy preview routes documented in DEPLOY.md. Do not substitute model-only `redTeams` scans and call them agent assurance.
-- APIM MCP management uses `2025-09-01-preview`, with `type: mcp` and a non-empty inline `mcpTools` array in the same PUT. Operation IDs are full ARM IDs. Wait for imported operations.
-- The MCP endpoint is gateway/path/mcp, not an MCP API's often-null `serviceUrl`.
-- Foundry MCP tools need per-target project connections carrying the APIM subscription key. A raw model tool header is not the replacement.
-- Purview Unified Catalog uses the configured global endpoint and preview version; Data Map uses the account endpoint. Their role models are distinct from Azure RBAC.
-- Purview product PUT is a full replacement. Preserve fields and owners. Managed attributes are arrays. Query published, draft and expired products and paginate.
-- Product listing failure must stop bootstrap creation: treating every product as new risks duplicates.
-- Windows Azure CLI is `az.cmd`. The token helper's validated shell invocation handles Node's Windows spawn restriction. Preserve its allowlist.
-- No outbound call should be unbounded. Preserve timeouts, errors, provenance and partial-service notices.
+1. **Preserve the physical data chain.** `cortexDataFolder`, `cortexSearchIndex` and `cortexKnowledge*` managed attributes round-trip through Purview. A product with a configured IQ MCP endpoint uses that connection when attached; it must not silently fall back to the previously failing native Search path.
+2. **Create versions correctly.** New agents use `POST /agents`; existing names use `POST /agents/{name}/versions`. Normalise `versions.latest` reads. Rebuild requires builder/reviewer access. External-wrapper rebuilds preserve their actual remote tools.
+3. **Require real delegation.** External wrappers have `artefactId`; `runtimeToolOptions()` requests tool use, and the Foundry adapter rejects a generic answer with no successful source call. Wire the option through chat, test, published invocation and automation.
+4. **Keep transport details intact.** APIM MCP needs inline `mcpTools` in the same PUT as `type: mcp`, with full operation ARM IDs. Connections are per target. A single-argument MCP projection can arrive as a raw body; use the existing canonical parser.
+5. **Keep identities separate.** Viewer catalogue access does not equal a service identity's underlying access. Preserve attachment validation and explicit audience review. `all-staff` chat policy does not impersonate the caller against every tool.
+6. **Do not erase evidence.** An acknowledgement is not a passing scan. Match scan evidence to agent name/version, track stale evidence, and preserve blocked/not-run outcomes. RAI mappings are configuration review; axe plus reviewer attestations are not full certification.
+7. **Preserve workflow joins.** At most five total steps and three siblings per stage. All siblings settle; any failure stops downstream execution. A 24,000-character draft limit and bounded structured citations protect handoff. Flush run evidence before returning success.
+8. **Keep state single-writer.** Never start a local app or seed process against a live writable container. Seed scripts require maintenance; cross-app copies merge only owned seed records. Failed initial blob reads must never overwrite remote history.
+9. **No hidden side effects in examples.** Try buttons fill inputs, not submit them. Consent remains unchecked. AI suggestions do not create or execute workflows. The seeded workflow and default demo form use manual cadence.
+10. **Treat deletion receipts literally.** `deleted:false` is failure even with HTTP 200. Detach approved catalogue relationships first, require exact scope/fingerprints, and verify absence or the provider's deleted state. Maintenance does not stop external jobs or source systems.
 
-## Behavior added in this revision
+## Runtime and development
 
-Live domains no longer need obsolete seed coordinates to render. Ordered workflows contain two to five steps and stop on failed/empty/oversized handoffs, keeping step evidence. New agent records store `builtById` for assessment authorization; legacy assessment access uses `cortex-redteam`.
+Node.js 20+ with ESM, native HTTP/fetch and locked dependencies: `graphql`, the official MCP SDK, `fflate`, GOV.UK Frontend and axe-core. `playwright-core` is development-only and uses an installed browser. Docker runs `npm ci --omit=dev --ignore-scripts` then vendors assets.
 
-Native assessment records preserve evaluation/taxonomy/run IDs and the pinned agent target. **Test and publish** automatically enables generated scenarios, submits the native scan, monitors its durable queue and publishes only after complete passing evidence. Published invocation pins the tested version. Standalone assessments still offer reviewer confirmation. Ambiguous submission does not silently retry; inspect Foundry with the recorded evaluation ID. Native result counts may omit `errored`; total/sample/grader completeness still fails closed.
+Use `esc()`/`attr()` for untrusted HTML. Retain timeouts, connector origin/path restrictions, secret references and the token helper's narrow Windows resource allowlist. Do not introduce arbitrary user-supplied credential endpoints.
 
-The legacy unused `seed\` pack was removed. Demo data is synthetic, not a runtime service fallback. Bootstrap skills now have a real bounded storage-read shim rather than a published URL with no handler.
+Run the smallest affected tests with `node --test`, then the full suite for cross-cutting changes. The latest full run passed 418 tests, including browser coverage across three themes; this is dated evidence, not a replacement for future validation. Browser checks skip when no supported executable is available, so inspect skip counts.
 
-## Conventions and limits
+The original Novo About file is deliberately preserved byte-for-byte; `test/demo-refresh.test.js` protects its approved hash. Updating its narrative requires an intentional requirement/test change, not accidental formatting. The README diagram is the maintained technical architecture, distinct from that frozen marketing page.
 
-Use Node built-ins at runtime, existing tests and `esc()` for untrusted HTML. Preserve server-side attachment validation, identity checks, and the distinction between visibility and underlying access. All state goes through `collection()`; use one replica per container.
+## Release and data migration
 
-GraphQL and the official MCP client SDK are now locked runtime dependencies; Docker installs them with `npm ci`. Browser chat uses one small progressive-enhancement script; About remains server-rendered without client script. Source APIs use approved connector identities, never arbitrary user-provided credential endpoints. Keep the explicit opt-in for non-GET API operations.
+All three apps currently share `novo-demo-20260923-r3`; see the runbook for exact revisions. Preserve `CORTEX_CONNECTORS`, per-app `PUBLIC_BASE_URL`, auth callback URLs, secrets, theme and state container. An image-only update does not align a manual bootstrap job; inspect/update that job independently before execution.
 
-Themes change presentation only. Variant deployment reuses source configuration and identity, isolates state and appends Entra redirects. It deliberately avoids azd service tags so the base deployment cannot accidentally target a variant. Its source must use direct configuration.
+The refreshed pack has 14 CSVs and 15,050 rows in the September reporting window. `SYN-17` is independently repeated across datasets, not a business join key. API usage now has integral request counts; old examples such as `41.90` are pre-reset and must not be reused. The present API value is `2153`.
 
-Reset is never part of normal deployment. Inspect every inventory item; use exact reviewed IDs for orphans whose ownership cannot be established. Do not delete shared platform resources, users, roles or customer content as a cleanup shortcut.
+Per-product IQ bootstrap checks exact row counts before linking knowledge metadata. Stable model-free MCP is supported in the code, but the sandbox rejected its API version. The rehearsed path explicitly configures the existing planning model and preview MCP; do not silently switch modes, enable paid tiers or add roles.
 
-Known production gaps: live permission revalidation for scheduled runs, durable multi-writer state, stronger legacy machine-route authentication, external-tool authorization, assessment retention, and fuller operational controls. The user-facing About page states these boundaries.
+The approved reset retained 18 provider evaluation/taxonomy objects and removed 313 functional objects. Backups are outside the reset scope. Do not replay that old plan against newly seeded resources, even if names match.
 
-## Release procedure
+## Outstanding boundaries
 
-Run relevant Node tests and the offline bootstrap dry-run. Review PowerShell syntax and a mocked deployment run before requesting Azure approval. In Azure, verify latest-revision health, authentication, blob persistence, both themes, sample skill invocation and the complete Foundry taxonomy/run/results sequence. Stubbed tests cannot prove service availability or RBAC propagation.
+Native evaluation creation/submission works, but hosted ACA sessions failed with 429 before sampling. Tenant Teams/Microsoft 365 installation was not performed. Fabric's dedicated connector has model-policy restrictions; the Studio environment rejects app-only S2S. Databricks delegation, IQ data retrieval, REST/GraphQL MCP and ZIP generation were rehearsed live.
 
-### Live release status and remaining blocker
-
-Both requested apps are deployed with unique state containers and Entra sign-in. The protected-secret connection recovered without purging; fourteen neutral Search indexes hold rows. Purview scanning completed and all fourteen sample files were registered and attached to their products. The approved twelve-index legacy migration preserved products/files/agents and unknown resources; some retained old datasets can still contain historical rows.
-
-The deployed variants and bootstrap job use `prdcoreamlacr001.azurecr.io/cortex/web-cortex:release-20260921-r3`, digest `sha256:6fc1829b0017b9435b65b0629472357ea177475f04ce33737347261259cea51b`. Preserve a unique tag for each future release. The temporary no-tools acceptance agent, taxonomy and failed evaluation were removed after diagnosis; unrelated Foundry agents were untouched.
-
-Native evaluation and taxonomy creation work, including activation of the 28 generated prohibited-action scenarios. Two native run submissions failed inside Foundry with an ACA-session `429 Too Many Requests` before generating results. This is the remaining end-to-end publication blocker, not evidence of a passed assessment. Do not bypass the gate. Check hosted evaluation capacity/service availability with Azure support. No customer-managed session pool was found in the Foundry resource group.
-
-Reset still requires a fresh target-environment plan and approval. The integration follow-up updates the original web app too, as explicitly approved; all three apps and the bootstrap job receive the same release image.
-
-### Integration follow-up
-
-Current deployed image on all three apps and the bootstrap job: `prdcoreamlacr001.azurecr.io/cortex/web-cortex:integrations-20260921-r4`, digest `sha256:a40a32e7a62af3ae908996d4f266e46cb9e3f2d4871d33aee6699d7c6fa22229`. All app revisions are ready, Entra protection is retained and the three original blob-state containers remain distinct. GraphQL and the catalogue-health MCP tool continue working after the final rollout.
-
-The follow-up adds artefact publishing, popup chat, per-artefact declared lineage, current official header marks and a larger landing-zone foundation diagram. `searchEntries()` fixes a pre-existing name collision with the Search adapter that broke `/api/entries`. A live MCP call also showed APIM projecting a single question into a raw request body; the protected source-agent shim handles both that form and normal JSON.
-
-Dedicated source resources: Fabric application `0dc99e98-cb18-4427-a1ca-d2c241b51ec8`; synthetic workspace `0ca1012b-0364-4993-87bd-8a16ae842ad2`; connector policy group `71c6ac1c-bb0d-4fa8-bb25-946a4e9d9b67`; existing app identity onboarded to the sandbox Databricks workspace. Bot Service Contributor is scoped to the Foundry resource group. Secrets are in Container Apps, not source control.
-
-Live acceptance artefacts are clearly named and intentionally retained in the Microsoft app's state: a synthetic GraphQL API, a catalogue-health MCP tool and a draft Databricks wrapper. The corrected wrapper chat returned SYNTHETIC through Foundry, APIM and Databricks, but the wrapper has not passed the native assessment gate. The authorized operator created/published synthetic Fabric agent `7e478267-9ccf-4468-b05d-ec4ba9382c8b`, and its MCP query worked with operator authentication. After a separate explicit approval, cross-region processing was added only for the dedicated Fabric connector group, preserving existing groups; its last model call still returned 403.
-
-The resumed work created/published Copilot Studio source `cortex_SyntheticCatalogueGuide` (`a6517ae7-32ad-4d5f-8c9a-6580a86d3b13`) in the existing default environment and provisioned dedicated connector app `5fa30651-a803-452f-888b-be77641f8880`. Its approved API application permission and secret are configured, but the environment returns `App-only S2S access is not enabled for this environment`. Integrated source authentication is preserved; making it anonymous is not a fix. A fresh native red-team run also reproduced ACA-session 429. See DEPLOY.md section 11 for the current source pack, setup commands, preflight protections and remaining service-enablement boundaries.
+Production work remains: current directory permissions for scheduled runs, multi-writer persistence if scaling out, stronger machine-route authorization, verified per-user document ACLs, lifecycle/retention policies, complete telemetry and residency review. No documentation or previous user approval grants permission to change a future environment.

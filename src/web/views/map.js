@@ -69,7 +69,7 @@ export function mapPage(ctx, { clusters: domains, links, cross, coverage, counts
     .join('')}
   ${clusters
     .map(
-      (c) => `<a href="/marketplace?cluster=${attr(encodeURIComponent(c.id))}" aria-label="${attr(c.name)}: ${counts[c.id] || 0} registered entries"><g>
+      (c) => `<a href="/cortex?cluster=${attr(encodeURIComponent(c.id))}" aria-label="${attr(c.name)}: ${counts[c.id] || 0} registered entries"><g>
         <title>${esc(c.name)}</title>
         <circle cx="${c.x}" cy="${c.y}" r="${c.r + 7}" fill="${c.colour}" opacity=".10"/>
         <circle cx="${c.x}" cy="${c.y}" r="${c.r}" fill="${c.colour}" stroke="white" stroke-width="3" />
@@ -93,7 +93,7 @@ export function mapPage(ctx, { clusters: domains, links, cross, coverage, counts
   </div>
   <div class="govuk-grid-column-one-third">
     <p class="govuk-body" style="text-align:right;margin-top:20px">
-      <a class="govuk-link" href="/marketplace">List</a> ·
+      <a class="govuk-link" href="/cortex">List</a> ·
       <strong>Map</strong>
     </p>
   </div>
@@ -150,7 +150,7 @@ ${clusters.length ? `<div class="cx-map-scroll" tabindex="0" role="region" aria-
         const name = (id) => clusters.find((x) => x.id === id)?.name || id;
         return `<tr class="govuk-table__row">
           <td class="govuk-table__cell">
-            <a class="govuk-link" href="/marketplace?cluster=${attr(c.id)}">${esc(c.name)}</a>
+            <a class="govuk-link" href="/cortex?cluster=${attr(c.id)}">${esc(c.name)}</a>
           </td>
           <td class="govuk-table__cell">
             ${esc(c.owner)}${c.owner === 'Not claimed' ? ' <strong class="govuk-tag govuk-tag--orange">Unclaimed</strong>' : ''}
@@ -198,7 +198,7 @@ ${
       .map(
         ([cat, n]) => `<tr class="govuk-table__row">
           <td class="govuk-table__cell">
-            <a class="govuk-link" href="/marketplace?cat=${attr(cat)}">${esc(cat)}</a>
+            <a class="govuk-link" href="/cortex?cat=${attr(cat)}">${esc(cat)}</a>
           </td>
           <td class="govuk-table__cell govuk-table__cell--numeric">${esc(n)}</td>
         </tr>`

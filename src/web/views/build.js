@@ -14,6 +14,8 @@
 import { esc, attr, visMark, layout } from '../layout.js';
 import { VIS } from '../../bff/services/visibility.js';
 import { ACTIONS } from '../../bff/services/assurance.js';
+import { DEMO_JOURNEY } from '../../bff/services/demo-blueprints.js';
+import { demoTip, DEMO_PROMPTS } from '../demo.js';
 
 function errorSummary(errors) {
   if (!errors?.length) return '';
@@ -73,6 +75,11 @@ export function buildLandingPage(ctx, { agentCount, myAgents }) {
       Assemble an assistant from parts that are already approved. You do not write code.
     </p>
     <a class="govuk-button" href="/build/new" role="button">Start building</a>
+    ${demoTip({ text: 'Use the Supply analyst blueprint, review its actual inventory/delivery sources, then ask for SYN-17.', href: '/build/new?template=3' })}
+    <details class="govuk-details"><summary>Start from a synthetic demo blueprint</summary>
+      <ul class="govuk-list">${DEMO_JOURNEY.agents.map((agent, i) => `<li><a class="govuk-link" href="/build/new?template=${i}">${esc(agent.name)}</a></li>`).join('')}</ul>
+      <p class="govuk-hint">Prefills instructions and accessible sources. Review before creating; no agent is created by opening a blueprint.</p>
+    </details>
 
     ${
       myAgents.length
@@ -106,10 +113,9 @@ export function buildLandingPage(ctx, { agentCount, myAgents }) {
         <strong>${esc(agentCount)}</strong> agents are registered here.
       </p>
       <p class="govuk-body-s">
-        Search before you build. An agent that already exists has already been
-        through its assurance gates; yours has not.
+        Search before you build. Review an existing agent's current assurance evidence before reusing it; registration alone does not mean it has passed.
       </p>
-      <a class="govuk-button govuk-button--secondary" href="/marketplace?cat=Agent" role="button">
+      <a class="govuk-button govuk-button--secondary" href="/cortex?cat=Agent" role="button">
         Search agents first
       </a>
 
@@ -163,6 +169,7 @@ ${errorSummary(errors)}
   <div class="govuk-grid-column-two-thirds">
     <h1 class="govuk-heading-xl govuk-!-margin-bottom-0">Build an agent</h1>
     <p class="govuk-body-l">Five things. Nothing is shared until you share it.</p>
+    ${demoTip({ text: DEMO_PROMPTS.record, href: '/build/new?template=3', note: 'The blueprint resolves registered, accessible sample sources. Opening it does not create an agent.' })}
   </div>
 </div>
 

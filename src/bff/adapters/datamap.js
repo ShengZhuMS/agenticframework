@@ -269,7 +269,7 @@ class LiveDataMap {
       ok404: true
     });
     const e = res?.entity;
-    if (!e) return null;
+    if (!e || e.status === 'DELETED') return null;
     return this._toAsset(e, res.referredEntities);
   }
 
@@ -293,7 +293,7 @@ class LiveDataMap {
   /** Full entity, for the schema (columns) the scan extracted. */
   async getAsset(guid) {
     const res = await this._fetch(`/datamap/api/atlas/v2/entity/guid/${encodeURIComponent(guid)}`, { ok404: true });
-    return res?.entity ? this._toAsset(res.entity, res.referredEntities) : null;
+    return res?.entity && res.entity.status !== 'DELETED' ? this._toAsset(res.entity, res.referredEntities) : null;
   }
 
   _toAsset(e, referred = {}) {

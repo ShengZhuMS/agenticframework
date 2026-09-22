@@ -70,12 +70,8 @@ describe('every demo page renders', () => {
     assert.match(r.body, /not a safety certification/);
     assert.match(r.body, /same code and synthetic demonstration pack/);
     assert.match(r.body, /<svg[^>]+role="img"[^>]+aria-labelledby="architecture-title architecture-desc"/);
-    assert.match(r.body, /blogs\.microsoft\.com\/blog\/2026\/06\/02\/ai-alone-wont-change-your-business-the-system-running-it-will/);
-    assert.match(r.body, /One integrated system/);
-    assert.match(r.body, /Secured and governed by design/);
-    assert.match(r.body, /Improve continuously/);
-    // Zero client JavaScript, like the rest of the service.
-    assert.ok(!/<script/i.test(r.body), 'About page must not ship client script');
+    assert.match(r.body, /Azure landing-zone foundation/);
+    assert.equal((r.body.match(/<section id=/g) || []).length, 8, 'Restore all original Novo About sections');
     // The nav highlights it and the footer links to it.
     assert.match(r.body, /href="\/about" aria-current="page">About<\/a>/);
     assert.match(r.body, /href="\/about">About Cortex<\/a>/);
@@ -129,7 +125,8 @@ describe('agents: page, chat window, marketplace link', () => {
   test('the agent page renders with the chat and rebuild controls', async () => {
     const r = await page('/agent/smoke-agent');
     assert.equal(r.status, 200);
-    assert.match(r.body, /Open a chat window/);
+    assert.match(r.body, /Chat with this agent/);
+    assert.match(r.body, /id="agent-chat-panel"/);
     assert.match(r.body, /Rebuild tools/);
   });
 

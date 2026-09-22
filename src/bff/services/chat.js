@@ -27,6 +27,7 @@ import config from '../config.js';
 import { attachableFor } from './visibility.js';
 import { collection } from '../state/store.js';
 import { explainError } from './explain.js';
+import { runtimeToolOptions } from './agents.js';
 
 const threads = () => collection('chats', {});
 const busy = new Set();
@@ -109,11 +110,14 @@ export async function chat(entry, question, user, { threadId, foundry = index.fo
     throw err;
   }
   const q = String(question || '').trim();
-  if (q.length > 8000) throw Object.assign(new Error('Messages must be 8,000 characters or fewer.'), { code: 400 });
+  if (!q || q.length > 8000) {
+    const err = new Error('Enter a message between 1 and 8,000 characters.');
+    err.code = 400;
+    throw err;
+  }
   let thread = threadId ? getThread(threadId, user) : null;
   if (threadId && (!thread || thread.agentId !== entry.id)) throw Object.assign(new Error('This conversation is not available for this agent and user.'), { code: 404 });
   if (!thread) thread = startThread(entry, user);
-  if (!q) return { thread, turn: null };
   if (busy.has(thread.id)) throw Object.assign(new Error('Wait for the current answer before sending another message.'), { code: 409 });
   if (thread.turns.length >= config.chat.maxTurns) {
     const err = new Error(`This conversation has reached ${config.chat.maxTurns} turns. Start a new one.`);
@@ -127,6 +131,7 @@ export async function chat(entry, question, user, { threadId, foundry = index.fo
   try {
   try {
     const answer = await foundry.respond({
+      ...runtimeToolOptions(entry),
       agentName: entry._source?.id || entry.id,
       agentVersion: thread.agentVersion || undefined,
       input: q,

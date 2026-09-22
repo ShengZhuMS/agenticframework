@@ -8,30 +8,42 @@
 
 import { esc, attr, visMark, layout } from '../layout.js';
 import { VIS } from '../../bff/services/visibility.js';
+import { themeFor } from '../theme.js';
 
-export function startPage(ctx, { stats, coverage }) {
+export function startPage(ctx, { stats, coverage, error = '', q = '' }) {
   const content = `
 <div class="govuk-grid-row">
   <div class="govuk-grid-column-two-thirds">
-    <h1 class="govuk-heading-xl">Cortex</h1>
+    <p class="cortex-eyebrow">YOUR MICROSOFT AI AND DATA ECOSYSTEM, CONNECTED</p>
+    <h1 class="govuk-heading-xl">What would you like to achieve?</h1>
     <p class="govuk-body-l">
-      One place to find your connected data and AI capabilities, build something with them,
-      and share what you build.
+      Ask a question. Find an artefact. Turn what you already have into what comes next.
     </p>
     <p class="govuk-body">
-      Purview, API Management and Foundry are already live in the landing zone.
-      Cortex is the front door to them, and the connections between them.
+      Cortex connects Microsoft Purview, Azure AI Search, API Management and Foundry.
     </p>
-    <a class="govuk-button" href="/marketplace" role="button">Start now</a>
+    ${error ? `<p class="govuk-error-message" role="alert">${esc(error)}</p>` : ''}
+    <form method="post" action="/discover" class="cortex-discovery" role="search">
+      <label class="govuk-label govuk-label--s" for="discovery">Ask a question or search artefacts</label>
+      <p class="govuk-hint" id="discovery-hint">Try "How can I understand API usage?" or "operational insights". Auto suggests the destination; you can choose Ask or Search instead.</p>
+      <input class="govuk-input" id="discovery" name="q" type="search" required maxlength="4000" value="${attr(q)}" aria-describedby="discovery-hint">
+      <fieldset class="govuk-fieldset cortex-intent">
+        <legend class="govuk-fieldset__legend">How should Cortex help?</legend>
+        ${[['auto', 'Auto'], ['ask', 'Ask'], ['search', 'Search']].map(([value, label]) => `<label><input type="radio" name="mode" value="${value}" ${value === 'auto' ? 'checked' : ''}> ${label}</label>`).join('')}
+      </fieldset>
+      <button class="govuk-button" type="submit">Go</button>
+      <a class="govuk-link" href="/cortex">Browse all artefacts</a>
+    </form>
 
     <h2 class="govuk-heading-m">Before you start</h2>
     <ul class="govuk-list govuk-list--bullet">
-      <li><strong>Nothing is copied.</strong> Cortex connects to data where it lives. There is no upload and no file picker.</li>
-      <li><strong>Your access does not change.</strong> You will never see data you could not already see, and an agent you build can never reach further than you can.</li>
+      <li><strong>Your systems stay in place.</strong> Search indexes contain derived copies for retrieval; source systems remain authoritative.</li>
+      <li><strong>Access is explicit.</strong> Catalogue visibility and an agent's configured service identity are different. Only attach knowledge appropriate for the agent's audience.</li>
       <li><strong>What you build becomes a part others can build with.</strong> That is the point.</li>
     </ul>
   </div>
   <div class="govuk-grid-column-one-third">
+    <img class="cortex-brand-illustration" src="/assets/${attr(themeFor(ctx.theme).illustration)}" alt="" aria-hidden="true" width="520" height="360">
     <div class="cortex-filters">
       <h2 class="govuk-heading-m">The register today</h2>
       <p class="govuk-body">
@@ -75,7 +87,7 @@ export function placeholderPage(ctx, { heading, section, lede, wp, bullets = [] 
         : ''
     }
 
-    <a class="govuk-button govuk-button--secondary" href="/marketplace" role="button">Back to the marketplace</a>
+    <a class="govuk-button govuk-button--secondary" href="/cortex" role="button">Back to Cortex</a>
   </div>
 </div>`;
   return layout({ ...ctx, title: heading, section }, content);
@@ -127,14 +139,14 @@ export function errorPage(ctx, { code, heading, message }) {
   <div class="govuk-grid-column-two-thirds">
     <h1 class="govuk-heading-xl">${esc(heading)}</h1>
     <p class="govuk-body-l">${esc(message)}</p>
-    <p class="govuk-body"><a class="govuk-link" href="/marketplace">Go to the marketplace</a></p>
+    <p class="govuk-body"><a class="govuk-link" href="/cortex">Go to Cortex</a></p>
   </div>
 </div>`;
   return layout({ ...ctx, title: heading, section: null }, content);
 }
 
 /**
- * "What can I see?" — the page that explains an empty-looking Marketplace.
+ * "What can I see?" — the page that explains an empty-looking Cortex.
  *
  * The most common support question in a group-driven access model is "why
  * can't I see anything?", and the answer is almost always that the groups
@@ -194,7 +206,7 @@ export function profilePage(ctx, { counts }) {
              <span class="govuk-warning-text__icon" aria-hidden="true">!</span>
              <strong class="govuk-warning-text__text">
                <span class="govuk-skip-link">Warning</span>
-               You appear to be in no named groups. If the Marketplace looks almost
+               You appear to be in no named groups. If the Cortex looks almost
                empty, this is why.
              </strong>
            </div>
@@ -245,7 +257,7 @@ export function profilePage(ctx, { counts }) {
       </tbody>
     </table>
     <p class="govuk-body">
-      <a class="govuk-link" href="/marketplace">Back to the marketplace</a>
+      <a class="govuk-link" href="/cortex">Back to Cortex</a>
     </p>
   </div>
 </div>`;

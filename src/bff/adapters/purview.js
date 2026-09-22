@@ -313,6 +313,11 @@ class LivePurview {
       // on this product — written by bootstrap, read by services/grounding.js.
       dataFolder: attr('cortexDataFolder'),
       searchIndex: attr('cortexSearchIndex'),
+      _knowledge: attr('cortexKnowledgeBase') && attr('cortexKnowledgeMcp') && attr('cortexKnowledgeConnection') ? {
+        name: attr('cortexKnowledgeBase'), sourceName: attr('cortexKnowledgeSource'),
+        mcp: attr('cortexKnowledgeMcp'), connectionId: attr('cortexKnowledgeConnection'),
+        reasoning: attr('cortexKnowledgeReasoning'), documents: Number(attr('cortexIndexedRows') || 0)
+      } : undefined,
       endorsed: p.endorsed,
       consumers: p.activeSubscriberCount ?? 0,
       audience: p.audience || [],
@@ -333,7 +338,7 @@ class LivePurview {
         maintainedBy: attr('cortexOwnerTeam') ? 'human' : 'agent',
         syncedAt: new Date().toISOString()
       },
-      _endpoints: {}
+      _endpoints: attr('cortexKnowledgeMcp') ? { mcp: attr('cortexKnowledgeMcp') } : {}
     };
   }
 

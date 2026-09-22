@@ -8,6 +8,7 @@
  */
 
 import { esc, attr, layout } from '../layout.js';
+import { UI_REVISION, evidenceFingerprint } from '../../bff/services/evidence.js';
 
 function toolList(calls) {
   if (!calls?.length) return '';
@@ -72,6 +73,10 @@ export function chatPage(ctx, { entry, thread, history, permission }) {
   const def = entry._agent?.definition || {};
   const content = `
 <div class="cortex-chat">
+  ${ctx.query?.audit === '1' ? `<section aria-labelledby="audit-heading"><h2 class="govuk-heading-m" id="audit-heading">Accessibility checks</h2>
+    <button type="button" class="govuk-button" data-run-audit data-endpoint="/agent/${attr(entry.id)}/assurance" data-fingerprint="${evidenceFingerprint(entry)}" data-revision="${UI_REVISION}">Run WCAG browser checks</button>
+    <p id="audit-status" class="govuk-body" role="status">Checks have not run.</p><a href="/agent/${attr(entry.id)}/assurance#a11y">Return to assurance evidence</a></section>
+    <script src="/assets/vendor/axe.min.js" defer></script><script type="module" src="/assets/accessibility.js"></script>` : ''}
   <div class="cortex-chat__head">
     <div>
       <span class="govuk-caption-m">Chat with an agent · built by ${esc(def.builtByTeam || entry.owner)}</span>
@@ -129,7 +134,7 @@ export function chatPage(ctx, { entry, thread, history, permission }) {
     ${thread ? `<input type="hidden" name="thread" value="${attr(thread.id)}">` : ''}
     <div class="govuk-form-group govuk-!-margin-bottom-2">
       <label class="govuk-label govuk-visually-hidden" for="q">Your message</label>
-      <textarea class="govuk-textarea govuk-!-margin-bottom-0" id="q" name="q" rows="3" maxlength="8000" autofocus required
+      <textarea class="govuk-textarea govuk-!-margin-bottom-0" id="q" name="q" rows="3" maxlength="8000" required
         placeholder="${attr(turns.length ? 'Follow up…' : 'Ask a question…')}"></textarea>
     </div>
     <button class="govuk-button govuk-!-margin-bottom-0" type="submit">Send</button>
@@ -146,7 +151,7 @@ export function chatRefusedPage(ctx, { entry, reason }) {
 <div class="govuk-grid-row"><div class="govuk-grid-column-two-thirds">
   <h1 class="govuk-heading-l">You cannot chat with ${esc(entry.name)}</h1>
   <p class="govuk-body">${esc(reason || 'This agent is not open to you.')}</p>
-  <p class="govuk-body"><a class="govuk-link" href="/entry/${attr(entry.id)}">See its marketplace entry</a> to request access.</p>
+  <p class="govuk-body"><a class="govuk-link" href="/entry/${attr(entry.id)}">See its Cortex entry</a> to request access.</p>
 </div></div>`;
   return layout({ ...ctx, title: 'Chat', section: 'build', compact: true }, content);
 }

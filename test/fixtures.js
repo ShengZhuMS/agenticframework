@@ -433,8 +433,11 @@ export function stubAzure({ agents = [], failing = [] } = {}) {
     if (url.includes('/agents')) {
       if (init.method === 'POST') {
         const body = JSON.parse(init.body || '{}');
-        agents.push({ name: body.name, version: 1, definition: body.definition });
-        return json({ name: body.name, version: 1, object: 'agent.version' });
+        const versionPath = new URL(url).pathname.match(/\/agents\/([^/]+)\/versions$/);
+        const name = versionPath ? decodeURIComponent(versionPath[1]) : body.name;
+        const version = versionPath ? Math.max(0, ...agents.filter((agent) => agent.name === name).map((agent) => Number(agent.version))) + 1 : 1;
+        agents.push({ name, version, definition: body.definition });
+        return json({ name, version, object: 'agent.version' });
       }
       const single = new URL(url).pathname.match(/\/agents\/([^/]+)$/);
       if (single) return json(agents.find((a) => a.name === decodeURIComponent(single[1])) || {}, agents.some((a) => a.name === decodeURIComponent(single[1])) ? 200 : 404);

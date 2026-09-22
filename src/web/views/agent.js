@@ -8,6 +8,7 @@
 
 import { esc, attr, layout } from '../layout.js';
 import { gateTable } from './build.js';
+import { demoTip, DEMO_PROMPTS } from '../demo.js';
 
 function toolCallList(calls) {
   const rows = (calls || []).filter((c) => c.kind !== 'list');
@@ -82,6 +83,9 @@ function provenancePanel(answer) {
 export function agentPage(ctx, { entry, gates, knowledge, tools, answer, question, published, rebuilt }) {
   const a = entry._agent || {};
   const def = a.definition || {};
+  const exampleQuestion = def.artefactId
+    ? 'Use your source_agent tool to ask the connected agent for one sentence about drafting a synthetic operations briefing. Return its reply; do not claim access to company data.'
+    : (def.knowledge || []).length ? DEMO_PROMPTS.record : 'Review this draft and identify unsupported claims: these values are synthetic examples, not operational evidence.';
 
   const content = `
 ${
@@ -100,10 +104,10 @@ ${
          </div>
          <div class="govuk-notification-banner__content">
            <p class="govuk-body">
-             <strong>${esc(entry.name)}</strong> is now in the marketplace, and callable as an MCP server.
+             <strong>${esc(entry.name)}</strong> is now in Cortex, and callable as an MCP server.
            </p>
            <p class="govuk-body govuk-!-margin-bottom-0">
-             <a class="govuk-link" href="/entry/${attr(entry.id)}">See its marketplace entry</a>
+             <a class="govuk-link" href="/entry/${attr(entry.id)}">See its Cortex entry</a>
            </p>
          </div>
        </div>`
@@ -128,6 +132,7 @@ ${
   <div class="govuk-grid-column-two-thirds">
 
     <h2 class="govuk-heading-m">Test it</h2>
+    ${demoTip({ text: exampleQuestion, fields: { question: exampleQuestion }, note: 'Review the answer and source evidence; synthetic data is not operational or clinical advice.' })}
     <p class="govuk-body">
       Ask it something real. If the answer is wrong, change the instructions and try
       again — nothing is shared until you share it.
@@ -156,8 +161,8 @@ ${
     }
 
     <p class="govuk-body">
-      <a class="govuk-button govuk-button--secondary" href="/agent/${attr(entry.id)}/chat" data-chat-window target="_blank" rel="noopener" role="button">Open a chat window</a>
-      <span class="cortex-src" style="margin-left:8px">A conversation with follow-ups, in its own window. Every member of staff can open one.</span>
+      <a class="govuk-button govuk-button--secondary" href="/agent/${attr(entry.id)}/chat" role="button">Chat with this agent</a>
+      <span class="cortex-src" style="margin-left:8px">Opens a bottom-right chat panel. Without JavaScript, opens the conversation page.</span>
     </p>
 
     <h2 class="govuk-heading-m">Assurance gates</h2>
@@ -165,6 +170,7 @@ ${
       Computed from what this agent reads and what it may do.
     </p>
     ${gateTable(gates.map((gate) => gate.id === 'redteam' ? { ...gate, evidence: `/agent/${encodeURIComponent(entry.id)}/redteam` } : gate))}
+    <p class="govuk-body"><a class="govuk-link" href="/agent/${attr(entry.id)}/assurance">Responsible AI report and accessibility evidence</a></p>
     <p class="govuk-body"><a class="govuk-button govuk-button--secondary" href="/agent/${attr(entry.id)}/redteam">Foundry red team assessment</a></p>
     <p class="govuk-hint">Generate, review and run a native Foundry assessment against a pinned agent version. Reports are evidence for a human reviewer; a completed scan does not automatically clear assurance gates.</p>
 
@@ -224,11 +230,11 @@ ${
                Visible as: <strong>${esc(entry.access)}</strong>
              </p>
              <p class="govuk-body-s govuk-!-margin-bottom-0">
-               <a class="govuk-link" href="/entry/${attr(entry.id)}">See it in the marketplace</a>
+               <a class="govuk-link" href="/entry/${attr(entry.id)}">See it in Cortex</a>
              </p>`
           : `<p class="govuk-body-s">
                Publishing makes this callable by other people, other agents and other
-               developers. It becomes an entry in the marketplace like any other.
+               developers. It becomes an entry in Cortex like any other.
              </p>
              <form method="post" action="/agent/${attr(entry.id)}/publish">
                <div class="govuk-form-group">
@@ -251,9 +257,14 @@ ${
                  </fieldset>
                </div>
                <button class="govuk-button govuk-!-margin-bottom-0" type="submit">Test and publish</button>
+               <details class="govuk-details"><summary>Publish with acknowledged findings instead</summary>
+                 <p class="govuk-body-s">Advisory policy: failed, missing or blocked assurance stays visible. This does not mark any gate as passed and does not start a new billable scan.</p>
+                 <label class="govuk-label"><input type="checkbox" name="acknowledge" value="yes"> I have reviewed the assurance table and accept the outstanding findings for this version and audience.</label>
+                 <button class="govuk-button govuk-button--secondary" name="publishMode" value="acknowledge">Publish with acknowledgement</button>
+               </details>
              </form>
              <p class="govuk-body-s" style="margin-top:12px;margin-bottom:0">
-               Cortex automatically generates a Foundry red-team taxonomy, runs the assessment, and publishes the tested version only when every sample passes all three evaluators. Azure usage applies. Failures, missing results and changed versions block publication.
+               Test and publish authorizes a billable sandbox red-team assessment and publishes only on passing evidence. Alternatively, explicitly acknowledge outstanding findings above. Changed versions must be reviewed again.
              </p>`
       }
     </div>
@@ -334,8 +345,8 @@ export function publishResultPage(ctx, { entry, steps, mcpUrl, openApiUrl }) {
     <p class="govuk-body-l">
       Every agent anyone builds becomes a part everyone else can build with.
     </p>
-    <a class="govuk-button" href="/marketplace?cat=Agent" role="button">
-      See it in the marketplace
+    <a class="govuk-button" href="/cortex?cat=Agent" role="button">
+      See it in Cortex
     </a>
     <p class="govuk-body">
       <a class="govuk-link" href="/agent/${attr(entry.id)}">Back to the agent</a>

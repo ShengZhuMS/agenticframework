@@ -90,8 +90,8 @@ export function connectionRef(name, cfg = config) {
   return connectionArmId(name, cfg) || name;
 }
 
-async function armFetch(pathname, { method = 'GET', body, timeoutMs } = {}) {
-  const url = `${ARM}${pathname}?api-version=${API_VERSION}`;
+async function armFetch(pathname, { method = 'GET', body, timeoutMs, apiVersion = API_VERSION } = {}) {
+  const url = `${ARM}${pathname}?api-version=${apiVersion}`;
   const token = await getToken(ARM_SCOPE);
   const res = await fetch(url, {
     method,
@@ -195,4 +195,18 @@ export async function listConnections() {
   if (!project) return [];
   const res = await armFetch(`${project}/connections`);
   return res?.value || [];
+}
+
+export async function ensureKnowledgeConnection({ name, target }) {
+  const id = connectionArmId(name);
+  if (!id) throw new Error('Foundry project location is not configured.');
+  const allowed = new URL(config.search.endpoint);
+  const url = new URL(target);
+  if (url.origin !== allowed.origin || !url.pathname.startsWith('/knowledgebases/')) throw new Error('Knowledge connection must target the configured Search service.');
+  await armFetch(id, {
+    method: 'PUT', apiVersion: '2025-10-01-preview',
+    body: { properties: { category: 'RemoteTool', authType: 'ProjectManagedIdentity',
+      target, audience: 'https://search.azure.com/', isSharedToAll: true, metadata: { ApiType: 'Azure', createdBy: 'cortex' } } }
+  });
+  return { name, id };
 }

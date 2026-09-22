@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { buildSchema, graphql, parse, visit } from 'graphql';
+import { buildSchema, graphql, parse, visit, Kind } from 'graphql';
 import config from '../config.js';
 import index from '../index/store.js';
 import { collection } from '../state/store.js';
@@ -7,7 +7,7 @@ import { attachableFor } from './visibility.js';
 import { connectorById, connectorRequest, invokeConnector, probeConnector } from '../adapters/connectors.js';
 import { ensureMcpConnection, connectionRef } from '../adapters/foundry-connections.js';
 import { requestPublication } from './publish.js';
-import { assessmentById } from './redteam.js';
+import { assessmentById, agentVersion } from './redteam.js';
 
 const records = () => collection('artefacts', {});
 const registering = new Set();
@@ -45,6 +45,7 @@ export function validateMetadata(form, user) {
     const e = index.get(id);
     if (!e || !attachableFor(e, user).attachable) throw new Error('Each dependency must be a registered artefact you can access.');
   }
+
   if (form.confirm !== 'yes') throw new Error('Confirm ownership, source permissions and synthetic/read-only demo suitability.');
   return {
     kind, name: required(form, 'name', 80), description: required(form, 'description', 2000),
@@ -56,6 +57,37 @@ export function validateMetadata(form, user) {
   };
 }
 
+export function demoMetadata(form, user) {
+  const source = index.get(form.sourceId);
+  return {
+    ...form,
+    description: form.description || form.name,
+    purpose: form.purpose || form.name,
+    owner: form.owner || user.team || user.name,
+    contact: form.contact || user.email || 'Contact the registered owner through Cortex',
+    domain: form.domain || source?.cluster || index.clusters[0]?.id,
+    version: form.version || '1.0.0', sensitivity: form.sensitivity || 'Internal',
+    licence: form.licence || 'Internal synthetic demonstration only',
+    limitations: form.limitations || 'Read-only synthetic data; human review required'
+  };
+}
+
+export function graphqlApiSpec(query, path = '') {
+  if (typeof query !== 'string' || !query.trim() || query.length > 12000) throw new Error('Provide a GraphQL query of at most 12,000 characters.');
+  const doc = parse(query);
+  const operations = doc.definitions.filter((definition) => definition.kind === Kind.OPERATION_DEFINITION);
+  if (operations.length !== 1 || operations[0].operation !== 'query' ||
+      doc.definitions.some((definition) => ![Kind.OPERATION_DEFINITION, Kind.FRAGMENT_DEFINITION].includes(definition.kind))) throw new Error('Provide exactly one GraphQL query; mutations and subscriptions are not permitted.');
+  if (typeof path !== 'string' || path.length > 300 || path.includes('..') || path.includes('?') || path.includes('#') || path.includes('\\')) throw new Error('Use a relative GraphQL path inside the configured connector.');
+  return {
+    graphqlQuery: query, graphqlPath: path,
+    operations: [{ id: 'query', method: 'post', path: '/query', description: 'Run the approved read-only GraphQL query' }],
+    spec: { openapi: '3.0.3', info: { title: 'GraphQL query', version: '1.0.0' },
+      paths: { '/query': { post: { operationId: 'query', summary: 'Approved read-only GraphQL query',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { variables: { type: 'object', additionalProperties: true } } } } } },
+        responses: { 200: { description: 'GraphQL results' }, 502: { description: 'GraphQL failure' } } } } } }
+  };
+}
 export function validateOpenApi(text, { allowWrites = false } = {}) {
   if (typeof text !== 'string' || text.length > 256000) throw new Error('Provide an OpenAPI JSON document up to 256 KiB.');
   const spec = JSON.parse(text);
@@ -121,8 +153,9 @@ export async function registerArtefact(form, user, baseUrl) {
     if (r.kind === 'external-agent' && c.provider === 'm365' && (!c.agentId || c.agentId !== r.sourceId)) throw new Error('The selected Microsoft 365 source must match the schema or agent ID bound to the configured connector identity.');
     if (r.kind === 'external-agent') await probeConnector(c, r.sourceId);
     if (r.kind === 'api-mcp') {
-      if (c.provider !== 'openapi') throw new Error('Choose an OpenAPI connector.');
-      Object.assign(r, validateOpenApi(form.openapi, { allowWrites: form.allowWrites === 'yes' }));
+      if (c.provider !== 'openapi') throw new Error('Choose an administrator-configured API connector.');
+      Object.assign(r, form.protocol === 'graphql' ? graphqlApiSpec(form.graphqlQuery, form.graphqlPath || '') :
+        validateOpenApi(form.openapi, { allowWrites: form.allowWrites === 'yes' }));
     }
   }
   records().data[r.id] = r;
@@ -158,13 +191,16 @@ export async function registerArtefact(form, user, baseUrl) {
       index.upsert({ id: agentName, name: r.name, cat: 'Agent', cluster: r.cluster, desc: r.description,
         owner: r.owner, ownerState: 'confirmed', sens: 'Official', allowedGroups: user.groups || [], licence: r.licence,
         deps: r.dependencies, limits: r.limitations, _source: { system: 'foundry', id: agentName },
-        _agent: { published: false, definition: { builtById: user.id, builtByTeam: r.owner, instructions: r.description, tools: [], knowledge: r.dependencies, artefactId: r.id } } });
+        _agent: { published: false, version: agentVersion(native) || '1', connections: [{ entry: r.name, connection: r.connection }],
+          definition: { builtById: user.id, builtByTeam: r.owner, model: config.foundry.model, actions: ['read','summarise'], instructions: r.description, tools: [], knowledge: r.dependencies, artefactId: r.id } } });
       await collection('agents', {}).flush();
       if (collection('agents', {}).lastError) throw new Error('The wrapper agent metadata could not be persisted.');
-      r.state = 'assessing';
+      r.state = form.assessmentMode === 'draft' ? 'draft' : 'assessing';
       await persist();
-      const assessment = await requestPublication(agentName, { baseUrl, visibility: 'team', user });
-      r.assessmentId = assessment.id;
+      if (r.state === 'assessing') {
+        const assessment = await requestPublication(agentName, { baseUrl, visibility: 'team', user });
+        r.assessmentId = assessment.id;
+      }
     } else {
       r.state = 'published';
       r.entry = artefactEntry(r);
@@ -207,7 +243,7 @@ export async function queryArtefact(r, input) {
 }
 
 export async function invokeArtefact(r, question) {
-  if (r.kind !== 'external-agent' || !['assessing', 'published'].includes(r.state)) throw new Error('The source agent is not ready for assessment or invocation.');
+  if (r.kind !== 'external-agent' || !['draft', 'assessing', 'published'].includes(r.state)) throw new Error('The source agent is not ready for assessment or invocation.');
   if (typeof question !== 'string' || !question.trim() || question.length > 8000) throw new Error('A question of 1-8,000 characters is required.');
   return invokeConnector(connectorById(r.connector), r.sourceId, question);
 }
@@ -227,5 +263,12 @@ export async function proxyArtefact(r, method, path, search, body) {
   const permitted = r.operations.some((o) => o.method === method.toLowerCase() &&
     new RegExp('^' + o.path.split(/(\{[^}]+\})/).map((s) => s.startsWith('{') ? '[^/]+' : s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('') + '$').test(path));
   if (!permitted) throw new Error('This operation was not selected for publication.');
+  if (r.graphqlQuery) {
+    const variables = body?.variables || {};
+    if (typeof variables !== 'object' || Array.isArray(variables) || JSON.stringify(variables).length > 16000) throw new Error('GraphQL variables must be a JSON object of at most 16,000 characters.');
+    const result = await connectorRequest(connectorById(r.connector), r.graphqlPath, { method: 'POST', body: { query: r.graphqlQuery, variables } });
+    if (result?.errors?.length) throw new Error(`GraphQL returned errors: ${result.errors.map((error) => error.message).join('; ').slice(0, 500)}`);
+    return result;
+  }
   return connectorRequest(connectorById(r.connector), path + search, { method, body });
 }

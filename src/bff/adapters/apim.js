@@ -167,6 +167,14 @@ class LiveApim {
     return this._toolsOf(await this._getApi(mcpServerId));
   }
 
+  getApi(id) { return this._getApi(encodeURIComponent(id)); }
+
+  async listOperations(id) {
+    const result = await this._fetch(`/apis/${encodeURIComponent(id)}/operations`, { query: { $top: 100 } });
+    if (result?.nextLink) throw new Error('This API has more than 100 operations. Narrow the API before publishing tools.');
+    return result?.value || [];
+  }
+
   /** The full ARM id of a backing operation — what mcpTools[].operationId must carry. */
   operationArmId(apiId, operationId) {
     return (
