@@ -129,7 +129,7 @@ export function userFromRequest(req, { groupNames = {}, defaultGroups = [] } = {
       ...(groups.includes('all-staff') || groups.length ? ['internal'] : []),
       ...(groups.includes('cortex-commercial-licence') ? ['commercial'] : [])
     ],
-    team: principal?.department || teamFromGroups(groups) || 'Defra'
+    team: principal?.department || teamFromGroups(groups) || 'Your team'
   };
 }
 

@@ -15,7 +15,7 @@ export function startPage(ctx, { stats, coverage }) {
   <div class="govuk-grid-column-two-thirds">
     <h1 class="govuk-heading-xl">Cortex</h1>
     <p class="govuk-body-l">
-      One place to find what Defra already has, build something with it,
+      One place to find your connected data and AI capabilities, build something with them,
       and share what you build.
     </p>
     <p class="govuk-body">
@@ -96,7 +96,7 @@ export function helpPage(ctx, { stats, health }) {
     <h2 class="govuk-heading-m">What it cannot do yet</h2>
     <ul class="govuk-list govuk-list--bullet govuk-list--spaced">
       <li>It cannot write to a source system, and no agent built in it can.</li>
-      <li>It cannot send anything outside Defra.</li>
+      <li>Use read-only tools; external tool implementations require their own access controls.</li>
       <li>It does not hold data. If something is not connected, Cortex cannot reach it.</li>
       <li>The estate shown is a thin slice, deliberately.</li>
     </ul>
@@ -217,7 +217,7 @@ export function profilePage(ctx, { counts }) {
              To name every group you are in after its Entra display name:
              <code>.\\scripts\\Set-CortexAuth.ps1 -MapMyGroups</code>.
              To make one of them mean something to the access rules, give it the rule's name:
-             <code>-GroupMap 'waste-crime=&lt;Entra group name&gt;'</code>.
+             <code>-GroupMap 'operations=&lt;Entra group name&gt;'</code>.
            </p>
            <ul class="govuk-list govuk-list--bullet">
              ${rawIds.map((g) => `<li><code style="font-size:15px">${esc(g)}</code></li>`).join('')}

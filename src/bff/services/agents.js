@@ -18,7 +18,7 @@ import index, { slug } from '../index/store.js';
 import { attachableFor, decorate } from './visibility.js';
 import { gatesFor, ACTIONS } from './assurance.js';
 import config from '../config.js';
-import { connectionsConfigured, ensureMcpConnection, connectionNameFor } from '../adapters/foundry-connections.js';
+import { connectionsConfigured, ensureMcpConnection, connectionNameFor, connectionRef } from '../adapters/foundry-connections.js';
 import { assetsFor, searchToolsFor, describeGrounding } from './grounding.js';
 
 /**
@@ -137,6 +137,7 @@ export async function validateBuild(form, user) {
       tools,
       actions: actions.length ? actions : ['read', 'summarise'],
       builtBy: user.name,
+      builtById: user.id || null,
       builtByTeam: user.team,
       cluster: form.cluster || 'corp'
     }
@@ -188,10 +189,10 @@ export async function createAgent(def, user, { existing = null } = {}) {
     try {
       const c = await ensureMcpConnection({ apiId, target: url });
       connections.push({ entry: entry.name, connection: c.name, created: c.created });
-      return c.name;
+      return connectionRef(c.name);
     } catch (err) {
       warnings.push(`${entry.name}: ${err.message}`);
-      return connectionNameFor(apiId);
+      return connectionRef(connectionNameFor(apiId));
     }
   };
 
@@ -316,8 +317,75 @@ export async function createAgent(def, user, { existing = null } = {}) {
  */
 export async function rebuildAgent(entry, user) {
   const def = entry._agent?.definition;
-  if (!def) throw new Error('This agent has no recorded definition to rebuild from.');
+  if (!def) {
+    // Nothing recorded here (the agent predates persistence, or was built
+    // in another session) — repair what Foundry itself holds instead.
+    const r = await ensureToolConnections(entry._source?.id || entry.id, { force: true });
+    if (r.repaired) return { entry, created: null, gates: null, connections: r.connections, warnings: [] };
+    throw new Error('This agent has no recorded definition to rebuild from, and its tools already carry their connections.');
+  }
   return createAgent(def, user, { existing: entry });
+}
+
+/**
+ * THE SELF-HEALING HALF OF THE 401 FIX.
+ *
+ * An agent built before its tools had project connections — or in a session
+ * whose records did not survive — still has its definition in Foundry: model,
+ * instructions, tools. So the repair does not need Cortex's record: read the
+ * definition from Foundry, give every API Management MCP tool the connection
+ * it should carry (created if absent, idempotently), and create a new version
+ * when anything changed. The Foundry adapter calls this when a response fails
+ * with the "missing subscription key" 401 and retries once; "Rebuild tools"
+ * on the agent page calls it when there is no recorded definition.
+ *
+ * Checked at most once per agent per CHECK_INTERVAL_MS unless forced, so a
+ * busy agent does not cost a GET on every turn.
+ */
+const CHECK_INTERVAL_MS = 10 * 60 * 1000;
+const lastChecked = new Map();
+
+export async function ensureToolConnections(agentName, { force = false, foundry = index.foundry, now = Date.now() } = {}) {
+  if (!agentName) return { repaired: false, reason: 'no agent name' };
+  const seen = lastChecked.get(agentName);
+  if (!force && seen && now - seen < CHECK_INTERVAL_MS) return { repaired: false, reason: 'checked recently' };
+  lastChecked.set(agentName, now);
+
+  if (!connectionsConfigured() || !config.apim.subscriptionKey) {
+    return { repaired: false, reason: 'Foundry project location or the APIM key is not configured' };
+  }
+  const found = await foundry.getAgent(agentName);
+  const def = found?.definition || found?.versions?.[0]?.definition || null;
+  if (!def || !Array.isArray(def.tools) || !def.tools.length) return { repaired: false, reason: 'no tools' };
+
+  const connections = [];
+  let changed = false;
+  const tools = [];
+  for (const t of def.tools) {
+    if (t?.type !== 'mcp' || !isApimUrl(t.server_url)) {
+      tools.push(t);
+      continue;
+    }
+    const apiId = mcpApiIdFromUrl(t.server_url) || String(t.server_label || 'mcp');
+    const c = await ensureMcpConnection({ apiId, target: t.server_url });
+    const wanted = connectionRef(c.name);
+    connections.push({ tool: t.server_label, connection: c.name, created: c.created, was: t.project_connection_id || null });
+    if (t.project_connection_id === wanted) {
+      tools.push(t);
+    } else {
+      tools.push({ ...t, project_connection_id: wanted });
+      changed = true;
+    }
+  }
+  if (!changed) return { repaired: false, reason: 'tools already carry their connections', connections };
+
+  await foundry.createAgent({ name: agentName, model: def.model, instructions: def.instructions, tools, keepAllTools: true });
+  return { repaired: true, connections, tools: tools.length };
+}
+
+/** Tests only. */
+export function __forgetToolChecks() {
+  lastChecked.clear();
 }
 
 /** True for a URL on the API Management gateway — the only place a key is needed. */

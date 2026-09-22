@@ -1,113 +1,45 @@
-# Cortex
+# Data Cortex
 
-A front door to Microsoft Purview, Azure API Management and Microsoft Foundry, built for Defra.
+A customer-neutral Microsoft technology accelerator connecting **Microsoft Purview Data Map and Unified Catalog**, **Azure API Management**, and **Microsoft Foundry** in one marketplace.
 
-**Everything is live.** There is no demo mode and no offline path. Every screen reads Purview, API Management and Foundry through their real APIs. Publish an agent and it is genuinely registered in API Management; delete a data product in the Purview portal and it disappears from the Marketplace on the next refresh. The only generated content is the **synthetic sample data** behind the fourteen data products — real files in a real storage account, scanned by the Purview Data Map and indexed by Azure AI Search, so an agent can read rows rather than descriptions. Nothing in them is real.
+Discover data products, APIs, MCP tools and agents; build and assess agents; publish reusable endpoints; coordinate ordered multi-agent workflows. This is a proof of concept, not an official customer service or a production landing zone.
 
----
+## Start here
 
-## Deploy it
-
-```powershell
-.\scripts\Deploy-Cortex.ps1
-```
-
-Or in VS Code: **Ctrl+Shift+P → Tasks: Run Task → Cortex: Deploy to Azure**.
-
-**Cortex reuses your existing Azure estate.** It creates only the container apps, its own managed identity, a small Azure AI Search service and two storage accounts (sample data; application state). Check what will be reused first:
+Read [the deployment guide](docs/DEPLOY.md) before running scripts. It covers prerequisites, existing-resource preservation, independent redeployment, neutral bootstrap, content reset and additional themes.
 
 ```powershell
-.\scripts\Deploy-Cortex.ps1 -WhatIfResources
+npm test
+node .\scripts\bootstrap.js --dry-run
+node .\scripts\sample-data.js --list
 ```
 
-The script also switches on Entra sign-in **with the groups claim** and grants the Cortex identity its **Purview Unified Catalog roles** — the two steps that used to be manual, and the two most common reasons a working deployment looked broken. **`docs/DEPLOY.md`** walks through it in order.
+These commands do not write to Azure. Running the application normally does use real Azure services; there is no runtime offline/demo mode.
 
-## Run it locally
+## Capabilities
 
-```powershell
-.\scripts\Start-Local.ps1 -Groups all-staff,waste-crime,analysts
-```
-
-Local means *your machine, real Azure*. There is no offline mode. Anything you publish is published for real.
-
-```powershell
-npm test                              # 289 tests, no Azure needed
-node scripts/bootstrap.js --dry-run   # validate content, no Azure needed
-node scripts/sample-data.js --list    # what the synthetic data generator produces
-```
-
----
-
-## What it does
-
-| | |
+| Area | Implementation |
 |---|---|
-| **Marketplace** | Data products from Purview, APIs and MCP servers from API Management, agents from Foundry — merged into one register with search, filters and the six visibility states |
-| **Entry standard** | Every mandatory field, each showing its source and who maintains it. Limitations, lineage, licence and who it covers, minimum aggregation |
-| **Map** | The estate by governance domain, with cross-domain dependencies and a full text alternative |
-| **The data behind it** | On every data product: the Data Map assets attached to it, their columns and classifications, and the Azure AI Search index built from the same files — with a button to build it |
-| **Build an agent** | Approved model catalogue, knowledge checklist with unavailable items greyed out and explained, permitted actions, seven computed assurance gates. A data product with an index gives the agent an `azure_ai_search` tool; an API Management tool gets a Foundry project connection carrying the gateway key |
-| **Test and chat** | Test it on its page — every tool call approved by Cortex and listed under the answer, failures in plain English — or **open a chat window**: a multi-turn conversation in its own window, open to all staff in this phase |
-| **Publish** | Generates OpenAPI, imports it into APIM, creates an MCP server over it, gives Foundry a connection to it, writes the endpoint back to the register |
-| **Ask** | A Foundry agent (`cortex-ask`) answers from the catalogue entries the asker can reach, citing them. Provenance panel: sources, freshness, confidence, what it could not reach — and how the answer was produced |
-| **Requests** | A working lifecycle — the holder's agent drafts inside *their* permissions, a person reviews the method and releases |
-| **Share your data** | Gateway registration, ownership confirmation, the access-request queue |
-| **Automate a task** | Recurring runs of an agent, or of an approved request method, that file a draft with its sources into a run history. Propose-only: nothing writes anywhere |
+| Marketplace | Merged live catalogue, visibility rules, search and entry pages |
+| Map | Deterministic SVG layout from live governance domains, recorded dependencies, text alternative and degraded-service notice |
+| Agent creation and publishing | Foundry agents, grounding connections, APIM REST-to-MCP publishing |
+| Red teaming | Automatic native Foundry assessment before publishing; enabled generated scenarios, complete passing-evidence gate and pinned runtime version |
+| Task automation | Two to five ordered agents, per-step results, bounded handoff and final draft; older schedules remain compatible |
+| Demo content | One neutral pack: nine domains, fourteen synthetic data products, six API/MCP skills |
+| Presentation | Existing `defra` theme plus original `microsoft` and `novo` inspired themes |
+| State | One writer per blob container; each additional web app gets a distinct state container |
+| Reset | Read-only inventory, reviewed confirmation hash, stale-plan refusal, resumable progress; no resource-group deletion |
 
-## The governance model
+The backend uses Node built-ins plus the `graphql` executor and the official MCP client SDK. `govuk-frontend` supplies vendored styling. Pages remain server-rendered; popup chat progressively enhances normal links and form submission with a small local script.
 
-**Microsoft Entra group membership decides everything.** There are no personas and no anonymous browsing. Clearance and licence entitlement are derived from groups, so they live in Entra where they can be governed and revoked — not in this application.
-
-Three consequences worth knowing:
-
-1. **The groups claim is mandatory.** `scripts/Set-CortexAuth.ps1` switches it on. Without it every user appears to be in no groups, almost every entry correctly resolves to "not available", and the Marketplace looks broken for reasons that are not obvious. `/profile` diagnoses exactly this.
-2. **Every signed-in user is `all-staff` by default** (`CORTEX_DEFAULT_GROUPS`). A signed-in person is a member of staff; team-scoped and cleared groups still come only from Entra. Set it empty for strict mode.
-3. **An agent can never reach further than the person who built it.** The greyed-out checkbox is a courtesy; the server-side refusal on submit is the control, and it is tested.
-
-## No number without a source
-
-Usage, error rate and latency come from the API Management Reports API. **Cost per use, carbon and "believed estate" coverage were removed** rather than labelled illustrative — a figure nobody can defend is worse than an absent one, because it invites a question that cannot be answered. An entry with no gateway traffic says so rather than showing a zero.
-
----
-
-## Layout
-
-```
-docs/             DEPLOY.md · HANDOVER.md · ARCHITECTURE.md
-infra/            Bicep. Every resource name and RG is a parameter.
-scripts/          Deploy-Cortex.ps1, Set-CortexAuth.ps1, Add-CortexUser.ps1, Set-CortexEnv.ps1,
-                  Test-Cortex.ps1, Start-Local.ps1, bootstrap.js, purview-access.js
-bootstrap/        Defra content — INPUT to a script, not runtime data
-src/bff/          Backend for frontend. All Azure credentials live here.
-  adapters/       purview, apim, foundry, keyvault, token
-  services/       visibility, assurance, agents, publish, ask, requests, identity
-src/web/          Server-rendered GOV.UK pages
-src/purview-mcp/  Glue 1 — the Purview MCP server
-test/             214 tests, stubbed at the HTTP boundary; smoke.test.js boots the real server
-.vscode/          Tasks, launch configs, extension recommendations
-```
-
-## The two pieces of custom glue
-
-Microsoft ships neither, and Cortex is largely the fact that they exist.
-
-**Glue 1 — `src/purview-mcp/`.** There is no official Purview MCP server and no Purview knowledge source inside Foundry agents. This exposes the catalogue as MCP tools so an agent can reach it. Catalogue metadata only, never the underlying data.
-
-**Glue 2 — `src/bff/services/publish.js`.** There is no documented way to expose a Foundry agent as an MCP server; Foundry's own path produces HTTP or A2A in APIM. So Cortex generates OpenAPI, imports it, projects an MCP server over it, and writes the endpoint back.
-
-## Front end
-
-Server-rendered GOV.UK Design System. `npm install` vendors the official `govuk-frontend` package into `src/web/assets/vendor/`; if that has not run, the app falls back to a bundled stylesheet using the same class names, so a missing build step degrades typography rather than the service.
-
-Zero `<script>` tags. The whole application works with JavaScript disabled.
-
----
+**Share your artefact** adds metadata-driven external-agent onboarding, indexed-data GraphQL APIs, selected OpenAPI operations as MCP, and assessed agent submission to Teams/Microsoft 365 through the documented Foundry publishing API. Per-artefact lineage shows declared dependencies. See the integration status and limitations in DEPLOY.md before presenting an end-to-end publishing demo.
 
 ## Documentation
 
-| | |
-|---|---|
-| **`docs/DEPLOY.md`** | Deploy, check, iterate and troubleshoot — in the order you will need it. |
-| **`docs/HANDOVER.md`** | Read first if you are picking this up as a developer. State of play, verified API facts, traps, next work. |
-| **`docs/ARCHITECTURE.md`** | What it is, why it exists, how it is built, what was deliberately left out. |
-| **`CHANGES.md`** | What the latest round changed, and why. |
+- [Deploy, verify and iterate](docs/DEPLOY.md)
+- [Architecture and boundaries](docs/ARCHITECTURE.md)
+- [Developer handover](docs/HANDOVER.md)
+- [Change report](CHANGES.md)
+- [Earlier integration lessons](FIXES.md)
+
+All demo rows are synthetic. Foundry calls, gateway traffic, storage and search incur real Azure usage. All three web apps receive the integration release. Native scan execution remains blocked by Foundry's hosted ACA-session 429, and agent publication fails closed. Fabric still rejects the dedicated connector's model invocation with 403. A synthetic Copilot Studio guide and application-authenticated connector are now provisioned, but that environment explicitly rejects app-only S2S access. Source connectivity preflight prevents unavailable sources from creating gateway resources or assessments. No full content reset was performed.

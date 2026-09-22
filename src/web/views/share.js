@@ -1,5 +1,5 @@
 /**
- * Share your data.
+ * Share your artefact.
  *
  * CAP-091  See what my team shares and how much it is used
  * CAP-092  Connect a source through the gateway rather than upload a file
@@ -13,10 +13,11 @@
  */
 
 import { esc, attr, layout, visMark } from '../layout.js';
+import { publishingPanel } from './artefacts.js';
 
 const num = (n) => Number(n || 0).toLocaleString('en-GB');
 
-export function sharePage(ctx, { mine, proposed, requests, neverCalled, submitted, gateway }) {
+export function sharePage(ctx, { mine, proposed, requests, neverCalled, submitted, gateway, publishing }) {
   const content = `
 ${
   submitted
@@ -29,7 +30,7 @@ ${
              Your gateway registration reference is <strong>${esc(submitted)}</strong>.
            </p>
            <p class="govuk-body govuk-!-margin-bottom-0">
-             Nothing has been copied and nothing has moved. This registers a connection.
+             Your metadata has been recorded. The platform team can review this legacy connection request.
            </p>
          </div>
        </div>`
@@ -38,26 +39,15 @@ ${
 
 <div class="govuk-grid-row">
   <div class="govuk-grid-column-two-thirds">
-    <h1 class="govuk-heading-xl govuk-!-margin-bottom-0">Share your data</h1>
+    <h1 class="govuk-heading-xl govuk-!-margin-bottom-0">Share your artefact</h1>
     <p class="govuk-body-l">
       What ${esc(ctx.user.team)} makes available, who is asking for it, and how it is used.
     </p>
   </div>
 </div>
 
-<!-- CAP-093 — the callout that explains why there is no file picker -->
-<div class="govuk-inset-text">
-  <h2 class="govuk-heading-m">There is no file picker, and that is deliberate</h2>
-  <p class="govuk-body">
-    You are not uploading. <strong>Nothing is copied and nothing moves.</strong>
-    You are registering a connection to data where it already lives, so that it can
-    be found and — where you allow it — read in place.
-  </p>
-  <p class="govuk-body govuk-!-margin-bottom-0">
-    Your team stays in control, the data stays current, and there is no second copy
-    to go stale, drift out of step, or leak.
-  </p>
-</div>
+${publishingPanel(ctx, publishing)}
+<p class="govuk-inset-text">Connected platforms retain the source artefact. Cortex stores metadata, publishing evidence and conversations; indexed data and channel responses may be processed in other services. Review the declared data flow before sharing.</p>
 
 <div class="govuk-grid-row">
   <div class="govuk-grid-column-two-thirds">
@@ -216,7 +206,7 @@ ${
         <button class="govuk-button govuk-!-margin-bottom-0" type="submit">Request registration</button>
       </form>
       <p class="govuk-body-s" style="margin-top:12px">
-        This raises a gateway registration request. Nothing is copied and no data moves.
+        This raises a legacy gateway registration request; use the publishing form above for supported automated paths.
       </p>
     </div>
 
@@ -247,5 +237,5 @@ ${
   </div>
 </div>`;
 
-  return layout({ ...ctx, title: 'Share your data', section: 'share' }, content);
+  return layout({ ...ctx, title: 'Share your artefact', section: 'share' }, content);
 }

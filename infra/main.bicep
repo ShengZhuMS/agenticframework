@@ -207,9 +207,43 @@ param searchSemantic string = 'disabled'
 @description('Object id of the person (or pipeline identity) deploying, so bootstrap can upload the sample files. Deploy-Cortex.ps1 fills it in.')
 param deployerPrincipalId string = ''
 
+// ------------------------------------------------ round 6: the perimeter
+//
+// The tenant's SFI policy closes the public endpoint on every storage account
+// "excluding NSP configured resources". So the two Cortex accounts live inside
+// a Network Security Perimeter (modules/nsp.bicep) that admits managed
+// identities from this subscription, and their public network access is set
+// to SecuredByPerimeter — the value the policy leaves alone.
+//
+// storagePublicNetworkAccess starts as Enabled because the perimeter
+// association cannot exist before the account does. Deploy-Cortex.ps1 flips
+// it to SecuredByPerimeter once the association is in place and records that
+// in the azd environment (STORAGE_PUBLIC_NETWORK_ACCESS), so every later
+// provision writes the right value directly.
+@description('Create the Network Security Perimeter around the storage accounts (and the search service). False leaves the accounts on their own network rules.')
+param createPerimeter bool = true
+
+@description('Access mode for the storage accounts in the perimeter. Enforced is what the policy exclusion needs.')
+@allowed(['Enforced', 'Learning'])
+param storageAccessMode string = 'Enforced'
+
+@description('Access mode for the AI Search service in the perimeter. Learning changes nothing and logs what Enforced would block.')
+@allowed(['Enforced', 'Learning'])
+param searchAccessMode string = 'Learning'
+
+@description('Public network access on the storage accounts. Enabled on the first run; SecuredByPerimeter once associated. The deploy script manages this.')
+@allowed(['Enabled', 'SecuredByPerimeter', 'Disabled'])
+param storagePublicNetworkAccess string = 'Enabled'
+
 @description('Who may open a chat window with an agent: all-staff (this phase) or visibility (Marketplace rules).')
 @allowed(['all-staff', 'visibility'])
 param chatPolicy string = 'all-staff'
+@description('Approved external connector metadata. Credentials belong in secret references, never this JSON.')
+param connectorConfiguration string = '[]'
+@secure()
+param fabricConnectorSecret string = ''
+@secure()
+param studioConnectorSecret string = ''
 
 // ------------------------------------------------------------------ derived
 
@@ -237,6 +271,7 @@ var dataAccountName = take('st${replace(prefix, '-', '')}data${uniq}', 24)
 var stateAccountName = take('st${replace(prefix, '-', '')}state${uniq}', 24)
 var searchServiceName = 'srch-${prefix}-${uniq}'
 var searchEndpoint = createSearch ? 'https://${searchServiceName}.search.windows.net' : ''
+var perimeterName = 'nsp-${prefix}'
 
 // ------------------------------------------------------- resource group
 
@@ -435,7 +470,7 @@ module search 'modules/search.bicep' = if (createSearch) {
     sku: searchSku
     semanticSearch: searchSemantic
     cortexPrincipalId: identity.outputs.principalId
-    foundryPrincipalId: createFoundry ? foundryNew.outputs.accountPrincipalId : foundryExisting.outputs.accountPrincipalId
+    foundryPrincipalId: createFoundry ? foundryNew!.outputs.accountPrincipalId : foundryExisting!.outputs.accountPrincipalId
   }
 }
 
@@ -447,10 +482,28 @@ module data 'modules/data.bicep' = if (createData) {
     tags: tags
     dataAccountName: dataAccountName
     stateAccountName: stateAccountName
+    publicNetworkAccess: storagePublicNetworkAccess
     cortexPrincipalId: identity.outputs.principalId
-    purviewPrincipalId: createPurview ? purviewNew.outputs.principalId : purviewExisting.outputs.principalId
-    searchPrincipalId: createSearch ? search.outputs.principalId : ''
+    purviewPrincipalId: createPurview ? purviewNew!.outputs.principalId : purviewExisting!.outputs.principalId
+    searchPrincipalId: createSearch ? search!.outputs.principalId : ''
     deployerPrincipalId: deployerPrincipalId
+  }
+}
+
+// ------------------------------------------------------------- perimeter
+// After the accounts (it associates them) and after search (optional member).
+module perimeter 'modules/nsp.bicep' = if (createData && createPerimeter) {
+  name: 'perimeter'
+  scope: cortexRg
+  params: {
+    name: perimeterName
+    location: location
+    tags: tags
+    dataAccountId: data!.outputs.dataAccountId
+    stateAccountId: data!.outputs.stateAccountId
+    searchServiceId: createSearch ? search!.outputs.id : ''
+    storageAccessMode: storageAccessMode
+    searchAccessMode: searchAccessMode
   }
 }
 
@@ -467,11 +520,15 @@ module containerApps 'modules/containerapps.bicep' = {
     location: location
     tags: tags
     keyVaultName: effectiveKeyVaultName
-    registryLoginServer: createRegistry ? registryNew.outputs.loginServer : registryExisting.outputs.loginServer
+    registryLoginServer: createRegistry ? registryNew!.outputs.loginServer : registryExisting!.outputs.loginServer
     identityId: identity.outputs.id
     identityClientId: identity.outputs.clientId
-    logAnalyticsCustomerId: createMonitoring ? monitoringNew.outputs.customerId : monitoringExisting.outputs.customerId
-    logAnalyticsKey: createMonitoring ? monitoringNew.outputs.primarySharedKey : monitoringExisting.outputs.primarySharedKey
+    // Name and resource group only. The module reads the workspace key itself,
+    // so the key never travels through a module output into the deployment
+    // history. Referencing the module output (rather than the parameter) is
+    // also what orders container apps after the workspace when it is new.
+    logAnalyticsName: createMonitoring ? monitoringNew!.outputs.name : monitoringExisting!.outputs.name
+    logAnalyticsResourceGroup: effectiveMonitoringRg
     webImageName: webImageName
     mcpImageName: mcpImageName
     mcpMinReplicas: mcpMinReplicas
@@ -492,6 +549,9 @@ module containerApps 'modules/containerapps.bicep' = {
     groupNames: groupNames
     defaultGroups: defaultGroups
     chatPolicy: chatPolicy
+    connectorConfiguration: connectorConfiguration
+    fabricConnectorSecret: fabricConnectorSecret
+    studioConnectorSecret: studioConnectorSecret
 
     // Round 4: where the Foundry project lives in ARM (for project
     // connections), the search service, the sample-data account and the
@@ -502,11 +562,12 @@ module containerApps 'modules/containerapps.bicep' = {
     purviewAccountName: effectivePurviewName
     searchEndpoint: searchEndpoint
     searchServiceName: createSearch ? searchServiceName : ''
-    dataStorageAccount: createData ? data.outputs.dataAccountName : ''
-    dataContainer: createData ? data.outputs.dataContainerName : 'products'
+    dataStorageAccount: createData ? data!.outputs.dataAccountName : ''
+    dataContainer: createData ? data!.outputs.dataContainerName : 'products'
     dataResourceGroup: cortexResourceGroup
-    stateAccountName: createData ? data.outputs.stateAccountName : ''
-    stateShareName: createData ? data.outputs.stateShareName : ''
+    stateAccountName: createData ? data!.outputs.stateAccountName : ''
+    stateContainerName: createData ? data!.outputs.stateContainerName : 'state'
+    identityPrincipalId: identity.outputs.principalId
 
     // The APIM subscription key and the App Insights connection string are
     // deliberately NOT passed. Deploy-Cortex.ps1 writes them onto the app after
@@ -541,7 +602,7 @@ module keyVaultSecrets 'modules/keyvault-secrets.bicep' = if (seedKeyVault) {
       'purview-endpoint': 'https://api.purview-service.microsoft.com'
       'purview-mcp-url': '${containerApps.outputs.mcpUrl}/mcp'
       'public-base-url': containerApps.outputs.webUrl
-      'appinsights-connection-string': createMonitoring ? monitoringNew.outputs.connectionString : monitoringExisting.outputs.connectionString
+      'appinsights-connection-string': createMonitoring ? monitoringNew!.outputs.connectionString : monitoringExisting!.outputs.connectionString
       'entra-tenant-id': subscription().tenantId
       'cortex-environment-name': environmentName
     }
@@ -575,23 +636,29 @@ output FOUNDRY_PROJECT_ENDPOINT string = 'https://${effectiveFoundryAccount}.ser
 output FOUNDRY_MODEL_NAME string = modelName
 output FOUNDRY_MODEL_VERSION string = modelVersion
 output FOUNDRY_MODEL_DEPLOYMENT string = effectiveModelDeployment
-output AZURE_CONTAINER_REGISTRY_ENDPOINT string = createRegistry ? registryNew.outputs.loginServer : registryExisting.outputs.loginServer
+output AZURE_CONTAINER_REGISTRY_ENDPOINT string = createRegistry ? registryNew!.outputs.loginServer : registryExisting!.outputs.loginServer
 
 // Round 4 — read by Set-CortexEnv.ps1 so bootstrap can reach the same places the app does.
 output FOUNDRY_ACCOUNT_RESOURCE_GROUP string = effectiveFoundryRg
 output FOUNDRY_PROJECT_NAME string = effectiveFoundryProject
-output FOUNDRY_ACCOUNT_PRINCIPAL_ID string = createFoundry ? foundryNew.outputs.accountPrincipalId : foundryExisting.outputs.accountPrincipalId
-output PURVIEW_ACCOUNT_PRINCIPAL_ID string = createPurview ? purviewNew.outputs.principalId : purviewExisting.outputs.principalId
+output FOUNDRY_ACCOUNT_PRINCIPAL_ID string = createFoundry ? foundryNew!.outputs.accountPrincipalId : foundryExisting!.outputs.accountPrincipalId
+output PURVIEW_ACCOUNT_PRINCIPAL_ID string = createPurview ? purviewNew!.outputs.principalId : purviewExisting!.outputs.principalId
 output SEARCH_SERVICE_NAME string = createSearch ? searchServiceName : ''
 output SEARCH_ENDPOINT string = searchEndpoint
-output DATA_STORAGE_ACCOUNT string = createData ? data.outputs.dataAccountName : ''
-output DATA_CONTAINER string = createData ? data.outputs.dataContainerName : 'products'
-output STATE_STORAGE_ACCOUNT string = createData ? data.outputs.stateAccountName : ''
+output DATA_STORAGE_ACCOUNT string = createData ? data!.outputs.dataAccountName : ''
+output DATA_CONTAINER string = createData ? data!.outputs.dataContainerName : 'products'
+output STATE_STORAGE_ACCOUNT string = createData ? data!.outputs.stateAccountName : ''
+output STATE_CONTAINER string = createData ? data!.outputs.stateContainerName : 'state'
 output CORTEX_CHAT_POLICY string = chatPolicy
+output CORTEX_BOOTSTRAP_JOB string = containerApps.outputs.bootstrapJobName
+output NSP_NAME string = (createData && createPerimeter) ? perimeterName : ''
+output STORAGE_ACCESS_MODE string = storageAccessMode
+output SEARCH_ACCESS_MODE string = searchAccessMode
 
 output CREATED_THIS_ROUND array = concat(
   createSearch ? ['AI Search: ${searchServiceName} (${searchSku})'] : [],
-  createData ? ['Storage: ${dataAccountName} (sample data, ADLS Gen2), ${stateAccountName} (state share)'] : []
+  createData ? ['Storage: ${dataAccountName} (sample data, ADLS Gen2), ${stateAccountName} (state blobs)'] : [],
+  (createData && createPerimeter) ? ['Network Security Perimeter: ${perimeterName}'] : []
 )
 
 output REUSED array = concat(

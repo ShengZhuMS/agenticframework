@@ -1,5 +1,5 @@
 /**
- * Bootstrap — create the Defra content in your real Azure resources.
+ * Bootstrap - create the neutral synthetic demo pack in real Azure resources.
  *
  * Grants, in Microsoft Purview:
  *   - the Cortex managed identity its Unified Catalog roles (see
@@ -24,7 +24,15 @@
  * Run once after `azd up`:  npm run bootstrap
  *
  *   --only=roles|purview|apim|connections|data|link|search   run one section
+ *   --skip=data,search          run everything except these sections
  *   --no-wait                   do not wait for the Data Map scan (run --only=link later)
+ *                               and do not wait for the AI Search indexers
+ *
+ * BOOTSTRAP_ARGS in the environment is appended to the command line. The
+ * bootstrap JOB (infra/modules/containerapps.bicep) runs `--only=data
+ * --skip-roles` from its template; Deploy-Cortex.ps1 adds --no-wait through
+ * this variable when asked, because a job start cannot pass extra arguments
+ * that begin with a dash.
  *   --principal=<object id>     the identity to grant (defaults to
  *                               CORTEX_IDENTITY_PRINCIPAL_ID, which
  *                               Deploy-Cortex.ps1 and Set-CortexEnv.ps1 set)
@@ -62,17 +70,39 @@ import {
 import { bootstrapConnections, bootstrapData, linkAssets, bootstrapSearch } from './bootstrap-data.js';
 
 const ARM_SCOPE = 'https://management.azure.com/.default';
-const args = new Set(process.argv.slice(2));
-const DRY_RUN = args.has('--dry-run');
-const NO_ADOPT = args.has('--no-adopt');
-const SKIP_ROLES = args.has('--skip-roles');
-const NO_WAIT = args.has('--no-wait');
 const SECTIONS = ['roles', 'purview', 'apim', 'connections', 'data', 'link', 'search'];
-const ONLY = [...args].find((a) => a.startsWith('--only='))?.split('=')[1];
-const PRINCIPAL =
-  [...args].find((a) => a.startsWith('--principal='))?.split('=')[1] ||
-  process.env.CORTEX_IDENTITY_PRINCIPAL_ID ||
-  '';
+
+/**
+ * The command line, plus BOOTSTRAP_ARGS from the environment. Exported for
+ * tests; nothing else about the arguments is decided anywhere but here.
+ */
+export function parseArgs(argv = process.argv.slice(2), env = process.env) {
+  const extra = String(env.BOOTSTRAP_ARGS || '').split(/\s+/).filter(Boolean);
+  const all = new Set([...argv, ...extra]);
+  // Last one wins, so BOOTSTRAP_ARGS in the environment can override what the
+  // job's template says (e.g. --only=link after a --no-wait run).
+  const value = (prefix) => [...all].filter((a) => a.startsWith(prefix)).pop()?.slice(prefix.length);
+  const skip = new Set((value('--skip=') || '').split(',').map((x) => x.trim()).filter(Boolean));
+  return {
+    dryRun: all.has('--dry-run'),
+    noAdopt: all.has('--no-adopt'),
+    skipRoles: all.has('--skip-roles'),
+    noWait: all.has('--no-wait'),
+    only: value('--only='),
+    skip,
+    principal: value('--principal=') || '',
+    unknownSkips: [...skip].filter((x) => !SECTIONS.includes(x))
+  };
+}
+
+const parsed = parseArgs();
+const DRY_RUN = parsed.dryRun;
+const NO_ADOPT = parsed.noAdopt;
+const SKIP_ROLES = parsed.skipRoles;
+const NO_WAIT = parsed.noWait;
+const ONLY = parsed.only;
+const SKIP = parsed.skip;
+const PRINCIPAL = parsed.principal || process.env.CORTEX_IDENTITY_PRINCIPAL_ID || '';
 
 /**
  * The authorization header, built rather than written as one literal. Files
@@ -407,7 +437,9 @@ async function bootstrapDataProducts(products, domainIds, { ownerId = null } = {
       // so it must not pass silently the way it used to. A duplicate here is
       // far more confusing to unpick than a warning is to read.
       log.warn(`could not query existing data products — ${err.message}`);
-      log.warn('proceeding as if every product is new; re-run once the query works');
+      failed++;
+      log.fail('stopping this section to avoid duplicating products; re-run once listing works');
+      return;
     }
   }
 
@@ -866,6 +898,12 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  if (parsed.unknownSkips.length) {
+    console.error(`\nUnknown --skip=${parsed.unknownSkips.join(',')}. Valid values: ${SECTIONS.join(', ')}.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (SKIP.size) console.log(`  skipping: ${[...SKIP].join(', ')}`);
 
   if (!DRY_RUN) await hydrateConfig();
 
@@ -905,17 +943,25 @@ async function main() {
   const domains = await read('domains.json');
   const products = await read('data-products.json');
   const skills = await read('skills.json');
+  const productNames = new Map(products.map((p) => [p.id, p.name]));
+  for (const p of products) p.dependsOn = (p.dependsOn || []).map((id) => productNames.get(id) || id);
+
+  // Which sections run: everything, or the one named by --only, minus --skip.
+  const wants = (section) => (!ONLY || ONLY === section) && !SKIP.has(section);
 
   // Roles first. Nothing the app does against Purview works until the Cortex
   // identity holds one, and the grant needs nothing that is created below.
-  const grantRoles = !SKIP_ROLES && (!ONLY || ONLY === 'roles' || ONLY === 'purview');
+  const grantRoles = !SKIP_ROLES && !SKIP.has('roles') && (!ONLY || ONLY === 'roles' || ONLY === 'purview');
   if (grantRoles) await bootstrapCatalogAccess(PRINCIPAL);
 
   let domainIds = {};
-  if (!ONLY || ONLY === 'purview' || ONLY === 'roles') {
-    if (ONLY === 'roles') {
-      // Only the domain roles need the domain ids — read them, create nothing.
-      if (!DRY_RUN && grantRoles) {
+  const runPurview = wants('purview');
+  // The domain roles need the domain ids even when the content itself is not
+  // being written (--only=roles, or --skip=purview): read them, create nothing.
+  const rolesOnly = !runPurview && grantRoles;
+  if (runPurview || rolesOnly) {
+    if (!runPurview) {
+      if (!DRY_RUN) {
         try {
           const existing = await listAllDomains();
           for (const d of domains) {
@@ -930,9 +976,9 @@ async function main() {
       domainIds = await bootstrapDomains(domains);
     }
     if (grantRoles) await bootstrapDomainAccess(PRINCIPAL, domainIds);
-    if (ONLY !== 'roles') await bootstrapDataProducts(products, domainIds);
+    if (runPurview) await bootstrapDataProducts(products, domainIds);
   }
-  if (!ONLY || ONLY === 'apim') {
+  if (wants('apim')) {
     if (!config.apim.serviceName) {
       log.step('API Management');
       log.skip('APIM_SERVICE_NAME not set — skipping');
@@ -959,10 +1005,24 @@ async function main() {
   };
   const shared = { log, counters, dryRun: DRY_RUN, signedInObjectId, guidFor, listAllDataProducts };
 
-  if (!ONLY || ONLY === 'connections') await bootstrapConnections(shared);
-  if (!ONLY || ONLY === 'data') await bootstrapData({ ...shared, products, wait: !NO_WAIT, principal: PRINCIPAL });
+  if (wants('connections')) await bootstrapConnections(shared);
+  let dataResult = null;
+  if (wants('data')) dataResult = await bootstrapData({ ...shared, products, wait: !NO_WAIT, principal: PRINCIPAL });
   if (ONLY === 'link') await linkAssets({ ...shared, products });
-  if (!ONLY || ONLY === 'search') await bootstrapSearch({ ...shared, products });
+  if (wants('search')) {
+    // In a full run the indexes are built from the files the data step just
+    // wrote. When that step could not write them, starting fourteen indexers
+    // against an account that refuses the caller only produces fourteen
+    // failures a minute later. Say so once and move on; --only=search still
+    // runs on its own, for when the files were uploaded earlier.
+    if (!ONLY && dataResult?.blocked) {
+      log.step('Azure AI Search — one index per data product');
+      log.skip(`skipped — the sample files could not be written this run (${dataResult.reason?.split(' — ')[0] || 'storage refused'}).`);
+      log.skip('fix the storage access, then:  node scripts/bootstrap.js --only=data   and   node scripts/bootstrap.js --only=search');
+    } else {
+      await bootstrapSearch({ ...shared, products, verify: !NO_WAIT });
+    }
+  }
 
   console.log(`\n${created} created, ${updated} updated, ${failed} failed.`);
   if (failed) {

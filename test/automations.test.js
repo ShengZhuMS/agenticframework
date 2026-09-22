@@ -25,6 +25,76 @@ before(async () => {
     _source: { system: 'foundry', id: 'digest-agent' },
     _agent: { definition: { builtByTeam: 'EA Waste Regulation' } }
   });
+  index.upsert({ ...index.get('digest-agent'), id: 'review-agent', name: 'Review agent', _source: { system: 'foundry', id: 'review-agent' } });
+});
+
+describe('ordered multi-agent workflows', () => {
+  const form = () => ({
+    name: 'Prepare and review', kind: 'workflow', question: 'Summarise synthetic quality',
+    cadence: 'daily', at: '07:00', purpose: 'Human review',
+    stepAgent1: 'digest-agent', stepInstruction1: 'Prepare a summary',
+    stepAgent2: 'review-agent', stepInstruction2: 'Review the previous summary'
+  });
+  const createWorkflow = () => {
+    const result = auto.validate(form(), USERS.analyst);
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    return auto.create(result.definition);
+  };
+
+  test('passes each previous output in order and retains step evidence', async () => {
+    const a = createWorkflow();
+    const calls = [];
+    const run = await auto.runNow(a.id, { user: USERS.analyst, foundry: { respond: async (request) => {
+      calls.push(request);
+      return { text: calls.length === 1 ? 'Quoted "draft"\nline' : 'Reviewed draft', sources: [{ name: 'Synthetic source' }] };
+    } } });
+    assert.equal(run.status, 'ok');
+    assert.deepEqual(calls.map((r) => r.agentName), ['digest-agent', 'review-agent']);
+    assert.ok(calls[1].input.includes(JSON.stringify('Quoted "draft"\nline')));
+    assert.match(calls[1].input, /untrusted data/);
+    assert.equal(run.steps.length, 2);
+    assert.equal(run.draft, 'Reviewed draft');
+    assert.equal(run.steps[0].sources[0].name, 'Synthetic source');
+  });
+
+  test('rejects duplicate agents, gaps, invalid days and missing instructions', () => {
+    for (const changes of [
+      { stepAgent2: 'digest-agent' },
+      { stepAgent2: '', stepInstruction2: '', stepAgent3: 'review-agent', stepInstruction3: 'Review' },
+      { dayOfWeek: 8 }, { stepInstruction2: '' }, { stepAgent2: 'not-found' }
+    ]) assert.equal(auto.validate({ ...form(), ...changes }, USERS.analyst).ok, false);
+    assert.throws(() => auto.computeNextRun({ cadence: 'weekly', dayOfWeek: -1 }), /Invalid/);
+  });
+
+  test('stops before downstream calls after empty, oversized or failed-tool output', async () => {
+    for (const answer of [{ text: '' }, { text: 'x'.repeat(24001) }, { text: 'partial', toolCalls: [{ error: 'denied' }] }]) {
+      const a = createWorkflow();
+      let count = 0;
+      const run = await auto.runNow(a.id, { foundry: { respond: async () => { count++; return answer; } } });
+      assert.equal(count, 1);
+      assert.equal(run.status, 'failed');
+      assert.equal(run.steps[0].status, 'failed');
+      assert.equal(run.draft, null);
+    }
+  });
+
+  test('only the owner can invoke and null identities never match', async () => {
+    const a = createWorkflow();
+    await assert.rejects(auto.runNow(a.id, { user: { id: 'different' }, foundry: fakeFoundry() }), /owner/);
+    assert.equal(auto.owns({ owner: { id: null, email: null } }, { id: null, email: null }), false);
+  });
+
+  test('concurrent invocation is refused and pausing stops the next step', async () => {
+    const a = createWorkflow();
+    let finish;
+    const pending = auto.runNow(a.id, { foundry: { respond: () => new Promise((resolve) => { finish = resolve; }) } });
+    await assert.rejects(auto.runNow(a.id, { foundry: fakeFoundry() }), /already running/);
+    auto.setStatus(a.id, 'paused');
+    finish({ text: 'First draft' });
+    const run = await pending;
+    assert.equal(run.status, 'failed');
+    assert.equal(run.steps.length, 1);
+  });
 });
 after(() => restore && restore());
 beforeEach(() => {

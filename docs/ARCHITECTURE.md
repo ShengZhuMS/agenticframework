@@ -1,179 +1,56 @@
-# Cortex — Architecture and Strategy
+# Data Cortex - architecture
 
-**A front door to Microsoft Purview, Azure API Management and Microsoft Foundry, for Defra.**
+Data Cortex is a customer-neutral PoC front end to Microsoft Purview, Azure API Management and Microsoft Foundry. It demonstrates discovery, governed composition and reuse over an AI landing zone, rather than implementing the entire landing zone.
 
----
+## Components
 
-## 1. Why this exists
-
-Defra's own architecture review states the position: **Purview, API Management and Foundry are all live in the GIO landing zone.** The plumbing is in. Two things are missing, and neither is a new platform:
-
-1. **No front door.** Copilot and Teams agents are off for anyone outside the Cloud Centre of Excellence.
-2. **No MCP servers.** Foundry cannot reach the platform agents. Four platforms, each answering only for itself.
-
-The cost is visible in one worked example: **seven handoffs to produce one number.** A manager wants average days sick per employee. They are entitled to the answer. They are not entitled to the records behind it. Their AI inherits their access, so it cannot reach the records either — and that means email, a spreadsheet, and a week.
-
-## 2. The strategic argument
-
-We verified the current state of every integration Cortex needs:
-
-| Link | Status |
-|---|---|
-| APIM MCP server → consumed by a Foundry agent | ✅ Fully supported, GA both sides |
-| Foundry agent → published as an MCP server in APIM | ⚠️ No first-party path. Foundry's own registration yields HTTP or A2A, not MCP |
-| Purview data product → agent knowledge source | ❌ No documented path at all |
-
-**Those two gaps map exactly onto the two gaps Defra identified.** That is the pitch, and it is defensible because it is true:
-
-> Cortex is not a skin over three products. It is the two pieces of connective tissue Microsoft does not ship, built once, in the place the user already is.
-
-Say three things to a CTO, in this order:
-
-1. *"The plumbing is already in. What is missing is the front door and the connections between them."*
-2. *"We built the two pieces Microsoft does not ship: your catalogue as something an agent can read, and a way to publish an agent back as a reusable part."*
-3. *"Every agent anyone builds becomes a part everyone else can build with — that is the difference between two and a half thousand agents and a platform."*
-
----
-
-## 3. The demo
-
-Twelve minutes. Everything live.
-
-| # | Screen | What is actually happening |
-|---|---|---|
-| 1 | **Marketplace** | Live read from Purview data products, merged with APIM MCP servers and Foundry agents |
-| 2 | **Entry page** | Full entry standard, every field showing its source and who maintains it |
-| 3 | **Visibility state** | Six states computed from Entra group membership. *This is the governance story — do not cut it* |
-| 4-6 | **Build an agent** | Approved models; knowledge checklist with **unavailable items greyed out and explained**; permitted actions |
-| 7 | **Assurance gates** | Seven gates, computed from what the agent reads and does, each stating why it applies |
-| 8 | **Test it** | Live Foundry agent, answering with sources and freshness named |
-| 8b | **Ask** | The `cortex-ask` Foundry agent answers from the catalogue entries the asker can reach; the provenance panel names what it could not |
-| 9 | **Publish** | Glue 2 runs: OpenAPI → APIM API → MCP server → endpoint written back |
-| 10 | **Loop closes** | The agent is now a Marketplace entry another agent can consume |
-
-Sign in as a second person with different groups and walk the Marketplace again. The same page renders differently. That contrast is the most persuasive thing in the product.
-
----
-
-## 4. Application architecture
-
-A **server-rendered front end** over a **backend-for-frontend**. All Azure credentials and management-plane calls live in the BFF; the browser holds a session cookie and nothing else.
-
-```
-Browser ── GOV.UK pages, no client JavaScript
-   │
-Cortex BFF (Container Apps, managed identity)
-   ├── services: visibility · identity · assurance · agents · publish · ask · requests
-   ├── adapters: purview · apim · foundry · keyvault · token
-   └── Cortex Index — the merged register
-   │
-   ├── Purview Unified Catalog + Data Map
-   ├── API Management (MCP servers, APIs, analytics)
-   └── Foundry (agents, conversations, responses)
+```text
+Browser (server-rendered HTML)
+  -> Entra / Container Apps authentication
+  -> Cortex backend-for-frontend
+       -> metadata index: Purview + APIM + Foundry
+       -> agents, chat, requests, ordered agent workflows
+       -> Foundry Evals/taxonomy red team integration
+       -> blob state: one writer per app-specific container
+  -> Purview Unified Catalog: domains, products, asset relationships
+  -> Purview Data Map: scanned assets, schema, classifications
+  -> APIM: REST APIs, MCP projections, gateway analytics
+  -> Foundry: versioned agents, responses, project connections, evaluations
+  -> synthetic files -> Data Map scan -> AI Search -> agent grounding
 ```
 
-### The Cortex Index
+The separate Purview MCP app exposes catalogue metadata, not arbitrary source rows. The publishing shim presents an agent invocation operation for APIM to expose as MCP. Neutral sample skills read bounded portions of uploaded synthetic files and require the gateway subscription key.
 
-The three back ends share no identifier, no vocabulary and no latency profile, and the Unified Catalog List operation is capped at **100 calls per 20 seconds**. A page that fanned out per card would exhaust it with a handful of users.
+The artefact publisher adds approved source connectors: Databricks serving endpoints, Fabric's published MCP runtime and Copilot Studio secured Direct Line or application-authenticated Direct Engine connections. Source protocol/availability preflight runs before creating gateway resources or assessments; successful connectivity does not establish model/data permission. Direct Engine HTTP/SSE requests have explicit time and size bounds, and disabled preview capabilities fail closed. A versioned Foundry wrapper delegates to an external source and remains subject to native pre-publication assessment. Generic JSON APIs are projected as APIM MCP tools; data products can expose a bounded GraphQL query over their existing Search indexes. Source credentials stay in managed identity or Container Apps secret references. Requests cannot change the administrator-approved origin or path prefix.
 
-So a background refresh builds a merged register and every read is served from it. Writes go direct to the live system and optimistically upsert the index, which is what makes publishing feel instant. Each source is independently fault-tolerant: one failing back end leaves its slice as it was and records the error, rather than emptying the register.
+After a passing assessment, Teams/Microsoft 365 publication pins the stable Foundry endpoint version, creates a dedicated Azure Bot Service and submits a tenant package through the documented publish API. The platform supplies authenticated Activity Protocol handling; a duplicate custom bot HTTP server and its separate session database are unnecessary. Catalogue submission is not tenant administrator approval, installation or entitlement.
 
-### The visibility engine
+## Metadata and Map
 
-Six states, from the original mockup, computed by a pure function:
+The Cortex Index merges live API responses, caching them to avoid page-by-page service fan-out and Purview rate limits. Backend errors are surfaced; unavailable sources may leave stale data. There is no runtime seeded fallback.
 
-| State | Meaning |
-|---|---|
-| **Available** | Use it now |
-| **Available to you, needs a request** | Eligible, ask the owner |
-| **Licence does not cover you** | A commercial question, not a technical one |
-| **Sensitivity precludes you** | No route in your role |
-| **Not yet registered for use** | Connected, not cleared |
-| **Answerable by a person** | You cannot have the data; a holder can answer from it |
+The Map lays out live domains deterministically in SVG. Domain count controls canvas height; registered entry counts control circle size. Dependencies must be recorded and resolve to real entries. Missing domains and unresolved dependencies are shown separately. Positions are not geography.
 
-That last state is the deck's problem rendered as a UI state rather than a dead end, and it is the hook into Requests.
+## Governance
 
-`canReachUnderlying()` answers a *different* question — does this person genuinely hold the data — because `Answerable by a person` is true for everyone.
+Entra group claims are mapped to aliases for the visibility engine. `visibilityFor()` describes the viewer's route; `canReachUnderlying()` is the separate holder-access question. Agent creation validates attachments server-side.
 
-### The two pieces of glue
+Requests are drafted with holder permissions and require a human release. Chat follows the configured `all-staff` or `visibility` policy. Workflow drafts are owner-only; scheduled execution uses captured permissions and needs live directory revalidation before production adoption.
 
-**Glue 1 — Purview MCP server.** Exposes the catalogue as MCP tools (`list_governance_domains`, `search_data_products`, `get_data_product`, `get_lineage`, `get_schema`), published through APIM and attached to agents as an ordinary MCP tool. **Catalogue metadata only, never the underlying data** — it answers "what exists, who owns it, what does it mean", never "give me the rows". That keeps the access-control story clean and is exactly the thin slice Defra's deck asks for.
+Assurance gates describe review requirements. **Test and publish** persists an assessment request, enables generated prohibited-action scenarios, runs native Foundry evaluation and publishes only when every sample passes all three distinct evaluators. A background worker resumes after restart. Published invocation pins the assessed agent version. Standalone reviewer-led scans remain available. Passing the configured sandbox gate is not a production safety certification.
 
-**Glue 2 — publish an agent as MCP.** Cortex hosts a generic invocation shim, generates an OpenAPI operation per agent, imports it into APIM, projects an MCP server over it (one PUT: `type: 'mcp'` with the tools inline in `mcpTools`, each pointing at the backing operation by full ARM id), and writes the endpoint back onto the entry. All four steps use documented APIM management APIs; only the shim is ours.
+## Persistence and isolation
 
----
+Application state is JSON collections in Blob Storage with managed identity authentication. Local development can use files; missing/unreachable storage leaves explicit memory-only mode. The app never overwrites existing blob state after a failed initial read.
 
-## 5. Infrastructure
+One replica is supported per state container. The Microsoft/Novo-inspired variants share platform services and the neutral demo pack, but use distinct state containers. Shared identities and catalogues are not a tenant/customer isolation boundary.
 
-**Reuses the existing estate.** Every resource name and resource group is a Bicep parameter, defaulted to the resources already in the subscription. The deploy script probes each one and sets a `create*` flag; where a resource exists Cortex is granted access to it, where it does not Cortex creates it.
+Chat now rejects cross-agent thread reuse, requires stable owner identity, serializes turns within a process and reports failed persistence. Published conversations pin the assessed version. This does not turn whole-collection blob persistence into a multi-writer database: keep the single-writer restriction. The existing Cosmos module is a future scale-out option, not a deployed session store. Native Bot/Foundry channels manage their own conversation state.
 
-| Component | Default | Action |
-|---|---|---|
-| API Management | `prdcoreapimneu001` | Reuse — role assignment + a `cortex` product |
-| Purview | `prdcorepurvieweus` | Reuse — Unified Catalog and Data Map roles granted by bootstrap through the policy APIs |
-| Foundry | `prdcorefdryeus001` / `prdcorefdryproj-default` | Reuse — role assignments |
-| Key Vault | `prdcorekveus` | Reuse — Secrets User |
-| Container registry | `prdcoreamlacr001` | Reuse — AcrPull |
-| Monitoring | `prdcoreamlneu08774392429` | Reuse |
-| **Container Apps** | — | **Create** |
-| **Managed identity** | — | **Create** |
-| **Azure AI Search** (Basic) | — | **Create** — one index per data product |
-| **Storage** (ADLS Gen2 sample data; Azure Files state share) | — | **Create** |
+Reset operates on reviewed object plans, not resource groups. Fingerprints detect changes between inventory and deletion. Unknown orphan ownership, platform audit history and soft-delete retention require separate operator review.
 
-Cortex creates its own small footprint and nothing shared: the container apps, an identity of its own, a search service and two storage accounts, all in one resource group. Reusing an identity that belongs to another workload would make its permissions impossible to reason about and impossible to revoke without collateral damage.
+## PoC boundaries
 
-### The data behind a data product
+The system is not a production access-control gateway for arbitrary tools. Some legacy machine routes rely on the trusted gateway deployment boundary; external tools need their own authorization. Synthetic data is indexed and metadata/transcripts/reports are stored, so the claim that nothing is copied is incorrect.
 
-The Unified Catalog describes data; the Data Map records the real files a scan found; Azure AI Search holds an index built from those same files; a Foundry agent reads the index through a keyless project connection. Cortex orchestrates the chain and holds none of the data:
-
-```
-data product ─► catalogue data asset ─► Data Map asset (schema, classifications)
-                                              │
-                          storage: products/<id>/<id>.csv ─► indexer ─► AI Search index cortex-<id>
-                                                                              ▲
-                                                             agent ── azure_ai_search (connection cortex-search)
-```
-
-The files are synthetic — generated from a fixed seed, with a data dictionary beside each — because the proof of concept has no real data and must never appear to. What is real is every hop: the account, the scan, the assets, the index, the tool call.
-
-### Agents and their tools
-
-An agent's tools are API Management MCP servers. Each has a Foundry **project connection** carrying the gateway subscription key, so the call is authenticated without a key ever appearing in an agent definition. Tool calls run with approval required; Cortex approves them server-side, records server, tool and arguments, and shows the record under the answer. That is the governance shape the backlog asks for — every action visible and attributable — in a form that does not interrupt a conversation.
-
-### Identity and configuration
-
-One user-assigned managed identity holds every permission. No secrets in code, no client credentials. Endpoints and keys come from **Key Vault**, read once at startup; environment variables remain a fallback. Key Vault wins where both are set, so onboarding a value always takes effect.
-
-**Sign-in is Microsoft Entra only.** Container Apps built-in authentication terminates it before the request reaches the process. Group membership is the whole governance model, so clearance and licence entitlement are derived from groups and live in Entra where they can be governed — not in this application's own store.
-
----
-
-## 6. What was built, and what was not
-
-The source backlog holds **190 capabilities across 359 rows**, and made no PoC decisions — 326 rows `Undecided`, none marked `Yes`. The prioritisation was ours, scored on demo weight, proof weight and build cost.
-
-**Built:** Marketplace, entry standard, map, the data behind each product (Data Map assets and a search index), Build an agent with computed gates and grounded tools, test and chat, publish as MCP, Ask with provenance, Share your data, the Requests lifecycle, and propose-only Automations.
-
-**Deliberately not built:**
-
-| Excluded | Reason |
-|---|---|
-| Automations that write | The backlog's own rule limits agents to read, summarise and cite this phase. Automations exist and run on a schedule; each run is a draft in a history and nothing else |
-| Reference data, canonical entities | The backlog records that the owning role **does not exist**. Do not build on a dependency the client has flagged as absent |
-| Standards conformance | Same — no owner for data standards |
-| Impact assessments, sharing agreements | Governance workflow. Essential to the product, invisible in a demo |
-| Cost per use, carbon, coverage percentage | **No live source.** Removed rather than labelled — a figure nobody can defend invites a question that cannot be answered |
-
----
-
-## 7. Risks
-
-| Risk | Impact | Mitigation |
-|---|---|---|
-| **Purview publish transition behaves differently than inferred** | High | Least certain call in the codebase. Bootstrap falls back to `DRAFT` and reports it. Test in week one. |
-| **Groups claim missing from the app registration** | High | `Set-CortexAuth.ps1` switches it on and the deploy script runs it. `/profile` diagnoses it. |
-| **Cortex identity without a Unified Catalog role** | High | Purview answers 403 to every call. Bootstrap grants the roles through the Policies API; `Test-Cortex.ps1` names the fix when it sees the error. |
-| **Only partly verified against real Azure** | High | Provisioning, APIM and Foundry verified live; the Purview grant, product publish and the Ask agent are written to the documented shapes and tested against stubs. Deploy early, expect small fixes. |
-| **Preview APIs shift** | Medium | Unified Catalog has no GA version. Isolated behind one adapter. Say so openly — it is a real platform-maturity point. |
-| **No persistence** | Medium | Requests and threads die on restart. First item on the next-work list. |
-| **Live demo back-end failure** | **Critical** | Accepted deliberately — everything is real, so there is no fallback that hides it. Per-source fault tolerance keeps the app up and names what failed. **Record a walkthrough as insurance.** |
+Production requires threat modeling, scoped identities, stronger machine-route controls, fresh scheduled-run permissions, durable multi-writer state, managed report retention, approval policy and operational monitoring. Preview API availability must be established in the target region. No savings, compliance certification or customer outcomes are asserted.

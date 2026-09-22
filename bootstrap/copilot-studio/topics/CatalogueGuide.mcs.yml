@@ -1,0 +1,19 @@
+mcs.metadata:
+  componentName: Synthetic catalogue guide
+  description: Explains the synthetic accelerator without querying business data.
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnRecognizedIntent
+  id: main
+  intent:
+    displayName: Explain Data Cortex
+    triggerQueries:
+      - Explain Data Cortex
+      - What services form Data Cortex
+      - Describe the synthetic catalogue
+  actions:
+    - kind: SendActivity
+      id: explainCatalogue
+      activity: This is a synthetic Data Cortex demonstration. Microsoft Purview supplies governed metadata, Microsoft Foundry hosts agents and assessments, and API Management exposes reusable APIs and MCP tools. No business data or external tools are attached to this guide.
+    - kind: EndDialog
+      id: endGuide

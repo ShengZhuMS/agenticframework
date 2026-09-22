@@ -81,7 +81,7 @@ export function chatPage(ctx, { entry, thread, history, permission }) {
     <div class="cortex-chat__side">
       <a class="govuk-link" href="/agent/${attr(entry.id)}/chat">New conversation</a>
       ${
-        history?.length > 1
+        history?.some((h) => h.id !== thread?.id)
           ? `<details class="govuk-details govuk-!-margin-bottom-0 govuk-!-margin-top-2">
                <summary class="govuk-details__summary"><span class="govuk-details__summary-text">Earlier conversations (${history.length - (thread ? 1 : 0)})</span></summary>
                <div class="govuk-details__text"><ul class="govuk-list govuk-!-margin-bottom-0">
@@ -129,11 +129,12 @@ export function chatPage(ctx, { entry, thread, history, permission }) {
     ${thread ? `<input type="hidden" name="thread" value="${attr(thread.id)}">` : ''}
     <div class="govuk-form-group govuk-!-margin-bottom-2">
       <label class="govuk-label govuk-visually-hidden" for="q">Your message</label>
-      <textarea class="govuk-textarea govuk-!-margin-bottom-0" id="q" name="q" rows="2" autofocus required
+      <textarea class="govuk-textarea govuk-!-margin-bottom-0" id="q" name="q" rows="3" maxlength="8000" autofocus required
         placeholder="${attr(turns.length ? 'Follow up…' : 'Ask a question…')}"></textarea>
     </div>
     <button class="govuk-button govuk-!-margin-bottom-0" type="submit">Send</button>
-    <span class="cortex-src" style="margin-left:12px">Each answer names its sources and the tools it used. Nothing here is written anywhere.</span>
+    <span class="cortex-src" style="margin-left:12px">Your conversation is stored privately for your account in Cortex and the connected agent service. Answers may be incorrect; review before use.</span>
+    <p class="govuk-body-s" data-chat-status role="status" aria-live="polite"></p>
   </form>
 </div>`;
 

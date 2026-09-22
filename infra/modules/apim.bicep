@@ -16,6 +16,9 @@ param publisherEmail string
 param publisherName string
 param principalId string
 
+@description('APIM product that published MCP servers are bound to. main.bicep passes apimProductId, so the new and existing paths agree on the id.')
+param productId string = 'cortex'
+
 var skuCapacity = sku == 'Developer' ? 1 : 1
 
 resource apim 'Microsoft.ApiManagement/service@2024-05-01' = {
@@ -33,10 +36,11 @@ resource apim 'Microsoft.ApiManagement/service@2024-05-01' = {
   }
 }
 
-// A product to bind published MCP servers to.
+// A product to bind published MCP servers to. Same id as apim-existing.bicep
+// uses, so the app finds it under either path.
 resource product 'Microsoft.ApiManagement/service/products@2024-05-01' = {
   parent: apim
-  name: 'cortex'
+  name: productId
   properties: {
     displayName: 'Cortex'
     description: 'Data products, skills and agents published through Cortex.'

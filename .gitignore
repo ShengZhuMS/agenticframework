@@ -3,3 +3,4 @@ node_modules/
 .azure/
 src/web/assets/vendor/
 *.log
+bootstrap/copilot-studio/.mcs/

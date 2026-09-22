@@ -43,6 +43,16 @@ describe('index definition', () => {
 });
 
 describe('adapter', () => {
+  test('schema evolution preserves existing fields and refuses incompatible types', async () => {
+    const s = createSearchAdapter();
+    await s.ensureIndex(indexDefinitionFor('cortex-evolve', ['old']));
+    await s.ensureIndex(indexDefinitionFor('cortex-evolve', ['new']));
+    const def = SEARCH.indexes.get('cortex-evolve');
+    assert.ok(def.fields.some((f) => f.name === 'old'));
+    assert.ok(def.fields.some((f) => f.name === 'new'));
+    await assert.rejects(s.ensureIndex({ ...def, fields: [{ name: 'old', type: 'Edm.Int32' }] }), /type/i);
+  });
+
   test('creates index, data source (managed identity, adlsgen2) and a CSV indexer, then runs it', async () => {
     const s = createSearchAdapter();
     await s.ensureIndex(indexDefinitionFor('cortex-t', ['a']));

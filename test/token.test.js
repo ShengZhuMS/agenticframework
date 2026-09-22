@@ -24,6 +24,10 @@ import path from 'node:path';
 import { getToken, clearTokenCache, candidatesFor, __testing } from '../src/bff/adapters/token.js';
 
 const { assertSafeResource, isUnusable, isTimeout } = __testing;
+test('the fixed Azure Databricks audience is allowed without accepting arbitrary GUID resources', () => {
+  assert.equal(assertSafeResource('2ff814a6-3304-4ab8-85cb-cd0e6f879c1d'), '2ff814a6-3304-4ab8-85cb-cd0e6f879c1d');
+  assert.throws(() => assertSafeResource('11111111-1111-1111-1111-111111111111'), /unexpected resource/);
+});
 
 const IS_WINDOWS = process.platform === 'win32';
 

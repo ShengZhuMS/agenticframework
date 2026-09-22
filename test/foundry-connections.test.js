@@ -38,6 +38,24 @@ describe('connection names', () => {
 });
 
 describe('ensureMcpConnection', () => {
+  test('uses a stable replacement only for purge-protected deleted secrets', async () => {
+    const previousFetch = globalThis.fetch;
+    const original = connectionNameFor('deleted-demo');
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).includes(`/connections/${original}?`) && init.method === 'PUT') {
+        return new Response('Secret is in deleted state with purge protection enabled', { status: 400 });
+      }
+      return previousFetch(url, init);
+    };
+    try {
+      const first = await ensureMcpConnection({ apiId: 'deleted-demo', target: 'https://stub/mcp' });
+      const second = await ensureMcpConnection({ apiId: 'deleted-demo', target: 'https://stub/mcp' });
+      assert.notEqual(first.name, original);
+      assert.equal(second.name, first.name);
+      assert.equal(second.created, false);
+    } finally { globalThis.fetch = previousFetch; }
+  });
+
   test('PUTs a RemoteTool connection with the APIM key under Ocp-Apim-Subscription-Key', async () => {
     const r = await ensureMcpConnection({ apiId: 'magic-map-mcp', target: 'https://apim-stub.azure-api.net/magic-map-mcp/mcp' });
     assert.equal(r.created, true);

@@ -9,9 +9,35 @@ param accountName string
 param projectName string
 param location string
 param tags object
-param modelName string
-param modelCapacity int
 param principalId string
+
+// Model parameters mirror modules/foundry-existing.bicep exactly, because
+// main.bicep passes the same set to both. A new account has no model yet, so
+// deployModel defaults to true here and false there.
+@description('Deploy the model. main.bicep passes true for a new account.')
+param deployModel bool = true
+
+@description('The model to deploy. Kept separate from the deployment name so the deployment can be renamed without changing models.')
+param modelName string = 'gpt-5.4-mini'
+
+// Pinned, for the reason main.bicep gives: an unpinned version resolves to the
+// account default, which moves — and a default that has entered Deprecated
+// fails every new deployment with ServiceModelDeprecating.
+@description('Model version, pinned. Never leave this empty.')
+param modelVersion string = '2026-03-17'
+
+@description('Deployment name, i.e. what the application asks for at inference time. Defaults to the model name.')
+param modelDeploymentName string = ''
+
+@allowed(['GlobalStandard', 'Standard', 'DataZoneStandard'])
+param modelSkuName string = 'GlobalStandard'
+
+param modelCapacity int = 30
+
+@allowed(['OnceCurrentVersionExpired', 'OnceNewDefaultVersionAvailable', 'NoAutoUpgrade'])
+param modelVersionUpgradeOption string = 'OnceCurrentVersionExpired'
+
+var effectiveDeploymentName = empty(modelDeploymentName) ? modelName : modelDeploymentName
 
 // Role definition IDs. Foundry User was previously named Azure AI User —
 // the names changed, the IDs did not.
@@ -47,18 +73,22 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-previ
   }
 }
 
-resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = {
+// A model deployment is a PUT on a fixed name, so re-running with identical
+// inputs is a no-op. Version and upgrade policy are explicit — see above.
+resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-04-01-preview' = if (deployModel) {
   parent: account
-  name: modelName
+  name: effectiveDeploymentName
   sku: {
-    name: 'GlobalStandard'
+    name: modelSkuName
     capacity: modelCapacity
   }
   properties: {
     model: {
       format: 'OpenAI'
       name: modelName
+      version: modelVersion
     }
+    versionUpgradeOption: modelVersionUpgradeOption
   }
 }
 
@@ -100,3 +130,4 @@ output projectName string = project.name
 output projectEndpoint string = 'https://${account.name}.services.ai.azure.com/api/projects/${project.name}'
 output projectPrincipalId string = project.identity.principalId
 output accountPrincipalId string = account.identity.principalId
+output modelDeploymentName string = effectiveDeploymentName

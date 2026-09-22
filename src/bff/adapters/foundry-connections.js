@@ -75,6 +75,21 @@ export function connectionsConfigured(cfg = config) {
   return Boolean(projectArmId(cfg));
 }
 
+/**
+ * The value a tool definition carries in project_connection_id for a named
+ * connection. The full resource id by default (FOUNDRY_CONNECTION_REF=id) —
+ * the same form the azure_ai_search tool has always used here and the form
+ * the SDK's connection.id returns — or the bare name (=name). The first
+ * round of this fix wrote the bare name for MCP tools while the search tool
+ * carried the id; one of the two forms is what Foundry resolves, and the
+ * switch makes the other a one-line change rather than a rebuild.
+ */
+export function connectionRef(name, cfg = config) {
+  if (!name) return undefined;
+  if ((cfg.foundry.connectionRef || 'id') === 'name') return name;
+  return connectionArmId(name, cfg) || name;
+}
+
 async function armFetch(pathname, { method = 'GET', body, timeoutMs } = {}) {
   const url = `${ARM}${pathname}?api-version=${API_VERSION}`;
   const token = await getToken(ARM_SCOPE);
@@ -108,7 +123,20 @@ export async function getConnection(name) {
  * judged on the target.
  */
 export async function ensureMcpConnection({ apiId, target, key = config.apim.subscriptionKey, name }) {
-  const connName = name || connectionNameFor(apiId);
+  const originalName = name || connectionNameFor(apiId);
+  for (let generation = 0; generation < 5; generation++) {
+    const connName = generation ? connectionNameFor(`${originalName}:${generation}`, 'cx-r-') : originalName;
+    try {
+      return await ensureNamedMcpConnection({ apiId, target, key, connName });
+    } catch (err) {
+      if (!/failed 400:/.test(err.message) || !/secret.*deleted state.*purge protection/i.test(err.message)) throw err;
+      if (generation === 4) throw new Error(`Foundry connection names remain purge-protected after five attempts: ${originalName}`, { cause: err });
+      console.warn(`[foundry] ${connName} has a purge-protected deleted secret; trying a stable replacement name.`);
+    }
+  }
+}
+
+async function ensureNamedMcpConnection({ apiId, target, key, connName }) {
   const id = connectionArmId(connName);
   if (!id) throw new Error('Foundry project location is not configured (FOUNDRY_ACCOUNT_NAME / FOUNDRY_PROJECT_NAME / FOUNDRY_RESOURCE_GROUP).');
   if (!key) throw new Error('No API Management subscription key is configured, so the connection cannot carry one.');

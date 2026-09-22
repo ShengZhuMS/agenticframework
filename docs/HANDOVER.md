@@ -1,259 +1,81 @@
-# Cortex — Handover
+# Data Cortex - developer handover
 
-**For the agent picking this up. Read this first; it is the only document you need before writing code.**
+Read [DEPLOY.md](DEPLOY.md) before any Azure operation. This revision was prepared from the approved cached `MainFeature` baseline, commit `1998fc9`. The user subsequently approved live repairs, both independent themed apps and removal of unreferenced legacy demo Search indexes. The original web image and shared infrastructure were preserved; no full reset was executed.
 
----
+**Follow-up supersedes the original-image restriction:** the user approved deploying this integration iteration to all three web apps, necessary Azure resources, dedicated Microsoft 365 catalogue submission (not tenant-wide installation), and narrowly scoped Fabric AI policy updates. No full reset or licence purchase is approved.
 
-## 1. What this is
+## Repository map
 
-Cortex is a single front door to Microsoft Purview, Azure API Management and Microsoft Foundry, built for Defra. A user browses a marketplace of data products, skills and agents; builds an agent from parts they are allowed to use; tests it; and publishes it back as an MCP server so the next person can build on it.
-
-**The pitch, in one line:** every agent anyone builds becomes a part everyone else can build with.
-
-**Everything is live.** No demo mode, no seeded data, no mock adapters. Every screen reads the real APIs. Tests stub at the HTTP boundary instead.
-
----
-
-## 2. State of play
-
-| Area | State |
+| Path | Responsibility |
 |---|---|
-| Marketplace, entry standard, map | Working |
-| Build an agent → gates → test → publish → reappears | Working, end to end |
-| Ask, with provenance | **Live against Foundry** since 3 Sep — the `cortex-ask` agent writes the answer from the entries the asker can reach; the register-only text it used to show (which said "demo mode is on") is now only the fallback when the model cannot be reached |
-| Requests lifecycle | Working |
-| Share your data | Working |
-| Key Vault configuration | Working (direct mode in the sandbox — see DEPLOY.md §5) |
-| Entra sign-in, groups claim, group mapping | **Scripted** — `Set-CortexAuth.ps1`, run by the deploy script |
-| Purview roles for the Cortex identity | **Scripted** — bootstrap grants them through the Unified Catalog Policies API. This was the cause of "Purview UNAVAILABLE — 403" |
-| **Verified against real Azure** | **Partly — see §8** |
+| `src\bff\server.js` | HTTP routes, auth context and form dispatch |
+| `src\bff\index\store.js` | Live merged catalogue and persisted agent overlays |
+| `src\bff\adapters\` | Purview, APIM, Foundry, red team, storage/search and token boundaries |
+| `src\bff\services\` | Visibility, assurance, build/publish, chat/requests, workflows and assessments |
+| `src\bff\state\store.js` | Blob/file/memory persistence; one writer |
+| `src\web\` | Server-rendered views, themes and styles |
+| `bootstrap\` | The single neutral demo pack |
+| `scripts\sample-data.js` | Deterministic synthetic CSVs and dictionaries derived from the pack |
+| `scripts\reset-content.js` | Reviewable/resumable scoped content reset |
+| `scripts\Deploy-CortexVariants.ps1` | Additional themed apps without changing original app deployment tags |
+| `infra\` and `azure.yaml` | Base infrastructure and azd services |
+| `test\` | Node tests, Azure HTTP stubs and local HTTP smoke tests |
 
-214 unit tests pass against HTTP stubs shaped like real Azure responses, including a smoke test that boots the real server and opens every page.
+## Integration facts to preserve
 
----
+- Foundry agent CRUD uses project `/agents?api-version=v1`; responses use `/openai/v1/responses`. Agents have names and versions.
+- Native agent red teaming follows the separate Evals/taxonomy preview routes documented in DEPLOY.md. Do not substitute model-only `redTeams` scans and call them agent assurance.
+- APIM MCP management uses `2025-09-01-preview`, with `type: mcp` and a non-empty inline `mcpTools` array in the same PUT. Operation IDs are full ARM IDs. Wait for imported operations.
+- The MCP endpoint is gateway/path/mcp, not an MCP API's often-null `serviceUrl`.
+- Foundry MCP tools need per-target project connections carrying the APIM subscription key. A raw model tool header is not the replacement.
+- Purview Unified Catalog uses the configured global endpoint and preview version; Data Map uses the account endpoint. Their role models are distinct from Azure RBAC.
+- Purview product PUT is a full replacement. Preserve fields and owners. Managed attributes are arrays. Query published, draft and expired products and paginate.
+- Product listing failure must stop bootstrap creation: treating every product as new risks duplicates.
+- Windows Azure CLI is `az.cmd`. The token helper's validated shell invocation handles Node's Windows spawn restriction. Preserve its allowlist.
+- No outbound call should be unbounded. Preserve timeouts, errors, provenance and partial-service notices.
 
-## 3. The two pieces of custom glue
+## Behavior added in this revision
 
-This is why Cortex exists. Microsoft ships neither.
+Live domains no longer need obsolete seed coordinates to render. Ordered workflows contain two to five steps and stop on failed/empty/oversized handoffs, keeping step evidence. New agent records store `builtById` for assessment authorization; legacy assessment access uses `cortex-redteam`.
 
-**Glue 1 — `src/purview-mcp/server.js`.** There is no official Purview MCP server, and no Purview knowledge source or tool inside Foundry agents. Purview relates to Foundry only as governance *over* agents (DSPM, DLP, audit), never as a source *for* them. So a Foundry agent cannot look up a data product. This exposes the catalogue as MCP tools. **Catalogue metadata only, never the underlying data** — adding a `read_rows` tool would break the access-control model and should be refused.
+Native assessment records preserve evaluation/taxonomy/run IDs and the pinned agent target. **Test and publish** automatically enables generated scenarios, submits the native scan, monitors its durable queue and publishes only after complete passing evidence. Published invocation pins the tested version. Standalone assessments still offer reviewer confirmation. Ambiguous submission does not silently retry; inspect Foundry with the recorded evaluation ID. Native result counts may omit `errored`; total/sample/grader completeness still fails closed.
 
-This runs as its own container app, `cortex-purview-mcp`, built from `Dockerfile.mcp` and declared as the `purview-mcp` service in `azure.yaml`. It was not always: the app existed and the Bicep tagged it, but `azure.yaml` declared only `web`, so azd never deployed to it and it served the `mcr` quickstart placeholder permanently. If you add a third app, declare it in `azure.yaml` at the same time or you will repeat this.
+The legacy unused `seed\` pack was removed. Demo data is synthetic, not a runtime service fallback. Bootstrap skills now have a real bounded storage-read shim rather than a published URL with no handler.
 
-**Glue 2 — `src/bff/services/publish.js`.** There is no documented way to expose a Foundry agent as an MCP server. Foundry's own Control Plane registration produces an HTTP or A2A API in APIM, not MCP. So Cortex: generates an OpenAPI document for the agent → imports it into APIM as a REST API → creates an MCP server over it (`properties.type: 'mcp'`) → adds a tool → writes the endpoint back to the register. Only the ~100-line shim in `server.js` (`/shim/agents/:id/invoke`) is bespoke; the rest is documented APIM management API.
+## Conventions and limits
 
----
+Use Node built-ins at runtime, existing tests and `esc()` for untrusted HTML. Preserve server-side attachment validation, identity checks, and the distinction between visibility and underlying access. All state goes through `collection()`; use one replica per container.
 
-## 4. Repository map
+GraphQL and the official MCP client SDK are now locked runtime dependencies; Docker installs them with `npm ci`. Browser chat uses one small progressive-enhancement script; About remains server-rendered without client script. Source APIs use approved connector identities, never arbitrary user-provided credential endpoints. Keep the explicit opt-in for non-GET API operations.
 
-```
-infra/                Bicep. Reuses existing Azure resources; creates only what is absent.
-  main.bicep          Subscription scope. Every resource name and RG is a parameter.
-  modules/*-existing  Grant access to a resource you already own. Create nothing.
-scripts/
-  Deploy-Cortex.ps1     Probes what exists, sets create* flags, deploys, configures sign-in,
-                        grants Purview access, bootstraps, verifies. 12 steps, all re-runnable.
-  Set-CortexAuth.ps1    Entra app registration + groups claim + Container Apps auth + group
-                        mapping + default group. Idempotent.
-  Add-CortexUser.ps1    Give a person access: B2B guest invitation (Graph /invitations) with
-                        Cortex as the landing page, plus group membership. Idempotent.
-  Preprovision-Check.ps1 azd hook. Guards a bare `azd up` against the two known provision failures.
-  Set-CortexEnv.ps1     Dot-source to load config into a session, for running bootstrap by hand.
-  Start-Local.ps1       Run on your machine against real Azure.
-  Test-Cortex.ps1       Health check a deployment, including the MCP server.
-  bootstrap.js          Grants the Cortex identity its Purview roles, then writes the Defra
-                        content into real Purview + APIM. Idempotent.
-                        --only=roles|purview|apim|connections|data|link|search
-  bootstrap-data.js     The round-4 sections: Foundry connections per MCP server; sample files →
-                        storage → Data Map scan → assets attached to products; AI Search indexes.
-  sample-data.js        Deterministic synthetic CSV + data dictionary per data product. --list, --out.
-  purview-access.js     The Unified Catalog Policies API mutation, as pure functions + grants.
-bootstrap/            Domains, data products, skills. INPUT to the script, not runtime data.
-Dockerfile            cortex-web.
-Dockerfile.mcp        cortex-purview-mcp. Same tree, different entry point.
-src/bff/
-  server.js           Zero-dependency HTTP server. All routing.
-  config.js           Shape + defaults. hydrateConfig() overlays Key Vault at startup.
-  adapters/           purview, apim, foundry, keyvault, token — plus, round 4:
-    foundry-connections.js  Project connections (ARM): one per MCP server carrying the APIM key;
-                            one keyless connection to AI Search. The 401 fix.
-    search.js               Azure AI Search: index/data source/indexer per product, CSV parsing.
-    datamap.js              Purview Data Map: collection roles, sources, scans, asset lookup.
-    storage.js              Blob REST with an Entra token. Uploads and header reads.
-  services/
-    visibility.js     THE governance engine. Read this before touching anything.
-    identity.js       Entra claims → user. Groups are everything.
-    assurance.js      Seven gates, computed from the agent definition.
-    agents.js         Build + validate + rebuild. Server-side refusal lives here. Attaches
-                      per-tool connections and azure_ai_search tools.
-    grounding.js      Data product → Data Map assets → AI Search index. buildIndex().
-    chat.js           Multi-turn chat with an agent; policy check on every turn.
-    automations.js    Propose-only recurring runs; the scheduler.
-    explain.js        Raw back-end failures → plain-language heading, message, fix.
-    publish.js        Glue 2, now also creating the MCP server's Foundry connection.
-    ask.js            Question answering + provenance.
-    requests.js       Request lifecycle.
-  state/store.js      JSON collections on the mounted share (or memory). All persistence.
-  index/store.js      The Cortex Index — merged register over all three back ends; persisted
-                      agent records are merged back on refresh.
-src/web/              Server-rendered GOV.UK pages. No client JS at all.
-src/purview-mcp/      Glue 1.
-test/
-  fixtures.js         HTTP-level Azure stubs. Start here to write a test.
-  token.test.js       How the Azure CLI is invoked. Both Windows spawn traps, pinned.
-  bootstrap.test.js   The idempotency rules. A mistake here duplicates a real catalogue.
-```
+Themes change presentation only. Variant deployment reuses source configuration and identity, isolates state and appends Entra redirects. It deliberately avoids azd service tags so the base deployment cannot accidentally target a variant. Its source must use direct configuration.
 
----
+Reset is never part of normal deployment. Inspect every inventory item; use exact reviewed IDs for orphans whose ownership cannot be established. Do not delete shared platform resources, users, roles or customer content as a cleanup shortcut.
 
-## 5. The governance model — do not break this
+Known production gaps: live permission revalidation for scheduled runs, durable multi-writer state, stronger legacy machine-route authentication, external-tool authorization, assessment retention, and fuller operational controls. The user-facing About page states these boundaries.
 
-**Entra group membership decides everything.** There are no personas and no anonymous access. Clearance and licence entitlement are *derived* from groups so they live in Entra, where they can be governed and revoked.
+## Release procedure
 
-Three rules the code enforces, each with tests:
+Run relevant Node tests and the offline bootstrap dry-run. Review PowerShell syntax and a mocked deployment run before requesting Azure approval. In Azure, verify latest-revision health, authentication, blob persistence, both themes, sample skill invocation and the complete Foundry taxonomy/run/results sequence. Stubbed tests cannot prove service availability or RBAC propagation.
 
-1. **An agent can never reach further than the person who built it.** The greyed-out checkbox in the UI is a courtesy. The control is `validateBuild()` re-checking every attachment server-side on submit. Never remove that.
+### Live release status and remaining blocker
 
-2. **`visibilityFor()` and `canReachUnderlying()` are different questions.** `visibilityFor` returns the *viewer's* state — and `Answerable by a person` is returned for **everyone**, because that data is never released to anyone. `canReachUnderlying` asks whether someone genuinely holds it. Using the first where you need the second makes every requester their own holder. That bug existed and is now regression-tested.
+Both requested apps are deployed with unique state containers and Entra sign-in. The protected-secret connection recovered without purging; fourteen neutral Search indexes hold rows. Purview scanning completed and all fourteen sample files were registered and attached to their products. The approved twelve-index legacy migration preserved products/files/agents and unknown resources; some retained old datasets can still contain historical rows.
 
-3. **Requests draft inside the holder's permissions, never the requester's.** `draft()` takes the holder as the acting identity. Nothing reaches a requester without a person calling `release()`.
+The deployed variants and bootstrap job use `prdcoreamlacr001.azurecr.io/cortex/web-cortex:release-20260921-r3`, digest `sha256:6fc1829b0017b9435b65b0629472357ea177475f04ce33737347261259cea51b`. Preserve a unique tag for each future release. The temporary no-tools acceptance agent, taxonomy and failed evaluation were removed after diagnosis; unrelated Foundry agents were untouched.
 
----
+Native evaluation and taxonomy creation work, including activation of the 28 generated prohibited-action scenarios. Two native run submissions failed inside Foundry with an ACA-session `429 Too Many Requests` before generating results. This is the remaining end-to-end publication blocker, not evidence of a passed assessment. Do not bypass the gate. Check hosted evaluation capacity/service availability with Azure support. No customer-managed session pool was found in the Foundry resource group.
 
-## 6. Verified API facts
+Reset still requires a fresh target-environment plan and approval. The integration follow-up updates the original web app too, as explicitly approved; all three apps and the bootstrap job receive the same release image.
 
-These cost real time to establish. They were correct in August 2026 and several contradict older samples.
+### Integration follow-up
 
-### Foundry
-- Endpoint `https://<account>.services.ai.azure.com/api/projects/<project>`
-- `api-version=v1` — a literal string, not a date
-- Token scope `https://ai.azure.com/.default`
-- **Threads/messages/runs are gone.** The model is **agents + conversations + responses** (an OpenAI Responses API superset)
-- Agents are identified by **name + version**, not a GUID
-- Agent CRUD at `{ENDPOINT}/agents?api-version=v1`; conversations and responses at `{ENDPOINT}/openai/v1/...` with **no** api-version
-- MCP tool is GA: `{ type: 'mcp', server_label, server_url, require_approval, allowed_tools, project_connection_id }`
-- **Roles renamed.** Use **Foundry User**, **Foundry Project Manager**, **Foundry Agent Consumer**. **`Azure AI Developer` will not work** — it targets ML workspaces and hubs. Do not assign roles beginning `Cognitive Services`.
-- 🔴 **A model deployment must name its version.** Omitting it resolves the account's current default, which moves. See §7.
+Current deployed image on all three apps and the bootstrap job: `prdcoreamlacr001.azurecr.io/cortex/web-cortex:integrations-20260921-r4`, digest `sha256:a40a32e7a62af3ae908996d4f266e46cb9e3f2d4871d33aee6699d7c6fa22229`. All app revisions are ready, Entra protection is retained and the three original blob-state containers remain distinct. GraphQL and the catalogue-health MCP tool continue working after the final rollout.
 
-### API Management
-- MCP server support is **GA**, but the management **api-version is `2025-09-01-preview`** — pin it
-- **MCP servers are not a distinct resource type.** They are APIs with `properties.type === 'mcp'`. List all APIs and filter on that field
-- 🔴 **The tools are INLINE. One PUT, carrying BOTH `type: 'mcp'` AND a non-empty `mcpTools: [{ name, description, operationId }]`.** Without `mcpTools`, ARM silently drops the type: the API is created as a plain HTTP API, a later GET shows `type: null`, and anything treating it as an MCP server answers **500 InternalServerError**. The child resource `…/apis/{id}/tools/{tool}` that the TypeSpec describes **does not work via PUT** in this api-version. The earlier note here that "tools are a child resource" was wrong, and it cost two rounds of retry tuning for what was never a race
-- `mcpTools[].operationId` is the **full ARM resource id** of the backing operation, with **no `;rev=N` suffix**. The operation must exist before the PUT (an OpenAPI import is async — wait for it)
-- A type-null leftover cannot be converted in place: delete it (`If-Match: *`) and recreate. `apim.js` and `bootstrap.js` do this
-- The MCP endpoint is `https://{gateway}/{path}/mcp` — APIM adds `/mcp`. `serviceUrl` is **null** on an MCP API; never read the endpoint from it
-- Creation is async — poll `Azure-AsyncOperation`. Deletes need `If-Match: *` or return 412
-- Not supported in APIM **workspaces**. **Consumption tier not supported**
-- Analytics: `GET /reports/byApi` on api-version `2024-05-01` (stable, not the preview one)
+The follow-up adds artefact publishing, popup chat, per-artefact declared lineage, current official header marks and a larger landing-zone foundation diagram. `searchEntries()` fixes a pre-existing name collision with the Search adapter that broke `/api/entries`. A live MCP call also showed APIM projecting a single question into a raw request body; the protected source-agent shim handles both that form and normal JSON.
 
-### Purview
-- Endpoint **`https://api.purview-service.microsoft.com`** — *not* `https://{account}.purview.azure.com`, which is legacy
-- `api-version=2026-03-20-preview`. **There is no GA version.**
-- Scope `https://purview.azure.net/.default` — one token also covers Data Map
-- `businessdomains` is lowercase; `dataProducts` is camelCase
-- **Publishing is a status transition, not an operation.** No publish verb. `PUT` the whole object with `status: 'PUBLISHED'`. PUT is a **full replace** — read-modify-write. Casing differs between planes: entity reads `PUBLISHED`, query filters use `Published`
-- A data product needs at least one **owner** (`contacts.owner[].id` = an Entra object id) before it will publish. Bootstrap names the signed-in person
-- The `Policies` group is **RBAC role assignment**, not data access policy — and it is how roles are automated. `GET /datagovernance/catalog/policies` returns one policy per scope (`dgpolicy_datagovernanceapp_<id>` for the catalogue, `dgpolicy_businessdomain_<id>` per domain); each role is an `attributeRules[]` entry `purviewdatagovernancerole_builtin_<role>:<scope>` whose `principal.microsoft.id` condition lists the object ids. `PUT` the whole policy back with the same `version`. **Service principals and managed identities are accepted** — the older note here saying roles could not be automated was wrong
-- **`403 {"code":"Unauthorized","message":"Not authorized to access account"}`** from any Unified Catalog call means the caller holds no Unified Catalog role. Not an Azure RBAC problem, not a network problem
-- Roles the app needs: catalog-level **Data Governance Administrator** + **Global Catalog Reader**; **Governance Domain Owner** on each Cortex domain. Data Map (collection) roles only matter once data products carry real assets
-- 🔴 **No access-request API of any kind** — not submit, approve, read or configure. Cortex owns that workflow, deliberately
-- Rate limits per 20s: List 100, Query 800, Get 1500. This is *why* the Cortex Index exists, and why `purview.js` and the MCP server cache health and listings
+Dedicated source resources: Fabric application `0dc99e98-cb18-4427-a1ca-d2c241b51ec8`; synthetic workspace `0ca1012b-0364-4993-87bd-8a16ae842ad2`; connector policy group `71c6ac1c-bb0d-4fa8-bb25-946a4e9d9b67`; existing app identity onboarded to the sandbox Databricks workspace. Bot Service Contributor is scoped to the Foundry resource group. Secrets are in Container Apps, not source control.
 
----
+Live acceptance artefacts are clearly named and intentionally retained in the Microsoft app's state: a synthetic GraphQL API, a catalogue-health MCP tool and a draft Databricks wrapper. The corrected wrapper chat returned SYNTHETIC through Foundry, APIM and Databricks, but the wrapper has not passed the native assessment gate. The authorized operator created/published synthetic Fabric agent `7e478267-9ccf-4468-b05d-ec4ba9382c8b`, and its MCP query worked with operator authentication. After a separate explicit approval, cross-region processing was added only for the dedicated Fabric connector group, preserving existing groups; its last model call still returned 403.
 
-## 7. Traps that will cost you a day
-
-| Trap | What happens | Fix |
-|---|---|---|
-| **Unpinned model version** | `ServiceModelDeprecating` on a template that has not changed. ARM resolved the account default, which moved onto a deprecated build | Name `properties.model.version` explicitly, always. Set `versionUpgradeOption: 'OnceCurrentVersionExpired'`. `Deploy-Cortex.ps1` validates it before provisioning |
-| **Hardcoded image in the Container App** | Every `azd provision` rolls the app back to the placeholder before deploy pushes the real one, and any app azd does not deploy stays on it forever | Take the image as a parameter fed from `SERVICE_<NAME>_IMAGE_NAME`. Never hardcode anything but the first-run placeholder |
-| **Container App declared in Bicep but not in `azure.yaml`** | The app exists, answers on its URL, and serves the placeholder. Nothing errors | Every `azd-service-name` tag needs a matching service in `azure.yaml` |
-| **Hardcoded `azd-env-name` tag** | azd locates its resources by that tag. A second environment claims the first one's resources | Tag from `environmentName`, never a literal |
-| **Missing groups claim** | Everyone appears to be in no groups; Marketplace looks empty and broken | Add the groups claim to the app registration. `/profile` diagnoses it |
-| **Cortex identity with no Purview role** | Help page: Purview UNAVAILABLE, `403 Not authorized to access account`. APIM and Foundry fine | `node scripts/bootstrap.js --only=roles` (after `. .\scripts\Set-CortexEnv.ps1`). Deploy-Cortex.ps1 does it |
-| **Your own account not a Data Governance Administrator** | Bootstrap gets 403 from Purview | Purview portal → Settings → Solution settings → Unified Catalog → Roles and permissions |
-| **Source masked in transit** | A file that passed through a chat or transfer tool has a run of asterisks where a credential-shaped value was — including the authorization header template literal (scheme word plus token). It parses; every Azure call then fails | Deploy-Cortex.ps1 step 1 refuses to deploy it. The adapters compose the header with `bearer(token)` so the pattern never appears in source |
-| **More than one web replica** | A user publishes an agent, the next page load hits another replica where it does not exist | `webMaxReplicas` is 1 until there is a store. Do not raise it |
-| **A model in the catalogue that is not deployed** | Passes validation, fails at agent creation | `listModels()` offers only `FOUNDRY_MODEL` and `FOUNDRY_MODELS` |
-| **MCP server PUT without `mcpTools`** | Type silently dropped; every later call about it answers 500 | One PUT with type AND tools inline, then verify the GET shows `type: mcp`. Never `/tools/{id}` |
-| **`Number(headers.get('retry-after'))`** | `Number(null)` is 0, so an absent header meant a zero-second wait — three "retries" in one second | `retryDelayMs()` honours only a present numeric header, else backs off with a floor |
-| **A query string in a URL passed to `az rest` on Windows** | `'$select' is not recognized as an internal or external command` — `az` is a .cmd, its arguments pass through cmd.exe, an unquoted `&` splits the command and an unquoted `)` ends az.cmd's own IF block | Never put `?a=b&c=d` in `--url`. Pass each parameter with `--uri-parameters 'a=b' 'c=d'` and let the CLI encode. Do **not** encode `&` as `%26` — that is data, not a separator, and Graph reads it as part of the previous value. Avoid `startswith(...)`; filter on an exact value instead |
-| **Guest stopped by MFA with no set-up offered** | The tenant's baseline Conditional Access requires MFA of "Microsoft partners and vendors" (external users) AND blocks their security-info registration. Deadlock by design: guests bring MFA from home | Inbound cross-tenant access trust: `isMfaAccepted = true` (`Add-CortexUser.ps1 -TrustHomeMfa`). Never weaken the two policies — MCAP automation may re-apply them anyway. Testers whose home tenant does no MFA get member accounts |
-| **Stale CLI token after a directory role change** | `TokenCreatedWithOutdatedPolicies … InteractionRequired`, reads like a missing permission; on Windows a plain `az login` hands back the same token via the broker | `az account clear` → `az login --use-device-code`. Both scripts do this automatically |
-| **Key Vault on access policies** | RBAC assignment silently ignored | `--enable-rbac-authorization true`. Deploy script warns |
-| **Two azd environments, one Key Vault** | The last one provisioned owns every endpoint in the vault; the other app talks to the wrong container | `cortex-environment-name` records the owner and the deploy script warns. Give the second environment its own vault |
-| **Key Vault with public access disabled** | The vault seeds fine and is then unreadable at runtime, because KV firewall rules are data-plane only and Container Apps is not a trusted service. App starts, falls back to environment, marketplace is empty — looks like an app fault | `-ConfigSource direct` passes configuration to the apps instead. Only a private endpoint restores the vault path |
-| **Running bootstrap without loading config** | `Missing required configuration` listing all 8 required secrets. bootstrap.js runs on your machine, not in the container, so it has neither the deployed env vars nor a readable vault | `. .\scripts\Set-CortexEnv.ps1` first — dot-sourced. `Deploy-Cortex.ps1` does it in-process |
-| **`spawn az ENOENT` on Windows** | Any local run that needs a token dies instantly. The CLI is installed and works from the same prompt | `execFile` does not apply PATHEXT, and on Windows the CLI is `az.cmd` — there is no `az.exe`. Name the `.cmd` explicitly |
-| **`spawn EINVAL` after fixing the above** | Node found `az.cmd` and refused to run it | Since CVE-2024-27980 (Node 18.20.2 / 20.12.2+) a `.bat`/`.cmd` cannot be spawned without `shell: true`. There is no alternative — so `token.js` uses a shell on Windows only, allowlists the one variable argument first, and passes a single command string (an args array with `shell: true` is DEP0190) |
-| **`fetch()` has no timeout** | A hanging back end blocks startup forever; readiness probe never passes | Bounded in `keyvault.js`. Apply the same pattern to any new outbound call |
-| **Readiness probe against the placeholder** | First provision hangs, then fails for a reason unrelated to the template | The probe and target port are only applied once a real image is present |
-| **APIM and Purview in different regions** | Yours are North Europe and East US | Works fine; adds latency. Do not "fix" by moving anything |
-
----
-
-## 8. What is verified, and what to do first
-
-**One live provision has now run.** It reached Azure, created the resource group, the Container Apps environment and both container apps, and failed on the model deployment — which is the trap at the top of §7. The infrastructure path is real; the model, image and idempotency fixes in this repo came out of that run.
-
-**Verified against Azure (3 Sep, live runs):** provisioning end to end; the Purview grant through the Policies API — Data Governance Administrator + Global Catalog Reader at catalogue level, Governance Domain Owner on all nine domains; **all fourteen data products created and published** once they carried an owner; the nine domains adopted and updated idempotently; Entra sign-in through `Set-CortexAuth.ps1` after a device-code re-login.
-
-**Seen against Azure and now fixed:** the deployed app's `403 Not authorized to access account` from Purview (§7); data products never created (managed-attribute shape, then the missing owner); five of six skills failing with 500 in API Management (the MCP request shape — see §6, not a race).
-
-**Still unverified — written against the verified shapes and stubs, not yet a live run:**
-- the inline-`mcpTools` MCP server creation for the five skills and for Publish (`apim.js`, `bootstrap.js`);
-- `ensureAgent` for `cortex-ask` and a `previous_response_id` follow-up;
-- `Set-CortexAuth.ps1 -MapMyGroups`.
-
-**Do these in order:**
-
-1. `npm test` — 214 green, no Azure.
-2. `.\scripts\Deploy-Cortex.ps1 -WhatIfResources` — confirms the resource mapping and the model. Changes nothing.
-3. `.\scripts\Deploy-Cortex.ps1` — the full run. Watch step 11: the **Purview access** step should report the two catalog roles granted and Governance Domain Owner on nine domains, then the products created (published, or as drafts with the reason).
-4. `.\scripts\Test-Cortex.ps1` — six green. If Purview alone is red straight after the deploy, wait a minute; the roles propagate.
-5. Sign in, open `/profile`, then Ask a question — the panel should say "Answered by the Foundry agent cortex-ask".
-
----
-
-## 8b. Round 4 (11 Sep) — what changed and what to verify first
-
-Delivered: per-tool Foundry project connections (the agent → APIM `401` fix) with server-side approval of MCP calls; a chat window per agent (`/agent/:id/chat`, all staff this phase); the data behind every data product — synthetic files, Data Map scan, assets attached, one AI Search index per product, `azure_ai_search` on agents built on them; Automate a task (propose-only); light persistence on an Azure Files share. 289 tests. Nothing in it has run against the tenant yet; in order of "most likely to need a nudge":
-
-1. **`PUT …/projects/…/connections/{name}` (api-version 2025-06-01)** with `category: RemoteTool, authType: CustomKeys` — if ARM rejects a property name, the error is printed by `--only=connections` and the fix is in `adapters/foundry-connections.js`. Then test an agent: the panel should show *Tools this answer used* instead of the 401.
-2. **The approval loop.** `mcp_approval_request` → `mcp_approval_response` with `previous_response_id`. If Foundry's item names differ, `adapters/foundry.js` `respond()` and `collectToolCalls()` are the two places.
-3. **Data Map registration as `AdlsGen2` / scan kind `AdlsGen2Msi`** and the collection metadata policy PUT. A `403` here means the role grant did not take — grant yourself by hand (DEPLOY §6) and re-run `--only=data`.
-4. **Asset lookup after the scan** by qualified name `https://<acct>.dfs.core.windows.net/products/<id>/<id>.csv`. If the Data Map named the file differently, `bootstrap-data.js linkAssets()` falls back to a keyword search under the folder; the warning names the file it looked for.
-5. **`azure_ai_search` on a prompt agent** — the tool shape is the documented one; if agent creation is refused, the message is on the Build page. The keyless connection needs the Foundry **account** identity to hold the two search roles (Bicep) and the account to *have* an identity (deploy script warns).
-6. **The Azure Files mount.** If `/api/health/state` says `memory` on the deployed app, check the `cortex-state` storage on the Container Apps environment and the volume on `cortex-web`.
-
-## 9. Next work, in priority order
-
-1. **A real store.** Persistence is a JSON file per collection on one share, written by one replica — right for hundreds of records and a demo, wrong for scale-out. Cosmos DB (or Table storage) behind `state/store.js`'s `collection()` interface is a contained change; nothing above it knows about files.
-2. **Purview access policies.** Cortex owns the request workflow; it does not yet call anything to actually *grant* access. Approval currently updates the register only.
-3. **Streaming for Ask and chat.** `LiveFoundry.stream()` exists and is unused; both UIs post and re-render (deliberately, to stay JavaScript-free).
-4. **Automations that deliver.** Runs are drafts in a history. Emailing the owner (Graph `Mail.Send` on the Cortex identity) and the write-enabled phase both need their own approval design.
-4b. **Chat policy.** `all-staff` is the phase rule; switch `CORTEX_CHAT_POLICY` to `visibility` when the Marketplace rules should govern chat too.
-4c. **Vector search.** The indexes are keyword-only (`simple`), so no embedding model is needed. Deploy `text-embedding-3-small`, add a vector field and integrated vectorisation to `search.js`, and set `SEARCH_QUERY_TYPE=vector_semantic_hybrid`.
-5. **Skill invocation shim.** `bootstrap.js` publishes skills pointing at `/shim/skills/:id`, which is not implemented. Either implement it or stop publishing those APIs.
-5b. **The shim trusts the gateway.** `/shim/*` and `/api/health*` are excluded from Easy Auth so API Management and the scripts can reach them; the shim does not verify that a call came through API Management. Add a shared header check (APIM policy sets it, the shim requires it) before this leaves the sandbox.
-6. **Data Map lineage.** Assets and their schema now come from the Data Map through `getAssets()`; lineage on the entry page still comes from managed attributes.
-7. **Get Key Vault back in the runtime path.** The sandbox vault has public network access disabled, so the apps run on direct configuration with three Container Apps secrets. That is weaker than a vault — the secrets are readable by anyone with Contributor on the app. Fixing it means a VNet-integrated Container Apps environment and a private endpoint, and the environment cannot be VNet-joined after creation, so it has to be rebuilt. `docs/DEPLOY.md` §5c has the order.
-
----
-
-## 10. Conventions
-
-- **Zero runtime dependencies.** Node built-ins only. `govuk-frontend` is a build-time dependency, vendored into `src/web/assets/vendor/` by `npm install`. Keep it that way — it is why cold start is fast, and cold start is the top demo risk.
-- **No client JavaScript.** Every page works with JS disabled. Two inline `onchange` handlers exist for convenience with `<noscript>` fallbacks.
-- **Never show a number without a source.** Usage, error rate and latency come from APIM analytics. Cost per use, carbon and "believed estate" coverage were removed rather than labelled illustrative. If you add a figure, wire it to something real or leave it out.
-- **Escape everything.** `esc()` in `layout.js` on every interpolation. XSS is tested.
-- **Comments explain *why*.** The code says what it does; comments should say why it is that way, especially where a shape is surprising or a rule is load-bearing.
-- **Business language in the UI.** No jargon, no product names in user-facing copy where a plain word will do.
-- **Infrastructure must survive a re-run.** Assume every template is applied many times. Anything that only works the first time is a bug, not a limitation.
-- **Users from other tenants are guests, never a second identity provider.** The app registration stays single-tenant; `Add-CortexUser.ps1` invites them in, and `identity.js` shows a guest by the address in their `preferred_username`/`email` claim rather than the synthetic `#EXT#` UPN. Making the app multi-tenant would put foreign group ids in the token, which nothing maps.
-- **State goes through `state/store.js`.** `collection(name, emptyShape)` and `save()`; nothing else touches the file system. Access collections lazily (a function call each time) so `configureState()` at startup can point them at the share.
-- **Propose-only is structural.** An automation has no field that could enable writing. If a later phase adds one, it belongs behind its own approval design, not a boolean.
-- **Configuration has two supported sources, and the app must not care which.** Key Vault when it is reachable, the environment otherwise. `SECRET_CATALOGUE` in `adapters/keyvault.js` is the contract between them: add a value there and to `containerapps.bicep`, or it will work in one mode and not the other.
-- **Never write a bearer header as one literal.** Use the `bearer(token)` helper each adapter defines. Source that travels through a chat or transfer tool comes back with credential-shaped text masked — including template literals — and the result parses and then fails every call. Deploy-Cortex.ps1 step 1 checks for it.
-- **Bound every outbound call.** `AbortSignal.timeout` on every `fetch`; the adapters have per-call and per-answer budgets in config. A hanging back end must degrade a page, not hang it.
-- **Cortex decides what the model may see; the model decides what to say.** Ask passes catalogue metadata for entries the asker can reach and nothing else. Keep that boundary — it is the governance story.
+The resumed work created/published Copilot Studio source `cortex_SyntheticCatalogueGuide` (`a6517ae7-32ad-4d5f-8c9a-6580a86d3b13`) in the existing default environment and provisioned dedicated connector app `5fa30651-a803-452f-888b-be77641f8880`. Its approved API application permission and secret are configured, but the environment returns `App-only S2S access is not enabled for this environment`. Integrated source authentication is preserved; making it anonymous is not a fix. A fresh native red-team run also reproduced ACA-session 429. See DEPLOY.md section 11 for the current source pack, setup commands, preflight protections and remaining service-enablement boundaries.

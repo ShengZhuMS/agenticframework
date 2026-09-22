@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VIS } from '../bff/services/visibility.js';
+import { themeFor } from './theme.js';
 
 /**
  * Prefer the official GOV.UK Design System assets when `npm install` has
@@ -25,7 +26,7 @@ export const NAV = [
   ['/marketplace', 'Marketplace', 'marketplace'],
   ['/ask', 'Ask a question', 'ask'],
   ['/build', 'Build an agent', 'build'],
-  ['/share', 'Share your data', 'share'],
+  ['/share', 'Share your artefact', 'share'],
   ['/requests', 'Requests', 'requests'],
   ['/automate', 'Automate a task', 'automate']
 ];
@@ -87,7 +88,10 @@ function nav(active) {
             id === active ? ' aria-current="page"' : ''
           }>${esc(label)}</a></li>`
       ).join('')}
-      <li class="cortex-nav__item cortex-nav__item--right"><a href="/help"${
+      <li class="cortex-nav__item cortex-nav__item--right"><a href="/about"${
+        active === 'about' ? ' aria-current="page"' : ''
+      }>About</a></li>
+      <li class="cortex-nav__item"><a href="/help"${
         active === 'help' ? ' aria-current="page"' : ''
       }>Help</a></li>
     </ul>
@@ -106,6 +110,7 @@ export function visMark(state, { withLabel = true } = {}) {
 }
 
 export function layout(ctx, content) {
+  const theme = themeFor(ctx.theme);
   const title = ctx.title ? `${ctx.title} — Cortex` : 'Cortex';
   return `<!DOCTYPE html>
 <html lang="en" class="govuk-template">
@@ -113,30 +118,32 @@ export function layout(ctx, content) {
 <meta charset="utf-8">
 <title>${esc(title)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0b0c0c">
-<meta name="description" content="Cortex — one place to find what Defra already has, build something with it, and share what you build.">
+<meta name="theme-color" content="${theme.colour}">
+<meta name="description" content="Data Cortex — a customer-neutral accelerator for governed discovery, reusable APIs and Microsoft Foundry agents.">
 ${
   GOVUK_VENDORED
     ? '<link rel="stylesheet" href="/assets/vendor/govuk-frontend.min.css">'
     : ''
 }<link rel="stylesheet" href="/assets/cortex.css">
+${content.includes('data-chat-window') || ctx.compact ? '<script src="/assets/chat-window.js" defer></script>' : ''}
 </head>
-<body class="govuk-template__body${GOVUK_VENDORED ? ' js-enabled govuk-frontend-supported' : ''}">
+<body class="govuk-template__body cortex-theme-${theme.id}${GOVUK_VENDORED ? ' js-enabled govuk-frontend-supported' : ''}">
 <a href="#main-content" class="govuk-skip-link">Skip to main content</a>
 
 <header class="govuk-header" role="banner">
   <div class="govuk-width-container govuk-header__container">
     <div class="govuk-header__logo">
       <a href="/" class="govuk-header__link--homepage">
-        ${CROWN}
-        <span>GOV.UK</span>
+        ${theme.id === 'defra' ? CROWN : ''}
+        ${theme.id === 'microsoft' ? '<img class="cx-microsoft-logo" src="/assets/microsoft-logo.png" alt="Microsoft" width="108" height="23">' :
+          theme.id === 'novo' ? '<span class="cx-novo-logo" role="img" aria-label="Novo Nordisk">&#xe956;</span>' : '<span>GOV.UK</span>'}
       </a>
     </div>
     <div class="govuk-header__product">
-      <b>Cortex</b>
-      <span>Data Driven Defra</span>
+      <b>Data Cortex</b>
+      <span>${esc(theme.strapline)}</span>
     </div>
-    <div class="govuk-header__org">Department for Environment, Food &amp; Rural Affairs</div>
+    <div class="govuk-header__org">${esc(theme.organisation)}</div>
     ${
       ctx.compact
         ? ''
@@ -156,7 +163,7 @@ ${identityBar(ctx)}
   <div class="govuk-phase-banner">
     <p class="govuk-phase-banner__content">
       <strong class="govuk-tag">Alpha</strong>
-      <span>This is a prototype. Usage, cost and carbon figures are illustrative.</span>
+      <span>Prototype accelerator. Demo content is synthetic; connected services and Azure usage are real.</span>
     </p>
   </div>
 
@@ -183,12 +190,14 @@ ${identityBar(ctx)}
     <div class="govuk-footer__meta">
       <div>
         <ul class="govuk-footer__inline-list">
+          <li><a class="govuk-link" href="/about">About Cortex</a></li>
           <li><a class="govuk-link" href="/help">Help</a></li>
           <li><a class="govuk-link" href="/help/accessibility">Accessibility statement</a></li>
           <li><a class="govuk-link" href="/help/privacy">Privacy</a></li>
         </ul>
         <p class="govuk-body-s govuk-!-margin-bottom-0">
-          Cortex connects to data where it lives. Nothing is copied and nothing moves.
+          Cortex connects governed services. Metadata, drafts and assessment reports are stored; sample files are indexed for agent grounding.
+          ${theme.id !== 'defra' ? 'Customer demo styling only; not an official customer service or endorsement.' : ''}
         </p>
       </div>
       <div>

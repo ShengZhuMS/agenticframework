@@ -61,7 +61,7 @@ function newRequestForm(ctx, { question, holders }) {
     </div>
     <input class="govuk-input" id="question" name="question" type="text"
            value="${attr(question || '')}"
-           placeholder="Average days sick per employee, by directorate">
+           placeholder="Summarise synthetic workforce capacity at the permitted aggregation level">
   </div>
   ${
     holders && holders.length
