@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="510" viewBox="0 0 1000 510" role="img" aria-labelledby="title description">
+  <title id="title">Cortex architecture at a glance</title>
+  <desc id="description">Read left to right: source data in Azure Storage is indexed and retrieved by Azure AI Search and Foundry IQ. Microsoft Foundry agents use the evidence to provide answers through Cortex on Azure Container Apps. Microsoft Purview provides catalogue and governance context. Existing APIs and agents provide reusable MCP tools through Azure API Management. Arrows represent data and results, not a network topology.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 10 5 0 10Z" fill="#59748c"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="510" rx="18" fill="#fff"/>
+  <g font-family="Segoe UI, Arial, sans-serif" fill="#17324d">
+    <text x="30" y="43" font-size="28" font-weight="700">Cortex: data to answers</text>
+
+    <rect x="30" y="68" width="940" height="65" rx="12" fill="#f3effb"/>
+    <g transform="translate(51 82)" stroke="#6842a6" stroke-width="2.5" stroke-linejoin="round">
+      <path d="M2 3c7-2 12 0 17 3 5-3 10-5 17-3v29c-7-2-12 0-17 3-5-3-10-5-17-3Z" fill="#fff"/>
+      <path d="M19 6v29" fill="none"/>
+    </g>
+    <text x="108" y="108" font-size="22" font-weight="700">Microsoft Purview</text>
+    <text x="369" y="108" font-size="20">Find data and understand its ownership</text>
+
+    <g stroke="#d6e3ed" stroke-width="1.5">
+      <rect x="30" y="175" width="205" height="202" rx="14" fill="#f2f8fe"/>
+      <rect x="275" y="175" width="205" height="202" rx="14" fill="#f2f8fe"/>
+      <rect x="520" y="175" width="205" height="202" rx="14" fill="#f6f2fc"/>
+      <rect x="765" y="175" width="205" height="202" rx="14" fill="#eff9f5"/>
+    </g>
+
+    <g transform="translate(103 191)" stroke="#0078d4" stroke-width="3">
+      <path d="M6 14v35c0 13 48 13 48 0V14" fill="#d9efff"/>
+      <ellipse cx="30" cy="14" rx="24" ry="9" fill="#fff"/>
+      <path d="M6 31c0 13 48 13 48 0" fill="none"/>
+    </g>
+    <g transform="translate(348 191)" stroke="#0078d4" stroke-width="3.5" stroke-linecap="round">
+      <circle cx="25" cy="26" r="20" fill="#d9efff"/>
+      <path d="m40 42 15 15M15 26h20M25 16v20" fill="none"/>
+    </g>
+    <g transform="translate(593 191)" stroke="#6842a6" stroke-width="3" stroke-linecap="round">
+      <rect x="5" y="15" width="50" height="39" rx="12" fill="#eee5ff"/>
+      <path d="M30 15V5M21 43h18" fill="none"/>
+      <circle cx="19" cy="31" r="3" fill="#6842a6"/><circle cx="41" cy="31" r="3" fill="#6842a6"/>
+      <circle cx="30" cy="5" r="3" fill="#6842a6"/>
+    </g>
+    <g transform="translate(838 191)" stroke="#08775b" stroke-width="3" stroke-linecap="round">
+      <rect x="2" y="8" width="56" height="43" rx="7" fill="#dff5ef"/>
+      <path d="M2 21h56M14 32h31M14 41h20" fill="none"/>
+    </g>
+    <g text-anchor="middle">
+      <text x="132" y="290" font-size="23" font-weight="700">Azure Storage</text>
+      <text x="132" y="317" font-size="18">ADLS Gen2 / Blob</text>
+      <text x="132" y="355" font-size="20">1. Store data</text>
+      <text x="377" y="290" font-size="23" font-weight="700">Azure AI Search</text>
+      <text x="377" y="317" font-size="18">Foundry IQ</text>
+      <text x="377" y="355" font-size="20">2. Retrieve facts</text>
+      <text x="622" y="290" font-size="22" font-weight="700">Microsoft Foundry</text>
+      <text x="622" y="317" font-size="18">AI agents + models</text>
+      <text x="622" y="355" font-size="20">3. Use evidence</text>
+      <text x="867" y="290" font-size="23" font-weight="700">Cortex</text>
+      <text x="867" y="317" font-size="18">Azure Container Apps</text>
+      <text x="867" y="355" font-size="20">4. Answer people</text>
+    </g>
+    <g stroke="#59748c" stroke-width="2.5" marker-end="url(#arrow)">
+      <path d="M242 269h25"/><path d="M487 269h25"/><path d="M732 269h25"/>
+    </g>
+
+    <rect x="30" y="416" width="695" height="63" rx="12" fill="#f2f6fa"/>
+    <g transform="translate(49 431)" stroke="#0078d4" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="m13 3-11 14 11 14M31 3l11 14-11 14M26 1 18 33"/>
+    </g>
+    <text x="108" y="454" font-size="21" font-weight="700">Azure API Management</text>
+    <text x="395" y="454" font-size="18">Existing APIs / agents as MCP tools</text>
+    <path d="M622 416v-30" stroke="#59748c" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <text x="765" y="442" font-size="16" fill="#425d73">Shared identity and security:</text>
+    <text x="765" y="465" font-size="17" font-weight="600">Microsoft Entra ID</text>
+    <text x="30" y="502" font-size="14" fill="#425d73">Illustrative icons. Arrows show data and results; detailed infrastructure and prerequisites are in the architecture guide.</text>
+  </g>
+</svg>

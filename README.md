@@ -20,72 +20,24 @@ The full original Novo About content is preserved. Theme changes do not create s
 
 ## Technical solution architecture
 
-Solid arrows show application/data paths. Dashed arrows show configuration, deployment, governance or conditional integrations. The diagram does **not** imply that all optional services or controls are enabled.
+![Simplified Cortex architecture: Azure Storage data flows through Azure AI Search and Foundry IQ to Microsoft Foundry agents, then to people through Cortex on Azure Container Apps. Microsoft Purview provides governance; API Management connects existing APIs and agents.](docs/images/cortex-architecture.svg)
 
-```mermaid
-flowchart TB
-  People["Users and demo presenter"] --> Entra["Microsoft Entra ID<br/>Container Apps authentication + group claims"]
+**The main flow:** store data -> retrieve facts -> use evidence -> answer people.
 
-  subgraph Runtime["Azure Container Apps environment: cae-cortex"]
-    Web["Cortex Node.js 20+ BFF + server-rendered UI<br/>cortex-web / cortex-web-microsoft / cortex-web-novo<br/>Ask, discover, build, share, requests, chat, workflows"]
-    CatalogMCP["cortex-purview-mcp<br/>Catalogue metadata tools"]
-    Job["Manual bootstrap job / approved operator scripts<br/>Not an automatic reset or deployment trigger"]
-  end
-  Entra --> Web
-  Web --> Foundry["Microsoft Foundry<br/>gpt-5.4-mini deployment<br/>Versioned agents + Responses API"]
-  Web --> UC["Microsoft Purview Unified Catalog<br/>Domains, products, ownership, access metadata"]
-  Web --> Map["Microsoft Purview Data Map<br/>Scanned assets, schemas, classifications"]
-  Foundry --> CatalogMCP --> UC
+Purview provides catalogue/governance context; API Management supplies reusable tools. [View full-size diagram](docs/images/cortex-architecture.svg). Icons are illustrative, not official product logos.
 
-  subgraph Grounding["Physical data to Foundry IQ"]
-    Data["Azure Storage / ADLS Gen2<br/>stcortexdatazha7pf / products<br/>14 synthetic CSV datasets"]
-    Indexer["Azure AI Search<br/>Data sources + CSV indexers"]
-    Index["14 Search indexes<br/>15,050 verified rows"]
-    IQ["Foundry IQ on Azure AI Search<br/>Knowledge sources + knowledge bases<br/>MCP retrieval; configured query planning"]
-    Data --> Indexer --> Index --> IQ
-  end
-  Map -. "Scans and links physical assets" .-> Data
-  UC -. "Records asset, index and knowledge connection" .-> IQ
-  Foundry -->|"Project-managed-identity MCP connection"| IQ
-  IQ -->|"Search identity invokes existing planning model"| Foundry
-  Job -. "Uploads, scans, indexes and links" .-> Grounding
+<details>
+<summary>Text alternative and implementation boundaries</summary>
 
-  Web --> APIM["Azure API Management<br/>REST / GraphQL APIs + inline MCP tools<br/>Gateway subscriptions and usage"]
-  Foundry -->|"Per-target authenticated tool connection"| APIM
-  APIM -->|"Cortex invocation shims"| Web
-  Web --> Connectors["Approved connector adapters<br/>Fixed origins, credentials kept server-side"]
-  Connectors --> DBX["Azure Databricks<br/>Existing serving endpoint: rehearsed live"]
-  Connectors -. "Tenant prerequisites" .-> Fabric["Microsoft Fabric data agent<br/>MCP connector: model-policy blocker"]
-  Connectors -. "Environment prerequisites" .-> Studio["Copilot Studio<br/>Direct Engine / secured Direct Line<br/>App-only S2S blocker in this environment"]
+Azure Storage holds the source files. Azure AI Search indexes those files, and Foundry IQ retrieves relevant records. Microsoft Foundry agents use that evidence to answer questions through Cortex, hosted on Azure Container Apps. Microsoft Purview links catalogue items to physical assets and their ownership. Existing REST/GraphQL APIs and agents supply additional capabilities through API Management and approved connectors.
 
-  Web --> State["Azure Blob Storage<br/>stcortexstatezha7pf<br/>Separate state container per app<br/>Single writer; transcripts, artefacts, drafts, evidence"]
-  Web --> Assurance["Responsible AI / NIST configuration review<br/>axe-core WCAG checks + manual attestations"]
-  Web --> Evals["Foundry native Evals + taxonomy service<br/>Version-pinned agent assessment<br/>Hosted ACA-session 429 blocker"]
-  Web --> Package["Teams / Microsoft 365 app ZIP<br/>Manifest, icons, installation instructions"]
-  Package -. "Separate provisioning, consent and installation" .-> Bot["Azure Bot Service + Foundry Activity Protocol<br/>Teams / Microsoft 365 Copilot<br/>Conditional; installation not rehearsed"]
+The foundation uses Entra ID and managed identities, Key Vault or application secrets, Azure Monitor/Log Analytics, private Blob state, Container Registry and Bicep. Resource-specific network controls include Azure Network Security Perimeter. Search indexes contain derived copies; catalogue metadata is not the source dataset.
 
-  subgraph Foundation["Identity, operations and deployment foundation"]
-    MI["User-assigned Cortex identity<br/>Service/project identities + scoped RBAC"]
-    Secrets["Container Apps secrets + direct configuration<br/>Key Vault adapter / existing vault where reachable"]
-    NSP["Azure Network Security Perimeter<br/>Storage: Enforced; Search: Learning<br/>Not a blanket private-endpoint claim"]
-    Logs["Azure Monitor / Log Analytics<br/>Container logs<br/>Application Insights configuration available"]
-    IaC["Azure CLI + azd + Bicep<br/>infra/main.bicep"]
-    ACR["Azure Container Registry<br/>Locked npm dependencies + immutable release tags"]
-  end
-  MI -. "Service authentication" .-> Web
-  MI -. "Data access" .-> Grounding
-  Secrets -. "Server-only settings" .-> Web
-  NSP -. "Network policy" .-> Data
-  NSP -. "Network policy" .-> State
-  NSP -. "Learning-mode association" .-> Indexer
-  Web -. "Logs" .-> Logs
-  IaC -. "Create or reuse reviewed resources" .-> Runtime
-  IaC --> ACR -. "Images" .-> Runtime
-```
+Fabric and Copilot Studio have separate prerequisites. Teams/Microsoft 365 package generation does not imply tenant installation. Key Vault and monitoring availability depend on configuration. The sandbox spans East US and North Europe, so residency must be reviewed for customer use.
 
-**Data is genuinely indexed.** Purview describes and links assets; Search indexers read the associated CSV files, create derived index copies, and expose knowledge retrieval to Foundry. The catalogue itself is not the underlying dataset. A private Blob container URL is not a browsable file listing.
+</details>
 
-**Infrastructure is explicit.** The sandbox uses existing Foundry/Purview resources in East US and Cortex hosting, storage and Search in North Europe. Review cross-region processing and residency before reuse. Key Vault and Application Insights are supported by infrastructure/configuration; this does not claim that every app reads Key Vault at runtime or emits complete distributed traces. Cosmos DB is not the current state store. See [architecture details](docs/ARCHITECTURE.md).
+For service identities, API contracts, infrastructure details and known blockers, see the [technical architecture guide](docs/ARCHITECTURE.md).
 
 ## What works, and what remains conditional
 
