@@ -2,6 +2,8 @@
 
 ## Documentation alignment
 
+- Simplified the README architecture to four large, labelled technology icons with a single left-to-right data flow. Purview and API Management appear as supporting services; infrastructure inventory, optional channels and detailed contracts remain in the architecture guide.
+
 - Updated all repository documentation for the three-app `novo-demo-20260923-r3` release and added the technical solution/infrastructure diagram to README.
 - Separated deployed/rehearsed services from conditional channels, configured monitoring and production design gaps.
 - Replaced superseded operational guidance with current bootstrap, single-writer state, reviewed reset and advisory assurance procedures.

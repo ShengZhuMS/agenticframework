@@ -1,6 +1,6 @@
 # Data Cortex - technical architecture
 
-This document describes the implementation and the **22 September 2026** deployment snapshot. The [README architecture diagram](../README.md#technical-solution-architecture) is the visual overview; [DEPLOY.md](DEPLOY.md) describes operations. Rehearsed capabilities and external blockers are not interchangeable.
+This document describes the implementation and the **22 September 2026** deployment snapshot. The [simplified icon diagram in README](../README.md#technical-solution-architecture) shows only the four-stage data/result flow and its supporting services; the sections here retain the infrastructure and implementation detail. [DEPLOY.md](DEPLOY.md) describes operations. Rehearsed capabilities and external blockers are not interchangeable.
 
 ## Technology and infrastructure
 
